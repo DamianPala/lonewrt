@@ -1,7 +1,6 @@
 # Operator preset for MCC-MNC 29702 (Telekom Montenegro). The file name is the first 5 digits of the
 # SIM's IMSI. Read as data by /usr/lib/lw/operators.sh, never run as a shell script: one KEY='value'
-# per line, known keys only, no ' inside a value. Format and how to write one: README.md, section
-# "Operator presets".
+# per line, known keys only, no ' inside a value. Format and how to write one: docs/operators.md.
 
 OPERATOR_NAME='Telekom'
 CURRENCY='EUR'

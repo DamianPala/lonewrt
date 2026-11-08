@@ -121,8 +121,8 @@ passes 2
 lw_expect_eq "$(sent)" $((n + 1)) "the command reaches the chat when Telegram is back"
 expect_last 'HELP'
 
-# --- a list entry written without a country code gets the reply in that form (README asks for the
-# international form, the router cannot add a country code)
+# --- a list entry written without a country code gets the reply in that form (docs/profile.md asks for
+# the international form, the router cannot add a country code)
 admins_set "$ADMIN,067000001"
 sms_cmd 067000001 'HELP'
 lw_expect_eq "$(sms_to 10)" 067000001 "reply to a national list entry, no plus"

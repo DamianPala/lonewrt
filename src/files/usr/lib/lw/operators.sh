@@ -5,7 +5,7 @@
 # shellcheck disable=SC2034  # NT_P_* are read by the other notify files
 #
 # The file is parsed here as data and never run: KEY='value' lines, known keys only, values from a
-# short list of safe characters, nothing is evaluated (README.md, "Operator presets"). A file that
+# short list of safe characters, nothing is evaluated (docs/operators.md). A file that
 # does not pass is rejected with one syslog line and the SIM is treated as one without a preset.
 #
 # NT_P_STATE: empty = the IMSI could not be read yet (tried again later), none = no usable preset
@@ -18,7 +18,7 @@ NT_OPERATORS=${LW_OPERATORS_DIR:-/usr/share/lw/operators}
 NT_PRESET_RETRY=${LW_NOTIFY_PRESET_RETRY:-60}
 NT_P_STATE=
 NT_MCC=
-# Building blocks of the reply pattern, as sed BRE (README.md lists the same dialect)
+# Building blocks of the reply pattern, as sed BRE (docs/operators.md lists the same dialect)
 NT_RE_AMOUNT='\([0-9][0-9]*\([.,][0-9][0-9]*\)\{0,1\}\)'
 NT_RE_DAY='\([0-9]\{1,2\}\)'
 

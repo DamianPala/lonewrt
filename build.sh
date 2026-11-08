@@ -56,10 +56,10 @@ usage() {
     exit 2
 }
 
-# need CMD...: stop before any work when a host program is missing (README, "Hardware")
+# need CMD...: stop before any work when a host program is missing (README, "What you need")
 need() {
     local c
-    for c; do command -v "$c" >/dev/null || die "$c is required on the build host (see README, Hardware)"; done
+    for c; do command -v "$c" >/dev/null || die "$c is required on the build host (see README, What you need)"; done
 }
 
 check_name() {

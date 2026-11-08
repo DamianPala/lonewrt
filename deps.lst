@@ -8,7 +8,7 @@
 # gawk    GNU awk for the ImageBuilder, only used when the host has no GNU awk
 # rootfs  x86_64 rootfs the tests run in (tests/rootfs/run.sh), with coreutils-timeout added
 # vm      x86_64 ImageBuilder of the VM bench (tests/vm)
-# rescue  stock images for a recovery over the serial console (README "Recovery")
+# rescue  stock images for a recovery over the serial console (docs/development.md "Recovery")
 
 ib 9e377a6c51ad667b6aa277934714174467b44723b1456153317d7a4aef3f1fd2 dl/openwrt-imagebuilder-25.12.6-ipq40xx-generic.Linux-x86_64.tar.zst https://downloads.openwrt.org/releases/25.12.6/targets/ipq40xx/generic/openwrt-imagebuilder-25.12.6-ipq40xx-generic.Linux-x86_64.tar.zst
 
