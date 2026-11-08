@@ -1,0 +1,19 @@
+#!/bin/sh
+# VM test bench only. Last uci-defaults script: keeps what the image's scripts wrote for `wwan`
+# (tests compare it with the first-boot table) and then turns `wwan` into plain DHCP on wwan0,
+# because there is no QMI modem in QEMU. Every other option of `wwan` (modes, apn ...) stays.
+# There is no wwan_4: QMI's DHCP alias, so the operator DNS lookup finds no server in the VM.
+
+mkdir -p /etc/lw-vm
+uci -q show network.wwan >/etc/lw-vm/wwan-from-image.uci
+uci set network.wwan=interface
+uci set network.wwan.proto='dhcp'
+uci set network.wwan.device='wwan0'
+# QEMU's restricted user-net leaves the router option out of its DHCP answer; QMI gives one
+uci set network.lwvm_default=route
+uci set network.lwvm_default.interface='wwan'
+uci set network.lwvm_default.target='0.0.0.0/0'
+uci set network.lwvm_default.gateway='10.0.3.2'
+uci commit network
+
+echo "LWVM-MARK end" >/dev/console

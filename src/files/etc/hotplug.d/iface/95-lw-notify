@@ -1,0 +1,13 @@
+#!/bin/sh
+# wwan hotplug: when the LTE link comes up, the queued SMS go out right away instead of at the
+# next pass of the service (SPEC R34a). Returns at once; the flush runs detached and bounded.
+# Without a bot token and chat nothing starts at all (R38a, D43).
+# hotplug-call sources this file in a subshell; exit only leaves that subshell.
+
+[ "$ACTION" = ifup ] || exit 0
+case $INTERFACE in
+    wwan | wwan_4) ;;
+    *) exit 0 ;;
+esac
+[ -n "$(uci -q get lonewrt.notify.token)" ] && [ -n "$(uci -q get lonewrt.notify.chat)" ] || exit 0
+setsid timeout 300 /usr/sbin/lw-notify flush </dev/null >/dev/null 2>&1 &

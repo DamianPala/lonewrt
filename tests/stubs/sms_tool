@@ -1,0 +1,66 @@
+#!/bin/sh
+# Test stand-in for sms_tool: a small modem model in $LW_TEST/modem plus per-command overrides in
+# $LW_TEST/at/<command with non-alphanumerics as _>. Override content HANG = never answers,
+# SILENT = answers nothing, anything else is printed as the response. $LW_TEST/at/ALL applies to
+# every command. Responses use CRLF and blank lines like the real tool on the MF289F.
+T=${LW_TEST:-/lwtest}
+M=$T/modem
+mkdir -p "$M/sms" "$T/at"
+port=
+while [ $# -gt 0 ]; do
+    case $1 in
+        -d) port=$2; shift 2 ;;
+        -s | -b | -f) shift 2 ;;
+        -j | -R | -r | -a | -h) shift ;;
+        *) break ;;
+    esac
+done
+echo "$port $*" >>"$T/at-calls"
+[ -e "$port" ] || { echo "can't open $port" >&2; exit 1; }
+
+reply() { printf '\r\n%s\r\n\r\n' "$1"; }
+override() {
+    [ -f "$1" ] || return 1
+    case $(head -n1 "$1") in
+        HANG) sleep 3600; exit 0 ;;
+        SILENT) exit 0 ;;
+    esac
+    while IFS= read -r l; do reply "$l"; done <"$1"
+    exit 0
+}
+get() { cat "$M/$1" 2>/dev/null || echo "$2"; }
+
+case $1 in
+    at)
+        cmd=$2
+        override "$T/at/ALL"
+        override "$T/at/$(printf %s "$cmd" | tr -c 'A-Za-z0-9' _)"
+        case $cmd in
+            'AT+ZSNT?') reply "+ZSNT: $(get zsnt 0,0,0)" ;;
+            AT+ZSNT=*) echo "${cmd#AT+ZSNT=}" >"$M/zsnt" ;;
+            'AT+ZNLOCKBAND?') reply "+ZNLOCKBAND: $(get bands 880800C5),2000000680380" ;;
+            AT+ZNLOCKBAND=*) echo "$cmd" | cut -d, -f3 >"$M/bands" ;;
+            'AT+CPIN?') reply "+CPIN: $(get cpin READY)" ;;
+            AT+CIMI) reply "$(get imsi 297020000000123)" ;;
+            'AT+CPMS?')
+                # shellcheck disable=SC2012 # the store holds numeric file names only
+                n=$(ls "$M/sms" | wc -l)
+                s=$(get cpms '"ME","ME","SR"')
+                reply "+CPMS: $(echo "$s" | awk -F, -v n="$n" '{print $1","n",100,"$2","n",100,"$3",0,100"}')" ;;
+            AT+CPMS=*) echo "${cmd#AT+CPMS=}" >"$M/cpms" ;;
+            *) : ;;
+        esac
+        ;;
+    recv)
+        printf '{"msg":['
+        sep=
+        for f in "$M"/sms/*.json; do
+            [ -f "$f" ] || continue
+            printf '%s%s' "$sep" "$(cat "$f")"
+            sep=,
+        done
+        printf ']}\n'
+        ;;
+    delete) rm -f "$M/sms/$2.json" ;;
+    *) echo "stub sms_tool: unsupported $*" >&2; exit 2 ;;
+esac

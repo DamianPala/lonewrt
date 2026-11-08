@@ -1,0 +1,15 @@
+#!/bin/sh
+# Test stand-in for logger: appends "uptime tag: message" to $LW_TEST/syslog.
+T=${LW_TEST:-/lwtest}
+tag='logger'
+while [ $# -gt 0 ]; do
+    case $1 in
+        -t) tag=$2; shift 2 ;;
+        -p) shift 2 ;;
+        -s) shift ;;
+        *) break ;;
+    esac
+done
+msg="$*"
+[ -n "$msg" ] || msg=$(cat)
+echo "$(cut -d. -f1 "${LW_UPTIME_FILE:-/proc/uptime}") $tag: $msg" >>"$T/syslog"

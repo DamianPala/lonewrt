@@ -1,0 +1,25 @@
+#!/bin/sh
+# Test stand-in for /etc/init.d/nlbwmon, installed by the tests that need it. It mimics the daemon
+# as read from the binary (25.12.6 nlbwmon 2025.06.02): a stop (SIGTERM) commits the in-memory
+# database /tmp/nlbw-mem to uci nlbwmon.@nlbwmon[0].database_directory and exits; a start restores
+# the database of that directory. Every call goes to $LW_TEST/nlbwmon-calls.
+T=${LW_TEST:-/lwtest}
+dir=$(uci -q get nlbwmon.@nlbwmon[0].database_directory) || dir=/var/lib/nlbwmon
+echo "$1" >>"$T/nlbwmon-calls"
+case $1 in
+    enabled) exit 0 ;;
+    stop)
+        if [ -f /tmp/nlbw-mem ]; then
+            mkdir -p "$dir"
+            cp /tmp/nlbw-mem "$dir/db"
+            rm -f /tmp/nlbw-mem
+        fi
+        ;;
+    start)
+        if [ -f "$dir/db" ]; then cp "$dir/db" /tmp/nlbw-mem; else : >/tmp/nlbw-mem; fi
+        ;;
+    restart)
+        "$0" stop
+        "$0" start
+        ;;
+esac

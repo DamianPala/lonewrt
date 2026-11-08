@@ -1,0 +1,182 @@
+#!/bin/sh
+# Auto-APN worker (SPEC R13 to R13d, D27, D34), started detached by
+# /etc/hotplug.d/iface/99-auto-apn-at. Usage: lw-apn ifup|ifup-failed
+# An APN from the profile or LuCI is never touched (R13). Only an empty APN, or one this script
+# wrote itself (marker lonewrt.apn.from_table equal to the current APN), falls back to the operator
+# table, from the second failed connection attempt in a row (R13b).
+# The worker gives up on its own before LW_APN_BUDGET seconds (R13c); the hotplug script also
+# wraps it in timeout as a last resort.
+
+# shellcheck source=src/files/usr/lib/lw/common.sh
+. /usr/lib/lw/common.sh
+
+TAG=Auto-APN
+BUDGET=${LW_APN_BUDGET:-150}
+AT_LIMIT=${LW_APN_AT_LIMIT:-20}
+IMSI_TRIES=6
+IMSI_DELAY=${LW_APN_IMSI_DELAY:-2}
+# seconds of the budget kept for uci and ifup, so the last-resort timeout never cuts ifup between
+# its down and up and leaves wwan down
+TAIL=20
+FAILS=/tmp/lw-apn.fails
+RUN_LOCK=/tmp/lw-apn.lock
+LAST=/tmp/lw-apn.last
+STARTED=$(date +%s)
+
+# note MESSAGE: syslog entry, but only when it differs from the previous one, because netifd can
+# report the same failure every few seconds and the syslog is persistent (R29).
+note() {
+    [ "$(cat "$LAST" 2>/dev/null)" != "$*" ] || return 0
+    printf '%s\n' "$*" >"$LAST"
+    lw_log "$TAG" "$*"
+}
+
+# apn_at COMMAND: answer in OUT. Each command gets at most AT_LIMIT seconds, lock wait included,
+# and never more than the rest of the budget less TAIL (R12b, R13c). Returns 124 on timeout or when
+# the budget is spent; a timed-out command is not repeated in this run (R13c).
+apn_at() {
+    _left=$((BUDGET - ($(date +%s) - STARTED) - TAIL))
+    _lim=$AT_LIMIT
+    [ "$_left" -ge "$_lim" ] || _lim=$_left
+    [ "$_lim" -ge 2 ] || return 124
+    _arc=0
+    OUT=$(lw_at "$_lim" "$1") || _arc=$?
+    [ "$_arc" != 124 ]
+}
+
+# fail_count: adds one to the failed-attempt counter and prints it; the counter lock keeps two
+# events that arrive together from reading the same value.
+fail_count() {
+    (
+        flock 8
+        _n=$(cat "$FAILS" 2>/dev/null)
+        case $_n in '' | *[!0-9]*) _n=0 ;; esac
+        _n=$((_n + 1))
+        echo "$_n" >"$FAILS"
+        echo "$_n"
+    ) 8>"$FAILS.lock"
+}
+
+# operator MCCMNC: sets OP_NAME OP_APN OP_AUTH OP_USER OP_PASS; fails for an operator not in the
+# table (from the prototype recovered/99-auto-apn-at).
+operator() {
+    OP_APN=internet
+    OP_AUTH=none
+    OP_USER=
+    OP_PASS=
+    case $1 in
+        26001) OP_NAME="Plus PL" ;;
+        26002) OP_NAME="T-Mobile PL" ;;
+        26003) OP_NAME="Orange PL" OP_AUTH=pap OP_USER=internet OP_PASS=internet ;;
+        26006) OP_NAME="Play PL" ;;
+        29701) OP_NAME="One MNE" ;;
+        29702) OP_NAME="T-Mobile MNE" OP_APN=tmcg-4g OP_AUTH=pap OP_USER=38267 OP_PASS=38267 ;;
+        29703) OP_NAME="Mtel MNE" OP_APN=mtelinternet OP_AUTH=chap OP_USER=internet OP_PASS=068 ;;
+        *) return 1 ;;
+    esac
+}
+
+# uci_put OPTION VALUE: set, or delete when VALUE is empty.
+uci_put() {
+    if [ -n "$2" ]; then
+        uci -q set "$1=$2"
+    else
+        uci -q delete "$1"
+    fi
+}
+
+# set_marker APN: the marker goes first, so an interrupted write leaves either an empty APN or a
+# marker equal to the APN, both of which the next failure handles (R13d).
+set_marker() {
+    [ -f /etc/config/lonewrt ] || touch /etc/config/lonewrt
+    uci -q get lonewrt.apn >/dev/null || uci -q set lonewrt.apn=apn
+    uci_put lonewrt.apn.from_table "$1"
+    uci -q commit lonewrt
+}
+
+write_apn() {
+    set_marker "$1"
+    uci_put network.wwan.apn "$1"
+    uci_put network.wwan.auth "$2"
+    uci_put network.wwan.username "$3"
+    uci_put network.wwan.password "$4"
+    uci -q commit network
+}
+
+on_ifup() {
+    echo 0 >"$FAILS"
+    rm -f "$LAST"
+    _apn=$(uci -q get network.wwan.apn)
+    if [ -z "$_apn" ]; then
+        lw_log "$TAG" "connected with an empty APN (assigned by the network)"
+    elif [ "$_apn" = "$(uci -q get lonewrt.apn.from_table)" ]; then
+        lw_log "$TAG" "connected with APN '$_apn' from the operator table"
+    fi
+}
+
+read_sim() {
+    if ! apn_at 'AT+CPIN?'; then
+        note "AT+CPIN? timed out (AT port busy or silent), APN unchanged until the next failed attempt"
+        return 1
+    fi
+    _pin=$(printf '%s\n' "$OUT" | sed -n 's/^+CPIN: *//p')
+    if [ "$_pin" != READY ]; then
+        note "SIM not ready (AT+CPIN?: '${_pin:-no answer}'), APN unchanged; unlock the card or enter the PIN in LuCI"
+        return 1
+    fi
+    IMSI=
+    _try=1
+    while :; do
+        if ! apn_at 'AT+CIMI'; then
+            note "AT+CIMI timed out (AT port busy or silent), APN unchanged until the next failed attempt"
+            return 1
+        fi
+        IMSI=$(printf '%s\n' "$OUT" | grep -E '^[0-9]{6,15}$' | head -n 1)
+        [ -z "$IMSI" ] || return 0
+        [ "$_try" -lt "$IMSI_TRIES" ] || break
+        _try=$((_try + 1))
+        sleep "$IMSI_DELAY"
+    done
+    note "no IMSI after $IMSI_TRIES reads, APN unchanged"
+    return 1
+}
+
+on_failed() {
+    _n=$(fail_count)
+    [ "$_n" -ge 2 ] || return 0
+    _apn=$(uci -q get network.wwan.apn)
+    _marker=$(uci -q get lonewrt.apn.from_table)
+    [ -z "$_apn" ] || [ "$_apn" = "$_marker" ] || return 0
+    exec 9>"$RUN_LOCK"
+    flock -n 9 || return 0
+    read_sim || return 0
+    # the reads can take minutes; an APN entered in LuCI meanwhile is never overwritten (R13)
+    [ "$(uci -q get network.wwan.apn)" = "$_apn" ] || return 0
+    _mccmnc=$(printf '%s' "$IMSI" | cut -c1-5)
+    if ! operator "$_mccmnc"; then
+        if [ -n "$_apn" ]; then
+            write_apn "" "" "" ""
+            lw_log "$TAG" "unknown operator MCCMNC $_mccmnc, table APN '$_apn' removed, trying an empty APN; set APN in LuCI if it fails"
+            ifup wwan
+        else
+            note "unknown operator MCCMNC $_mccmnc, empty APN kept; set APN in LuCI"
+        fi
+        return 0
+    fi
+    if [ "$_apn" = "$OP_APN" ] &&
+        [ "$(uci -q get network.wwan.auth)" = "$OP_AUTH" ] &&
+        [ "$(uci -q get network.wwan.username)" = "$OP_USER" ] &&
+        [ "$(uci -q get network.wwan.password)" = "$OP_PASS" ]; then
+        note "APN '$OP_APN' from the table for $OP_NAME ($_mccmnc) already set, connection still failing"
+        return 0
+    fi
+    write_apn "$OP_APN" "$OP_AUTH" "$OP_USER" "$OP_PASS"
+    lw_log "$TAG" "$OP_NAME ($_mccmnc): set APN '$OP_APN' auth $OP_AUTH from the operator table after $_n failed attempts, reconnecting"
+    ifup wwan
+}
+
+case $1 in
+    ifup) on_ifup ;;
+    ifup-failed) on_failed ;;
+    *) echo "usage: lw-apn ifup|ifup-failed" >&2 && exit 2 ;;
+esac

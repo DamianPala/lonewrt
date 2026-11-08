@@ -1,0 +1,40 @@
+#!/bin/sh
+# VM test bench only. First uci-defaults script: marks the start of first-boot configuration on the
+# console (the power-cut scenario times its kill from these markers) and gives the guest the two
+# radios that `wifi config` writes on the MF289F before uci-defaults run. QEMU has no WiFi, so the
+# image's WiFi settings land in uci exactly as on the router, but no radio ever comes up.
+
+echo "LWVM-MARK begin" >/dev/console
+
+if ! uci -q get wireless.radio0 >/dev/null; then
+    touch /etc/config/wireless
+    uci -q batch <<'EOF'
+set wireless.radio0=wifi-device
+set wireless.radio0.type='mac80211'
+set wireless.radio0.path='platform/soc/a000000.wifi'
+set wireless.radio0.band='2g'
+set wireless.radio0.channel='1'
+set wireless.radio0.htmode='HT20'
+set wireless.radio0.disabled='1'
+set wireless.default_radio0=wifi-iface
+set wireless.default_radio0.device='radio0'
+set wireless.default_radio0.network='lan'
+set wireless.default_radio0.mode='ap'
+set wireless.default_radio0.ssid='OpenWrt'
+set wireless.default_radio0.encryption='none'
+set wireless.radio1=wifi-device
+set wireless.radio1.type='mac80211'
+set wireless.radio1.path='platform/soc/a800000.wifi'
+set wireless.radio1.band='5g'
+set wireless.radio1.channel='36'
+set wireless.radio1.htmode='VHT80'
+set wireless.radio1.disabled='1'
+set wireless.default_radio1=wifi-iface
+set wireless.default_radio1.device='radio1'
+set wireless.default_radio1.network='lan'
+set wireless.default_radio1.mode='ap'
+set wireless.default_radio1.ssid='OpenWrt'
+set wireless.default_radio1.encryption='none'
+commit wireless
+EOF
+fi

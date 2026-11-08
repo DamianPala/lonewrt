@@ -1,0 +1,46 @@
+#!/bin/sh
+# One line per run in /tmp/lw-signal.log: modem mode, network, bands, signal, ping and WireGuard
+# handshake age (SPEC R28, D17). RAM only, so the NAND is not worn, and trimmed to the last 5000
+# lines (R28a). Every read has a limit, so the line comes also without modem or internet and a run
+# ends well before the next one (R28b); a field without a reading is '?'.
+
+# shellcheck source=src/files/usr/lib/lw/common.sh
+. /usr/lib/lw/common.sh
+
+LOG=/tmp/lw-signal.log
+LOG_LINES=5000
+# seconds per modem read, lock wait included (R12b); tests shorten it
+LIMIT=${LW_SIGLOG_LIMIT:-30}
+AT_LIMIT=${LW_SIGLOG_AT_LIMIT:-20}
+
+# modemdata sends several AT commands itself, so it holds the shared lock for the whole read
+md=$(timeout "$LIMIT" flock "$LW_AT_LOCK" md_serial_ecm "$LW_AT_PORT" </dev/null 2>/dev/null)
+
+# field KEY: value of one modemdata entry, spaces removed ("-85 dBm" -> "-85dBm")
+field() {
+    printf '%s\n' "$md" | jsonfilter -e "@[2].addon[@.key=\"$1\"].value" 2>/dev/null |
+        head -n 1 | tr -d ' '
+}
+
+mode=$(lw_at "$AT_LIMIT" 'AT+ZSNT?' | sed -n 's/^+ZSNT: *\([0-9]*\).*/\1/p')
+net=$(printf '%s\n' "$md" | jsonfilter -e '@[2].mode' 2>/dev/null | tr ' ' '_')
+pb=$(field "Primary band" | cut -d@ -f1)
+s1=$(field "(S1) band" | cut -d@ -f1)
+rsrp=$(field RSRP)
+rsrq=$(field RSRQ)
+sinr=$(field SINR)
+rssi=$(field RSSI)
+pci=$(field PCI)
+
+p=$(timeout 15 ping -c 3 -W 2 -I wwan0 1.1.1.1 2>/dev/null)
+loss=$(printf '%s\n' "$p" | sed -n 's/.* \([0-9]*%\) packet loss.*/\1/p')
+rtt=$(printf '%s\n' "$p" | sed -n 's|.*= [0-9.]*/\([0-9.]*\)/.*|\1|p')
+
+hs=$(timeout 5 wg show wg0 latest-handshakes 2>/dev/null | cut -f2 | sort -n | tail -n 1)
+age=
+case $hs in '' | 0 | *[!0-9]*) ;; *) age=$(($(date +%s) - hs))s ;; esac
+
+printf '%s zsnt=%s net=%s pb=%s s1=%s rsrp=%s rsrq=%s sinr=%s rssi=%s pci=%s loss=%s rtt=%s wg_age=%s\n' \
+    "$(date +%F_%T)" "${mode:-?}" "${net:-?}" "${pb:-?}" "${s1:-?}" "${rsrp:-?}" "${rsrq:-?}" \
+    "${sinr:-?}" "${rssi:-?}" "${pci:-?}" "${loss:-?}" "${rtt:-?}" "${age:-?}" >>"$LOG"
+tail -n "$LOG_LINES" "$LOG" | lw_write_atomic "$LOG"

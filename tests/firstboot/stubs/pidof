@@ -1,0 +1,6 @@
+#!/bin/sh
+# Test stand-in for pidof: logd and the log file writer always run; nothing else does.
+case $1 in
+    logd | logread) echo 1 ;;
+    *) exit 1 ;;
+esac

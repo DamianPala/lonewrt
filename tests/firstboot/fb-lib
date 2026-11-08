@@ -1,0 +1,52 @@
+# Helpers for the first-boot tests, sourced inside the rootfs sandbox (tests/rootfs/run.sh).
+# The overlays come from tests/build/30-render.sh (tests/.out/render/<profile>), because rendering
+# needs the host's python3 and openssl.
+# shellcheck shell=sh
+# shellcheck source=tests/lib.sh
+. /fw/tests/lib.sh
+
+RENDER=/fw/tests/.out/render
+PATH=/fw/tests/firstboot/stubs:$PATH
+
+# fb_prepare PROFILE: the state /etc/init.d/boot finds before uci-defaults on a fresh MF289F
+# (preinit's network and system, `wifi config` radios, package configs), then the image overlay.
+fb_prepare() {
+    [ -f "$RENDER/$1/etc/lw-build" ] ||
+        lw_fail "no overlay in tests/.out/render/$1: run tests/build/30-render.sh first"
+    mkdir -p "$T" /var/lock
+    : >"$T/syslog"
+    echo 100.00 100.00 >"$T/uptime"
+    /bin/board_detect
+    /bin/config_generate >/dev/null
+    cp /fw/tests/firstboot/fixtures/etc-config/* /etc/config/
+    cp -a "$RENDER/$1/." /
+}
+
+# fb_uci_defaults [SCRIPT]: source the script in a subshell from /etc/uci-defaults, as boot does
+# (without lib.sh's `set -e`); boot deletes the script only when it returns 0
+fb_uci_defaults() {
+    (
+        set +e
+        cd /etc/uci-defaults && . "${1:-./zz-lw-config}"
+    ) || lw_fail "uci-defaults returned non-zero"
+}
+
+# fb_state: everything zz-lw-config writes, for comparing two runs
+fb_state() {
+    for c in /etc/config/*; do
+        uci export "${c##*/}"
+    done
+    grep '^root:' /etc/shadow
+    ls /etc/rc.d
+    if [ -e /etc/lw-firstboot.pending ]; then echo pending; fi
+}
+
+# fb_get OPTION: the uci value or <unset>
+fb_get() {
+    uci -q get "$1" || echo "<unset>"
+}
+
+# fb_expect OPTION VALUE
+fb_expect() {
+    lw_expect_eq "$(fb_get "$1")" "$2" "$1"
+}

@@ -1,0 +1,12 @@
+# Profiles other than the secret-free template, and everything a build produces (SPEC R5).
+/profiles/*
+!/profiles/generic.conf
+/image/
+# ImageBuilder, downloads and VM bench (fetch-deps.sh); no trailing slash, work may be a symlink
+/work
+/tests/.out/
+__pycache__/
+# optional list of private values the generic image must never contain (tests/build/lib.bash)
+/tests/build/private-values.txt
+# a parent .gitignore with a bare `config` rule would hide the image's /etc/config overlay
+!/src/files/etc/config/

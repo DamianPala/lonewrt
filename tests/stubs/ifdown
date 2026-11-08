@@ -1,0 +1,3 @@
+#!/bin/sh
+# Test stand-in for ifdown: records the call in $LW_TEST/events.
+echo "ifdown $*" >>"${LW_TEST:-/lwtest}/events"

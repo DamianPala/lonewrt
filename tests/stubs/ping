@@ -1,0 +1,20 @@
+#!/bin/sh
+# Test stand-in for ping. The network seen depends on the modem model: ZSNT 6 is LTE, anything else
+# is $LW_TEST/net/auto (default edge). $LW_TEST/net/<lte|edge> holds up or down (default down).
+# Every call adds $LW_TEST/net/txbump packets to tx (default 0), and rx 3 when the link is up.
+T=${LW_TEST:-/lwtest}
+S=${LW_NET_STATS:-$T/stats}
+net=lte
+case $(cat "$T/modem/zsnt" 2>/dev/null) in 6*) ;; *) net=$(cat "$T/net/auto" 2>/dev/null || echo edge) ;; esac
+add() { n=$(cat "$S/$1" 2>/dev/null || echo 0); echo $((n + $2)) >"$S/$1"; }
+mkdir -p "$S"
+add tx_packets "$(cat "$T/net/txbump" 2>/dev/null || echo 0)"
+echo "ping $*" >>"$T/net-calls"
+if [ "$(cat "$T/net/$net" 2>/dev/null)" = up ]; then
+    add rx_packets 3
+    echo "3 packets transmitted, 3 packets received, 0% packet loss"
+    echo "round-trip min/avg/max = 30.100/36.459/40.000 ms"
+    exit 0
+fi
+echo "3 packets transmitted, 0 packets received, 100% packet loss"
+exit 1

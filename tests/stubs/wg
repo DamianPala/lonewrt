@@ -1,0 +1,4 @@
+#!/bin/sh
+# Test stand-in for wg: latest handshake "now" when $LW_TEST/wg is up, none otherwise.
+[ "$(cat "${LW_TEST:-/lwtest}/wg" 2>/dev/null)" = up ] && printf 'PEERKEY=\t%s\n' "$(date +%s)"
+exit 0

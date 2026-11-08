@@ -1,0 +1,12 @@
+#!/bin/sh
+# Test stand-in for nslookup: answers when $LW_TEST/dns/<lte|edge> is up (network chosen as in ping).
+T=${LW_TEST:-/lwtest}
+net=lte
+case $(cat "$T/modem/zsnt" 2>/dev/null) in 6*) ;; *) net=$(cat "$T/net/auto" 2>/dev/null || echo edge) ;; esac
+echo "nslookup $*" >>"$T/net-calls"
+if [ "$(cat "$T/dns/$net" 2>/dev/null)" = up ]; then
+    printf 'Server:\t\t%s\nAddress:\t%s:53\n\nName:\t%s\nAddress: 192.0.2.1\n' "$2" "$2" "$1"
+    exit 0
+fi
+echo ";; connection timed out; no servers could be reached"
+exit 1

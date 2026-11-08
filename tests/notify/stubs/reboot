@@ -1,0 +1,5 @@
+#!/bin/sh
+# Test stand-in for reboot, first on PATH in the notify tests: records the call in $LW_TEST/events
+# and whether the note of who asked (/etc/lw-notify/reboot) was already on flash at that moment.
+if [ -f /etc/lw-notify/reboot ]; then n=yes; else n=no; fi
+echo "reboot note=$n" >>"${LW_TEST:-/lwtest}/events"

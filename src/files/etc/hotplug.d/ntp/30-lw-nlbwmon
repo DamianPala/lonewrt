@@ -1,0 +1,15 @@
+#!/bin/sh
+# Once per boot, when ntpd has set the clock for the first time: restart nlbwmon (SPEC R44a, D59).
+# The router has no RTC, so nlbwmon starts with a clock that can be a month behind and files its
+# counters under that month. A restart now makes it commit what it has and load the database of the
+# right month. nlbwmon commits on a normal stop (SIGTERM) and keeps the database on flash (see
+# zz-lw-config), so the month's total survives. The marker is in RAM, so it is once per boot.
+# hotplug-call sources this file in a subshell; exit only leaves that subshell.
+
+[ "$ACTION" = stratum ] || exit 0
+[ -x /etc/init.d/nlbwmon ] || exit 0
+/etc/init.d/nlbwmon enabled || exit 0
+[ ! -e /tmp/lw-nlbwmon-restarted ] || exit 0
+: >/tmp/lw-nlbwmon-restarted
+timeout 30 /etc/init.d/nlbwmon restart >/dev/null 2>&1
+logger -t lw-nlbwmon "restarted after the first NTP sync of this boot"

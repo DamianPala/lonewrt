@@ -1,0 +1,31 @@
+#!/bin/sh /etc/rc.common
+# VM test bench only, never in a router image. Makes the x86_64 QEMU guest look like the MF289F to
+# the image's scripts, before lw-modem-mode (19) and netifd (20) start:
+# - the second NIC becomes wwan0, the netdev QMI would give (its uci side: uci-defaults zzzz-lw-vm);
+# - the second UART, when QEMU attached one, becomes the AT port /dev/ttyUSB2 (no UART = no modem);
+# - pings to 8.8.8.8 and 1.1.1.1 go to the QEMU user-net gateway, because user-net has no route to
+#   the internet (restrict=on) and that gateway answers ICMP echo only while the wwan link is up.
+
+# shellcheck disable=SC2034  # read by /etc/rc.common
+START=12
+
+start() {
+    # kernel messages would interleave with the test harness's console commands
+    dmesg -n 1
+    if [ -d /sys/class/net/eth1 ] && [ ! -e /sys/class/net/wwan0 ]; then
+        ip link set eth1 name wwan0
+    fi
+    if grep -q '^1: uart:16550A' /proc/tty/driver/serial; then
+        ln -sf /dev/ttyS1 /dev/ttyUSB2
+    fi
+    nft -f - <<'EOF'
+table ip lwvm
+delete table ip lwvm
+table ip lwvm {
+    chain out {
+        type nat hook output priority -100; policy accept;
+        ip daddr { 8.8.8.8, 1.1.1.1 } dnat to 10.0.3.2
+    }
+}
+EOF
+}

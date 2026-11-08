@@ -1,0 +1,3 @@
+#!/bin/sh
+# Test stand-in for the modemdata reader: prints $LW_TEST/modemdata.json, fails when it is missing.
+cat "${LW_TEST:-/lwtest}/modemdata.json" 2>/dev/null

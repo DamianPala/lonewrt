@@ -1,0 +1,51 @@
+#!/bin/sh
+# Notify tests' wrapper around tests/stubs/sms_tool: adds "send" and lets recv hang or stay silent.
+#   send NUMBER TEXT   recorded in $LW_TEST/sms-sent as "NUMBER TEXT" and answered like the real
+#                      tool ("sms sent sucessfully: 1"); $LW_TEST/at/SEND with HANG never answers,
+#                      with FAIL exits 1, with NOTSENT prints "sms not sent, code: 330" and exits 0
+#                      (the exit code of the real tool on a failure was not measured)
+#   recv               $LW_TEST/at/RECV with HANG or SILENT, like the modem tests' wrapper
+# $LW_TEST/at/ALL (HANG or SILENT) covers send and recv too. Everything else goes to the shared
+# stub.
+T=${LW_TEST:-/lwtest}
+cmd=
+port=
+skip=
+for a in "$@"; do
+    if [ -n "$skip" ]; then
+        [ "$skip" = d ] && port=$a
+        skip=
+        continue
+    fi
+    case $a in
+        -d) skip=d ;;
+        -s | -b | -f) skip=x ;;
+        -*) ;;
+        *) cmd=$a && break ;;
+    esac
+done
+case $cmd in
+    send) key=SEND ;;
+    recv) key=RECV ;;
+    *) exec /fw/tests/stubs/sms_tool "$@" ;;
+esac
+echo "$port $*" >>"$T/at-calls"
+for f in "$T/at/ALL" "$T/at/$key"; do
+    [ -f "$f" ] || continue
+    case $(head -n 1 "$f") in
+        HANG) sleep 3600 && exit 0 ;;
+        SILENT) exit 0 ;;
+        FAIL) exit 1 ;;
+        NOTSENT)
+            echo "sms not sent, code: 330"
+            exit 0
+            ;;
+    esac
+done
+if [ "$cmd" = send ]; then
+    shift $(($# - 2))
+    echo "$1 $2" >>"$T/sms-sent"
+    echo "sms sent sucessfully: 1"
+    exit 0
+fi
+exec /fw/tests/stubs/sms_tool "$@"

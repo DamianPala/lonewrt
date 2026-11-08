@@ -1,0 +1,40 @@
+#!/bin/sh
+# Test stand-in for the speedtestcpp client (/usr/bin/speedtest --output json), which the x86 test
+# rootfs does not have. Knobs, all files in $LW_TEST/speedtest/:
+#   mode      ok (default): the JSON line; banner: a banner line, then the JSON; fail: a message on
+#             stderr and exit 1; garbage: text without JSON, exit 0; nodl: JSON without
+#             download_mbit; hang: never answers ("exec sleep 3601": one process, so a TERM ends
+#             it like the real client, and tests find it by that odd number)
+#   json      the JSON line "ok" prints (default: the answer measured on the router 2026-11-07)
+#   delay     seconds to wait before it answers (default 0)
+#   rx, tx    bytes added to the fake wwan0 counters ($LW_TEST/wwan0/{rx,tx}_bytes) when it ends
+#             (default 196000000 and 134000000)
+# Every call appends its arguments to $LW_TEST/speedtest/calls.
+T=${LW_TEST:-/lwtest}
+S=$T/speedtest
+mkdir -p "$S"
+echo "$*" >>"$S/calls"
+mode=$(cat "$S/mode" 2>/dev/null || echo ok)
+[ "$mode" != hang ] || exec sleep 3601
+sleep "$(cat "$S/delay" 2>/dev/null || echo 0)"
+add() {
+    f=$T/wwan0/$1_bytes
+    [ -f "$f" ] || return 0
+    echo $(($(cat "$f") + $2)) >"$f"
+}
+add rx "$(cat "$S/rx" 2>/dev/null || echo 196000000)"
+add tx "$(cat "$S/tx" 2>/dev/null || echo 134000000)"
+json=$(cat "$S/json" 2>/dev/null || echo '{"client":{"ip":"203.0.113.7","lat":"52.0000","lon":"5.0000","isp":"Example ISP"},"servers_online":10,"server":{"name":"Springfield","id":5373,"sponsor":"Example Telecom AD","distance":7,"latency":16,"host":"speedtest.example.net:8080","recommended":1},"ping":16,"jitter":1,"download":98806051.64,"download_mbit":98.81,"upload":62321543.20,"upload_mbit":62.32,"_":"all ok"}')
+case $mode in
+    ok) echo "$json" ;;
+    banner)
+        echo "Speedtest by Ookla (test banner)"
+        echo "$json"
+        ;;
+    fail)
+        echo "Error: cannot fetch the server list" >&2
+        exit 1
+        ;;
+    garbage) echo "this is not json at all" ;;
+    nodl) echo '{"client":{"ip":"203.0.113.7"},"_":"all ok"}' ;;
+esac

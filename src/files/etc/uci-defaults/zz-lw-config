@@ -1,0 +1,245 @@
+#!/bin/sh
+# Router configuration from the build profile, applied on first boot after a flash or a reset.
+# Runs from /etc/init.d/boot before network and dropbear start: only uci and file writes, nothing
+# that waits for the modem (SPEC R8). Every step sets or deletes absolute values, so a run cut off
+# by a power loss and repeated on the next boot ends in the same state (SPEC R8a).
+
+# build.sh fills these from profiles/<name>.conf; values never contain a single quote.
+P_HOSTNAME='@HOSTNAME@'
+P_LAN_IP='@LAN_IP@'
+P_TIMEZONE='@TIMEZONE@'
+P_ZONENAME='@ZONENAME@'
+P_WIFI_SSID='@WIFI_SSID@'
+P_WIFI_KEY='@WIFI_KEY@'
+P_WIFI_COUNTRY='@WIFI_COUNTRY@'
+P_WIFI_CHANNEL_2G='@WIFI_CHANNEL_2G@'
+P_WIFI_HTMODE_2G='@WIFI_HTMODE_2G@'
+P_WIFI_CHANNEL_5G='@WIFI_CHANNEL_5G@'
+P_WIFI_HTMODE_5G='@WIFI_HTMODE_5G@'
+P_ROOT_PASSWORD_HASH='@ROOT_PASSWORD_HASH@'
+P_WWAN_APN='@WWAN_APN@'
+P_WWAN_AUTH='@WWAN_AUTH@'
+P_WWAN_USERNAME='@WWAN_USERNAME@'
+P_WWAN_PASSWORD='@WWAN_PASSWORD@'
+P_LTE_BANDS='@LTE_BANDS@'
+P_WG_ENABLED='@WG_ENABLED@'
+P_WG_PRIVATE_KEY='@WG_PRIVATE_KEY@'
+P_WG_ADDRESS='@WG_ADDRESS@'
+P_WG_PEER_PUBLIC_KEY='@WG_PEER_PUBLIC_KEY@'
+P_WG_ENDPOINT_HOST='@WG_ENDPOINT_HOST@'
+P_WG_ENDPOINT_PORT='@WG_ENDPOINT_PORT@'
+P_WG_ALLOWED_IPS='@WG_ALLOWED_IPS@'
+P_WG_KEEPALIVE='@WG_KEEPALIVE@'
+P_TG_BOT_TOKEN='@TG_BOT_TOKEN@'
+P_TG_CHAT_ID='@TG_CHAT_ID@'
+P_LOW_BALANCE='@LOW_BALANCE@'
+P_HC_PING_URL='@HC_PING_URL@'
+P_SMS_ADMINS='@SMS_ADMINS@'
+P_SMS_REBOOT_MAX_AGE_MIN='@SMS_REBOOT_MAX_AGE_MIN@'
+P_SMS_REBOOT_MAX_PER_DAY='@SMS_REBOOT_MAX_PER_DAY@'
+P_ROUTER_NAME='@ROUTER_NAME@'
+
+# set_or_delete OPTION VALUE: empty profile values remove the option instead of storing ''.
+set_or_delete() {
+    if [ -n "$2" ]; then
+        uci set "$1=$2"
+    else
+        uci -q delete "$1"
+    fi
+}
+
+# set_list OPTION VALUES: replace a list with the space- or comma-separated VALUES.
+set_list() {
+    uci -q delete "$1"
+    for item in $(echo "$2" | tr ',' ' '); do
+        uci add_list "$1=$item"
+    done
+}
+
+# LAN, in the CIDR list form config_generate writes on 25.12
+uci -q delete network.lan.netmask
+set_list network.lan.ipaddr "$P_LAN_IP/24"
+
+# LTE over QMI; an empty APN lets the network assign one (SPEC R13a), modes=lte (SPEC R10)
+uci set network.wwan=interface
+uci set network.wwan.proto='qmi'
+uci set network.wwan.device='/dev/cdc-wdm0'
+set_or_delete network.wwan.apn "$P_WWAN_APN"
+set_or_delete network.wwan.auth "$P_WWAN_AUTH"
+set_or_delete network.wwan.username "$P_WWAN_USERNAME"
+set_or_delete network.wwan.password "$P_WWAN_PASSWORD"
+uci set network.wwan.pdptype='ipv4'
+uci set network.wwan.multipath='off'
+uci set network.wwan.modes='lte'
+
+# WireGuard: wg0 always exists; without WG_ENABLED=1 it stays disabled (SPEC R31, R32)
+uci set network.wg0=interface
+uci set network.wg0.proto='wireguard'
+uci set network.wg0.multipath='off'
+uci set network.wg0.mtu='1400'
+if [ "$P_WG_ENABLED" = 1 ]; then
+    uci -q delete network.wg0.disabled
+else
+    uci set network.wg0.disabled='1'
+fi
+set_or_delete network.wg0.private_key "$P_WG_PRIVATE_KEY"
+set_list network.wg0.addresses "$P_WG_ADDRESS"
+uci -q delete network.wg_server
+if [ -n "$P_WG_PEER_PUBLIC_KEY" ]; then
+    uci set network.wg_server=wireguard_wg0
+    uci set network.wg_server.description='server'
+    uci set network.wg_server.public_key="$P_WG_PEER_PUBLIC_KEY"
+    set_or_delete network.wg_server.endpoint_host "$P_WG_ENDPOINT_HOST"
+    set_or_delete network.wg_server.endpoint_port "$P_WG_ENDPOINT_PORT"
+    set_or_delete network.wg_server.persistent_keepalive "$P_WG_KEEPALIVE"
+    set_list network.wg_server.allowed_ips "$P_WG_ALLOWED_IPS"
+    uci set network.wg_server.route_allowed_ips='1'
+fi
+uci commit network
+
+# Firewall: LTE in the wan zone; the tunnel zone reaches the router and the LAN, the LAN gets no
+# forwarding into the tunnel (SPEC R31a)
+wan_zone=$(uci show firewall | sed -n "s/^firewall\.\([^.]*\)\.name='wan'$/\1/p" | head -n1)
+if [ -n "$wan_zone" ]; then
+    uci -q del_list firewall."$wan_zone".network='wwan'
+    uci add_list firewall."$wan_zone".network='wwan'
+fi
+uci -q delete firewall.vpn
+uci set firewall.vpn=zone
+uci set firewall.vpn.name='vpn'
+uci set firewall.vpn.input='ACCEPT'
+uci set firewall.vpn.output='ACCEPT'
+uci set firewall.vpn.forward='REJECT'
+uci add_list firewall.vpn.network='wg0'
+uci -q delete firewall.vpn_lan
+uci set firewall.vpn_lan=forwarding
+uci set firewall.vpn_lan.src='vpn'
+uci set firewall.vpn_lan.dest='lan'
+uci commit firewall
+
+# WiFi: both radios (radio0 2.4 GHz, radio1 5 GHz on the MF289F), one SSID, fast roaming
+for r in radio0 radio1; do
+    uci set wireless."$r".country="$P_WIFI_COUNTRY"
+    uci set wireless."$r".cell_density='0'
+    uci -q delete wireless."$r".disabled
+done
+uci set wireless.radio0.channel="$P_WIFI_CHANNEL_2G"
+uci set wireless.radio0.htmode="$P_WIFI_HTMODE_2G"
+uci set wireless.radio0.noscan='1'
+uci set wireless.radio1.channel="$P_WIFI_CHANNEL_5G"
+uci set wireless.radio1.htmode="$P_WIFI_HTMODE_5G"
+for iface in default_radio0 default_radio1; do
+    uci set wireless."$iface".network='lan'
+    uci set wireless."$iface".mode='ap'
+    uci set wireless."$iface".ssid="$P_WIFI_SSID"
+    uci set wireless."$iface".encryption='psk-mixed'
+    uci set wireless."$iface".key="$P_WIFI_KEY"
+    uci set wireless."$iface".ieee80211r='1'
+    uci set wireless."$iface".ft_over_ds='0'
+    uci set wireless."$iface".ft_psk_generate_local='1'
+    uci -q delete wireless."$iface".disabled
+done
+uci commit wireless
+
+# WiFi schedule stays installed for LuCI but off (SPEC R7 table)
+if uci -q get wifi_schedule.@global[0] >/dev/null; then
+    uci set wifi_schedule.@global[0].enabled='0'
+    uci commit wifi_schedule
+fi
+
+# System: persistent log for diagnostics (SPEC R29), local time
+uci set system.@system[0].hostname="$P_HOSTNAME"
+uci set system.@system[0].timezone="$P_TIMEZONE"
+uci set system.@system[0].zonename="$P_ZONENAME"
+uci set system.@system[0].log_file='/root/openwrt.log'
+uci set system.@system[0].log_size='1024'
+uci set system.@system[0].log_buffer_size='1024'
+# busybox crond logs every job start at err level, which floods the persistent log on NAND (R29a)
+uci set system.@system[0].cronloglevel='9'
+uci commit system
+
+# Band target for lw-modem-mode; empty means the modem's bands are left alone (SPEC R11c)
+set_or_delete lonewrt.modem.bands "$P_LTE_BANDS"
+# Telegram notifications; empty token and chat leave lw-notify without an instance (SPEC R34 to
+# R38, D43). The token and the admin numbers are private, so the file is readable by root only (uci
+# keeps the mode).
+chmod 0600 /etc/config/lonewrt
+uci set lonewrt.notify=notify
+set_or_delete lonewrt.notify.token "$P_TG_BOT_TOKEN"
+set_or_delete lonewrt.notify.chat "$P_TG_CHAT_ID"
+set_or_delete lonewrt.notify.low_balance "$P_LOW_BALANCE"
+# The name that starts every SMS reply (SPEC R48); the profile requires it, so it is always set
+uci set lonewrt.notify.router_name="$P_ROUTER_NAME"
+# Numbers allowed to control the router by SMS (SPEC R46): the profile's comma list, verbatim
+set_or_delete lonewrt.notify.sms_admins "$P_SMS_ADMINS"
+# The limits of a REBOOT by SMS (SPEC R46b, D65): both always set, the profile requires them
+uci set lonewrt.notify.sms_reboot_max_age="$P_SMS_REBOOT_MAX_AGE_MIN"
+uci set lonewrt.notify.sms_reboot_max_day="$P_SMS_REBOOT_MAX_PER_DAY"
+uci commit lonewrt
+# Only one of token and chat: notifications stay off, and lw-notify says so once in syslog, which
+# does not run yet at this point of the boot (SPEC R38a)
+if [ -n "$P_TG_BOT_TOKEN$P_TG_CHAT_ID" ] &&
+    { [ -z "$P_TG_BOT_TOKEN" ] || [ -z "$P_TG_CHAT_ID" ]; }; then
+    touch /etc/lw-notify.partial
+else
+    rm -f /etc/lw-notify.partial
+fi
+
+# Heartbeat for healthchecks.io (SPEC R42, D57): the address is a secret like the token, so it sits
+# in the same root-only file. The cron line that calls it is added by render.py only when it is set.
+uci set lonewrt.heartbeat=heartbeat
+set_or_delete lonewrt.heartbeat.url "$P_HC_PING_URL"
+uci commit lonewrt
+
+# Data counters of /devices (SPEC R44, R44a, D59): nlbwmon keeps its database on flash, because the
+# default /var/lib/nlbwmon is RAM and a restart would zero the month. It commits once a day and when
+# it is stopped (SIGTERM, also at a shutdown); a hotplug script restarts it once per boot after the
+# first NTP sync, so the month is the right one. The period is the calendar month.
+touch /etc/config/nlbwmon
+uci -q get nlbwmon.@nlbwmon[0] >/dev/null || uci add nlbwmon nlbwmon >/dev/null
+uci set nlbwmon.@nlbwmon[0].database_directory='/etc/nlbwmon'
+uci set nlbwmon.@nlbwmon[0].commit_interval='24h'
+uci set nlbwmon.@nlbwmon[0].database_interval='1'
+uci commit nlbwmon
+mkdir -p /etc/nlbwmon
+
+# LuCI modem tools use the second AT port; the image's scripts own /dev/ttyUSB2 (SPEC R12)
+if uci -q get sms_tool_js.@sms_tool_js[0] >/dev/null; then
+    for o in readport sendport ussdport atport; do
+        uci set sms_tool_js.@sms_tool_js[0].$o='/dev/ttyUSB1'
+    done
+    uci set sms_tool_js.@sms_tool_js[0].storage='ME'
+    uci commit sms_tool_js
+fi
+if uci -q get modemband.@modemband[0] >/dev/null; then
+    uci set modemband.@modemband[0].set_port='/dev/ttyUSB1'
+    uci set modemband.@modemband[0].iface='wwan'
+    uci commit modemband
+fi
+
+# modemdata reads over AT, not uqmi: killed uqmi calls have exhausted QMI client IDs on this modem
+touch /etc/config/defmodems
+uci -q get defmodems.@general[0] >/dev/null || uci add defmodems general >/dev/null
+uci set defmodems.@general[0].main_modem='mf289f'
+uci set defmodems.mf289f=defmodems
+uci set defmodems.mf289f.modem='ZTE MF289F'
+uci set defmodems.mf289f.user_desc='LTE modem'
+uci set defmodems.mf289f.modemdata='serial'
+uci set defmodems.mf289f.comm_port='/dev/ttyUSB1'
+uci set defmodems.mf289f.network='wwan'
+uci set defmodems.mf289f.forced_plmn='0'
+uci commit defmodems
+
+# Root password; the hash alphabet is [A-Za-z0-9./$] (checked by build.sh), safe in sed
+if [ -n "$P_ROOT_PASSWORD_HASH" ]; then
+    sed -i "s|^root:[^:]*:|root:$P_ROOT_PASSWORD_HASH:|" /etc/shadow
+fi
+
+# lw-firstboot logs /etc/lw-build once syslog and the persistent log run (SPEC R7b)
+touch /etc/lw-firstboot.pending
+
+for s in lw-modem-mode lw-firstboot watchcat cron nlbwmon; do
+    [ -x /etc/init.d/$s ] && /etc/init.d/$s enable
+done
+
+exit 0

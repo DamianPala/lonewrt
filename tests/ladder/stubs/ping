@@ -1,0 +1,8 @@
+#!/bin/sh
+# Ladder wrapper around tests/stubs/ping. When $LW_TEST/net/hang exists the call hangs, to leave a
+# wwan-recover run stuck in the middle (lock tests).
+[ -e "${LW_TEST:-/lwtest}/net/hang" ] && exec sleep 3600
+# $LW_TEST/net/partial: 1 of 2 replies and exit 1, which ping may report with -w and -c.
+[ -e "${LW_TEST:-/lwtest}/net/partial" ] &&
+    { echo "2 packets transmitted, 1 packets received, 50% packet loss"; exit 1; }
+exec /fw/tests/stubs/ping "$@"

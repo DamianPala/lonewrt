@@ -1,0 +1,18 @@
+# Operator preset for MCC-MNC 29702 (Telekom Montenegro). The file name is the first 5 digits of the
+# SIM's IMSI. Read as data by /usr/lib/lw/operators.sh, never run as a shell script: one KEY='value'
+# per line, known keys only, no ' inside a value. Format and how to write one: README.md, section
+# "Operator presets".
+
+OPERATOR_NAME='Telekom'
+CURRENCY='EUR'
+
+# The balance query: this text is sent to this number (weekly and on /balance).
+BALANCE_QUERY_NUMBER='1466'
+BALANCE_QUERY_TEXT='RACUN'
+
+# The answer: it comes from this sender, and its first line looks like this pattern.
+BALANCE_REPLY_FROM='1466'
+BALANCE_REPLY_PATTERN='Imate: {amount} do {day}.{month}.'
+
+# Senders shown as "<OPERATOR_NAME> <code>" in the chat.
+SHORT_CODES='1466 1477'

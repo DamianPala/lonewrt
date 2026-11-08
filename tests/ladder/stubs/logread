@@ -1,0 +1,5 @@
+#!/bin/sh
+# Test stand-in for logread: the RAM log of the current boot is $LW_TEST/logread (empty after a
+# simulated reboot), so tests can tell this boot's NETDEV WATCHDOG lines from older ones.
+cat "${LW_TEST:-/lwtest}/logread" 2>/dev/null
+exit 0

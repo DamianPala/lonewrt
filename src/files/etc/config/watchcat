@@ -1,0 +1,10 @@
+
+config watchcat 'wwan_soft'
+	option mode 'restart_iface'
+	option interface '@wwan'
+	option pinghosts '8.8.8.8 1.1.1.1'
+	option pingperiod '60'
+	option period '300'
+	option pingsize 'standard'
+	option addressfamily 'ipv4'
+	option reset_failure_timer '1'

@@ -1,0 +1,13 @@
+#!/bin/sh /etc/rc.common
+# VM test bench only. Last init script of the boot: tells the harness on the console that this boot
+# (identified by the kernel's boot_id) has run all its init scripts.
+
+# shellcheck disable=SC2034  # read by /etc/rc.common
+START=99
+
+start() {
+    id=$(cat /proc/sys/kernel/random/boot_id)
+    echo "$id" >/tmp/lw-vm-ready
+    echo "LWVM-MARK ready" >/dev/console
+    echo "LWVM-READY $id" >/dev/console
+}

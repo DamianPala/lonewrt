@@ -1,0 +1,3 @@
+#!/bin/sh
+# Test stand-in for reboot: records the call in $LW_TEST/events.
+echo "reboot $*" >>"${LW_TEST:-/lwtest}/events"

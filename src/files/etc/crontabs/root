@@ -1,0 +1,3 @@
+*/5 * * * * /usr/sbin/wwan-recover
+2-59/5 * * * * /usr/sbin/lw-siglog
+10 4 * * * /usr/sbin/lw-sms-clean

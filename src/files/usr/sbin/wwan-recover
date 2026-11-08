@@ -1,0 +1,511 @@
+#!/bin/sh
+# LTE link recovery, run by cron every 5 min (SPEC "Naprawa lacza" R15-R21e, "Awaryjne EDGE"
+# R22-R25). Watchcat restarts the wwan interface by itself (R14); this script reboots the router on
+# a ladder of growing gaps up to a limit, classifies the failure, and switches to EDGE through
+# lw-fallback when a reboot did not bring LTE back.
+#
+# The failure counter counts cycles, not wall time: the router has no RTC and its clock jumps back
+# after a reboot without NTP (D9). There is no step between ifup and reboot: AT+CFUN=1,1 and USB
+# unbind reset the whole board anyway (D11). The class never holds a reboot back below the limit,
+# because the modem can report a connection while data is stuck (D10).
+
+set -u
+
+if [ "${WWAN_RECOVER_WRAPPED:-0}" != 1 ]; then
+    # Hard bound on one run (R21a). coreutils timeout leads its own process group, which a later
+    # run kills as a whole when it takes over the lock of a stuck one.
+    export WWAN_RECOVER_WRAPPED=1
+    exec timeout -k 5 265 /bin/sh "$0" "$@"
+fi
+
+# shellcheck source=src/files/usr/lib/lw/common.sh
+. /usr/lib/lw/common.sh
+
+TAG=wwan-recover
+STATE=/etc/wwan-recover.state
+RUN=/tmp/wwan-recover.run
+LOCK=/tmp/wwan-recover.lock
+SNAPSHOT=/root/wwan-recover-snapshot.txt
+LOG=/root/openwrt.log
+SIGLOG=/tmp/lw-signal.log
+STATS=${LW_NET_STATS:-/sys/class/net/wwan0/statistics}
+FALLBACK=/usr/sbin/lw-fallback
+IFACE=wwan0
+HOSTS="8.8.8.8 1.1.1.1"
+DNS_NAME=openwrt.org
+GRACE=600
+LADDER="6 18 42 90 162 234"
+CAP=6
+CAP_NO_EDGE=2
+PROBE_EVERY=72
+PROBE_CYCLES=2
+LOCK_STALE=1200
+
+is_num() {
+    case ${1:-x} in *[!0-9]*) return 1 ;; esac
+    return 0
+}
+
+dry() { [ "${DRYRUN:-0}" = 1 ]; }
+
+# Every entry ends with the same fields (R21e), so a failure reads right even with a wrong clock.
+say() {
+    lw_log "$TAG" "$* cycle=$cycles reboots=$reboots class=$class mode=$mode uptime=$up"
+}
+
+counter() {
+    _c=$(cat "$STATS/$1" 2>/dev/null)
+    is_num "$_c" || _c=0
+    echo "$_c"
+}
+
+state_text() {
+    printf 'cycles=%s\nreboots=%s\nclass=%s\npassive=%s\n' "$cycles" "$reboots" "$class" "$passive"
+}
+
+load_state() {
+    cycles=0 reboots=0 class=none passive=0
+    if [ -f "$STATE" ]; then
+        while IFS='=' read -r k v; do
+            case $k in
+                cycles) is_num "$v" && cycles=$v ;;
+                reboots) is_num "$v" && reboots=$v ;;
+                passive) [ "$v" = 1 ] && passive=1 ;;
+                class) case $v in sim | account | hang | unknown) class=$v ;; esac ;;
+            esac
+        done <"$STATE"
+    fi
+    state_before=$(state_text)
+}
+
+# The state is written only when a field other than uptime changed (R21c), atomically.
+save_state() {
+    dry && return 0
+    if [ "$cycles" -eq 0 ]; then
+        rm -f "$STATE"
+        return 0
+    fi
+    [ -f "$STATE" ] && [ "$(state_text)" = "$state_before" ] && return 0
+    { state_text; echo "uptime=$up"; } | lw_write_atomic "$STATE" || return 1
+    state_before=$(state_text)
+}
+
+# Per-boot state in /tmp (lost at reboot on purpose, R24): watchdog baseline, EDGE entry this
+# boot, cycles on EDGE since entry, LTE probe cycles (empty = no probe).
+load_run() {
+    wd_ino='' wd_base=0 wd_seen=0 edge_boot=0 edge_cycles=0 probe=''
+    [ -f "$RUN" ] || return 0
+    while IFS='=' read -r k v; do
+        case $k in
+            wd_ino) wd_ino=$v ;;
+            wd_base) is_num "$v" && wd_base=$v ;;
+            wd_seen) [ "$v" = 1 ] && wd_seen=1 ;;
+            edge_boot) [ "$v" = 1 ] && edge_boot=1 ;;
+            edge_cycles) is_num "$v" && edge_cycles=$v ;;
+            probe) is_num "$v" && probe=$v ;;
+        esac
+    done <"$RUN"
+}
+
+save_run() {
+    dry && return 0
+    printf 'wd_ino=%s\nwd_base=%s\nwd_seen=%s\nedge_boot=%s\nedge_cycles=%s\nprobe=%s\n' \
+        "$wd_ino" "$wd_base" "$wd_seen" "$edge_boot" "$edge_cycles" "$probe" |
+        lw_write_atomic "$RUN"
+}
+
+wd_count() {
+    _c=$(grep -c 'NETDEV WATCHDOG' "$1" 2>/dev/null)
+    is_num "$_c" || _c=0
+    echo "$_c"
+}
+
+# NETDEV WATCHDOG counts only from this boot (R21d). The persistent log spans boots, so the first
+# run of a boot takes the file count minus what the RAM log, which holds only this boot, already
+# has. A rotation (new inode) leaves a file that holds only this boot.
+wd_update() {
+    # shellcheck disable=SC2012  # fixed path; busybox has no stat for the inode
+    _ino=$(ls -i "$LOG" 2>/dev/null | awk '{print $1}')
+    _ino=${_ino:-none}
+    _now=$(wd_count "$LOG")
+    if [ -z "$wd_ino" ]; then
+        _ram=$(timeout 5 logread 2>/dev/null | grep -c 'NETDEV WATCHDOG')
+        is_num "$_ram" || _ram=0
+        wd_base=$((_now - _ram))
+        [ "$wd_base" -ge 0 ] || wd_base=0
+        [ "$_ram" -gt 0 ] && wd_seen=1
+        wd_ino=$_ino
+        return 0
+    fi
+    if [ "$_ino" != "$wd_ino" ]; then
+        [ "$(wd_count "$LOG.old")" -gt "$wd_base" ] && wd_seen=1
+        wd_base=0
+        wd_ino=$_ino
+    fi
+    [ "$_now" -gt "$wd_base" ] && wd_seen=1
+    return 0
+}
+
+is_wwan_recover() {
+    is_num "${1:-}" || return 1
+    case $(tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null) in *wwan-recover*) return 0 ;; esac
+    return 1
+}
+
+# tree PID: PID and all its descendants, parents first.
+tree() {
+    echo "$1"
+    for _p in $(pgrep -P "$1"); do
+        tree "$_p"
+    done
+}
+
+# kill_run PID PGID: the stuck run, its children, and whatever is left in its timeout's process
+# group (children of a dead run are no longer its descendants, but still in that group).
+kill_run() {
+    if is_wwan_recover "$1"; then
+        for _p in $(tree "$1"); do
+            kill -9 "$_p" 2>/dev/null
+        done
+    fi
+    if is_num "${2:-}" && [ "${2:-0}" -gt 1 ] && [ "$2" != "$own_pg" ]; then
+        kill -9 "-$2" 2>/dev/null
+    fi
+    return 0
+}
+
+# The lock is a symlink whose target "pid:pgid:uptime" is written in the same atomic step (R21a).
+lock_take() {
+    own_pg=''
+    read -r _ _ _ _ _g _ <"/proc/$$/stat" && [ "$_g" = "$PPID" ] && own_pg=$_g
+    me="$$:$own_pg:$up"
+    ln -s "$me" "$LOCK" 2>/dev/null && return 0
+    _held=$(readlink "$LOCK" 2>/dev/null)
+    _hpid=${_held%%:*}
+    _rest=${_held#*:}
+    _hpg=${_rest%%:*}
+    _hstart=${_rest#*:}
+    is_num "$_hstart" || _hstart=0
+    if is_wwan_recover "$_hpid"; then
+        _age=$((up - _hstart))
+        if [ "$_age" -le "$LOCK_STALE" ]; then
+            say "previous run (pid $_hpid) still active, exiting"
+            exit 0
+        fi
+        say "previous run (pid $_hpid) running for ${_age}s, killing it and taking the lock over"
+    else
+        say "previous run (pid ${_hpid:-unknown}) is gone, taking the lock over"
+    fi
+    kill_run "$_hpid" "$_hpg"
+    rm -f "$LOCK"
+    ln -s "$me" "$LOCK" 2>/dev/null || exit 0
+}
+
+# shellcheck disable=SC2329  # called from the EXIT trap
+lock_release() {
+    [ "$(readlink "$LOCK" 2>/dev/null)" = "$me" ] && rm -f "$LOCK"
+    return 0
+}
+
+# Any reply counts (SPEC Terms "online"). It is read from the statistics line, because with -w the
+# exit code can also report fewer replies than -c asked for.
+online_now() {
+    for _h in $HOSTS; do
+        ping -I "$IFACE" -c 2 -w 3 -q "$_h" 2>/dev/null | grep -q ' [1-9][0-9]* packets received' &&
+            return 0
+    done
+    return 1
+}
+
+dns_ok() {
+    _dns=$(ifstatus wwan_4 2>/dev/null | jsonfilter -e '@["dns-server"][0]' 2>/dev/null)
+    [ -n "$_dns" ] || return 1
+    timeout 5 nslookup "$DNS_NAME" "$_dns" >/dev/null 2>&1
+}
+
+zsnt_lte() {
+    _z=$(lw_at 10 'AT+ZSNT?') || return 1
+    case $_z in *"ZSNT: 6,"*) return 0 ;; esac
+    return 1
+}
+
+# A SIM-related answer other than READY; no answer, a bare ERROR or a numeric CME code is not one.
+# "SIM busy" is skipped: a modem that just reset answers it for a moment, and sim is sticky.
+sim_not_ready() {
+    case $1 in
+        *READY* | *[Bb][Uu][Ss][Yy]*) return 1 ;;
+        *CPIN:* | *SIM*) return 0 ;;
+    esac
+    return 1
+}
+
+no_edge_class() {
+    case $class in account | sim) return 0 ;; esac
+    return 1
+}
+
+cap() {
+    if no_edge_class; then echo "$CAP_NO_EDGE"; else echo "$CAP"; fi
+}
+
+threshold() {
+    _i=0
+    for _step in $LADDER; do
+        [ "$_i" -eq "$reboots" ] && echo "$_step" && return 0
+        _i=$((_i + 1))
+    done
+    return 0
+}
+
+# Class of an offline cycle in LTE-only mode (R18): sim, account, hang, else unknown. sim and
+# account stick to the end of the failure, because watchcat raising wwan and a briefly silent port
+# give false hangs in single cycles (D40).
+classify() {
+    case $class in
+        sim | account)
+            detail="$detail, class kept"
+            return 0
+            ;;
+    esac
+    _rc=0
+    _cpin=$(lw_at 10 'AT+CPIN?') || _rc=$?
+    if [ "$_rc" = 0 ] && sim_not_ready "$_cpin"; then
+        class=sim
+        _cpin=$(printf '%s' "$_cpin" | tr '\n' ' ' | tr -cd ' -~')
+        say "SIM not ready (AT+CPIN?: $_cpin): enter the PIN in LuCI or unlock the card;" \
+            "reboots stop at $CAP_NO_EDGE, no EDGE"
+        return 0
+    fi
+    if [ "$wd_seen" = 0 ] && dns_ok; then
+        class=account
+        detail="$detail, operator DNS answers, no watchdog"
+        say "operator DNS answers but no data: package or account likely exhausted;" \
+            "reboots stop at $CAP_NO_EDGE, no EDGE"
+        return 0
+    fi
+    detail="$detail, operator DNS silent or skipped, watchdog this boot=$wd_seen"
+    if [ "$wd_seen" = 1 ] || [ "$tx_d" -lt 2 ]; then
+        class=hang
+    else
+        class=unknown
+    fi
+}
+
+# Modem reads for the snapshot, at most 30 s together (R20a): a busy AT lock or the first timeout
+# skips the rest, because the reboot must not wait for a modem suspected of hanging (D33).
+snapshot_at() {
+    _t0=$(date +%s)
+    for _cmd in 'AT+ZSNT?' 'AT+CPIN?' 'AT+CEREG?' 'AT+COPS?' 'AT+CSQ' 'AT+CGPADDR=1'; do
+        if [ $(($(date +%s) - _t0)) -gt 20 ]; then
+            echo "modem reads skipped from $_cmd on: 30 s budget used up"
+            return 0
+        fi
+        _rc=0
+        _out=$(lw_at_nowait 10 "$_cmd") || _rc=$?
+        case $_rc in
+            0) echo "$_cmd -> $(printf '%s' "$_out" | tr '\n' ' ')" ;;
+            75)
+                echo "modem reads skipped from $_cmd on: AT lock busy"
+                return 0
+                ;;
+            124)
+                echo "$_cmd -> no answer in 10 s; remaining modem reads skipped"
+                return 0
+                ;;
+            *) echo "$_cmd -> error $_rc" ;;
+        esac
+    done
+}
+
+snapshot_entry() {
+    echo "=== $1 cycle=$cycles reboots=$reboots class=$class mode=$mode uptime=$up" \
+        "date=$(date '+%Y-%m-%d_%H:%M:%S')"
+    echo "--- $IFACE counters"
+    for _f in tx_packets rx_packets tx_errors tx_dropped rx_dropped; do
+        printf '%s=%s ' "$_f" "$(counter "$_f")"
+    done
+    echo
+    echo "--- $IFACE address"
+    ip -4 addr show "$IFACE" 2>&1
+    echo "--- modem (AT)"
+    snapshot_at
+    echo "--- last NETDEV WATCHDOG lines in $LOG"
+    grep 'NETDEV WATCHDOG' "$LOG" 2>/dev/null | tail -n 3
+    echo "--- last 12 lines of $SIGLOG"
+    tail -n 12 "$SIGLOG" 2>/dev/null
+    echo
+}
+
+# snapshot new|append REASON (R20): a new failure starts a new file, the old one goes to .old.
+snapshot() {
+    if dry; then
+        snapshot_entry "$2"
+    elif [ "$1" = new ]; then
+        [ -f "$SNAPSHOT" ] && mv -f "$SNAPSHOT" "$SNAPSHOT.old"
+        snapshot_entry "$2" | lw_write_atomic "$SNAPSHOT"
+    else
+        snapshot_entry "$2" >>"$SNAPSHOT"
+    fi
+}
+
+switch_mode() {
+    "$FALLBACK" "$1" >/dev/null
+    dry || mode=$1
+}
+
+end_failure() {
+    say "online on LTE, failure over after $cycles cycles and $reboots reboots$1"
+    cycles=0 reboots=0 class=none passive=0
+    probe='' edge_cycles=0
+}
+
+do_reboot() {
+    reboots=$((reboots + 1))
+    say "REBOOT $reboots of $(cap): failure reached $1 cycles"
+    snapshot append "reboot $reboots"
+    if ! save_state; then
+        # Without the new count every boot would hit the same threshold again: a reboot every few
+        # cycles with no limit (R19, R21).
+        say "state not saved to $STATE, reboot skipped"
+        return 0
+    fi
+    save_run
+    dry && return 0
+    sync
+    reboot
+}
+
+go_passive() {
+    passive=1
+    say "LIMIT: $reboots reboots did not bring LTE back; passive mode, no reboot until LTE is" \
+        "online (watchcat keeps restarting wwan)"
+    snapshot append "limit"
+}
+
+enter_edge() {
+    say "EDGE enter: $1; modem to auto mode for remote access"
+    switch_mode edge
+    edge_boot=1
+    edge_cycles=0
+}
+
+# After the limit: every PROBE_EVERY cycles on EDGE, online or not, try LTE-only mode (R23).
+edge_tick() {
+    edge_cycles=$((edge_cycles + 1))
+    [ "$edge_cycles" -ge "$PROBE_EVERY" ] || return 0
+    say "LTE probe: $edge_cycles cycles on EDGE, trying LTE-only mode"
+    switch_mode lte
+    edge_cycles=0
+    probe=0
+}
+
+# A probe that is neither online nor confirmed in PROBE_CYCLES cycles goes back to EDGE, unless
+# its own cycles found account or sim (D41).
+probe_step() {
+    probe=$((probe + 1))
+    [ "$probe" -ge "$PROBE_CYCLES" ] || return 0
+    if no_edge_class; then
+        [ "$probe" -eq "$PROBE_CYCLES" ] &&
+            say "LTE probe failed with class $class; staying in LTE-only mode, no EDGE for $class"
+        return 0
+    fi
+    say "EDGE back: LTE probe failed after $probe cycles"
+    switch_mode edge
+    probe=''
+    edge_cycles=0
+}
+
+# Actions of a failure cycle after the boot grace: limit first, then ladder, then EDGE (R19, R22).
+act() {
+    if [ -n "$probe" ]; then
+        probe_step
+        return 0
+    fi
+    [ "$passive" = 0 ] && [ "$reboots" -ge "$(cap)" ] && go_passive
+    if [ "$passive" = 1 ]; then
+        if [ "$mode" = edge ]; then
+            edge_tick
+        elif [ "$online" = 0 ] && [ "$edge_boot" = 0 ] && ! no_edge_class; then
+            enter_edge "passive mode after the limit, LTE still down"
+        fi
+        return 0
+    fi
+    _th=$(threshold)
+    if [ -n "$_th" ] && [ "$cycles" -ge "$_th" ]; then
+        do_reboot "$_th"
+        return 0
+    fi
+    if [ "$online" = 0 ] && [ "$mode" = lte ] && [ "$reboots" -ge 1 ] && [ "$edge_boot" = 0 ] &&
+        ! no_edge_class; then
+        enter_edge "LTE not back after reboot $reboots"
+    fi
+    return 0
+}
+
+# First 10 min after boot (R17): an ongoing failure keeps counting, nothing else happens.
+grace_cycle() {
+    if [ "$cycles" -gt 0 ]; then
+        cycles=$((cycles + 1))
+        say "no LTE in the first ${GRACE}s after boot ($detail); counting only"
+    elif [ "$online" = 0 ]; then
+        say "offline in the first ${GRACE}s after boot ($detail); no failure started"
+    fi
+}
+
+cycle() {
+    detail="tx+$tx_d rx+$rx_d"
+    if [ "$online" = 1 ] && [ "$mode" = lte ]; then
+        if [ -z "$probe" ]; then
+            [ "$cycles" -gt 0 ] && end_failure ""
+            return 0
+        fi
+        if zsnt_lte; then
+            end_failure ", LTE probe confirmed by AT+ZSNT?"
+            return 0
+        fi
+        detail="$detail, LTE probe online but AT+ZSNT? does not confirm LTE-only mode"
+    fi
+    if [ "$up" -lt "$GRACE" ]; then
+        grace_cycle
+        return 0
+    fi
+    [ "$online" = 1 ] && [ "$cycles" -eq 0 ] && return 0
+    _new=$cycles
+    cycles=$((cycles + 1))
+    [ "$online" = 0 ] && [ "$mode" = lte ] && classify
+    if [ "$online" = 1 ]; then
+        say "online on $mode, failure goes on until LTE-only mode is online ($detail)"
+    elif [ "$_new" -eq 0 ]; then
+        say "offline, failure starts ($detail)"
+    else
+        say "offline ($detail)"
+    fi
+    [ "$_new" -eq 0 ] && snapshot new "failure start"
+    act
+}
+
+up=$(lw_uptime)
+is_num "$up" || up=0
+load_state
+load_run
+mode=$("$FALLBACK" mode 2>/dev/null)
+[ "$mode" = lte ] || mode=edge
+me=''
+own_pg=''
+if ! dry; then
+    lock_take
+    trap 'lock_release' EXIT
+    trap 'say "run cut at its time limit"; exit 1' TERM INT
+fi
+wd_update
+tx0=$(counter tx_packets)
+rx0=$(counter rx_packets)
+online=0
+online_now && online=1
+# Sent packets are measured before the DNS query, pings of this cycle included (R18c).
+tx_d=$(($(counter tx_packets) - tx0))
+rx_d=$(($(counter rx_packets) - rx0))
+cycle
+save_state
+save_run
+exit 0

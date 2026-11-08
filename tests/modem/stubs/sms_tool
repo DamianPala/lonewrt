@@ -1,0 +1,42 @@
+#!/bin/sh
+# Modem tests' wrapper around tests/stubs/sms_tool: the shared stub applies HANG and SILENT only to
+# "at" commands, so a silent or hung modem could still list and delete messages. Here
+# $LW_TEST/at/ALL also covers recv and delete, and $LW_TEST/at/RECV and $LW_TEST/at/DELETE cover
+# one of them (content HANG or SILENT). Everything else goes to the shared stub.
+T=${LW_TEST:-/lwtest}
+cmd=
+port=
+skip=
+for a in "$@"; do
+    if [ -n "$skip" ]; then
+        [ "$skip" = d ] && port=$a
+        skip=
+        continue
+    fi
+    case $a in
+        -d) skip=d ;;
+        -s | -b | -f) skip=x ;;
+        -*) ;;
+        *) cmd=$a && break ;;
+    esac
+done
+case $cmd in
+    recv) key=RECV ;;
+    delete) key=DELETE ;;
+    *) exec /fw/tests/stubs/sms_tool "$@" ;;
+esac
+for f in "$T/at/ALL" "$T/at/$key"; do
+    [ -f "$f" ] || continue
+    case $(head -n 1 "$f") in
+        HANG)
+            echo "$port $*" >>"$T/at-calls"
+            sleep 3600
+            exit 0
+            ;;
+        SILENT)
+            echo "$port $*" >>"$T/at-calls"
+            exit 0
+            ;;
+    esac
+done
+exec /fw/tests/stubs/sms_tool "$@"

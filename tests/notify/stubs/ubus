@@ -1,0 +1,20 @@
+#!/bin/sh
+# Test stand-in for ubus: the hostapd objects the Wi-Fi device count asks for (only
+# "list hostapd.*" and "call <object> get_clients").
+#   $LW_TEST/wifi/<object>.json   the get_clients answer of that object, e.g. hostapd.phy0-ap0.json
+#   $LW_TEST/wifi/FAIL            every call fails (exit 4, like a ubus that does not answer)
+W=${LW_TEST:-/lwtest}/wifi
+[ ! -e "$W/FAIL" ] || exit 4
+case $1 in
+    list)
+        for f in "$W"/*.json; do
+            [ -f "$f" ] && basename "$f" .json
+        done
+        exit 0
+        ;;
+    call)
+        [ "${3:-}" = get_clients ] && [ -f "$W/$2.json" ] || exit 4
+        cat "$W/$2.json"
+        ;;
+    *) exit 4 ;;
+esac

@@ -1,0 +1,65 @@
+#!/bin/sh
+# Mode switch for emergency EDGE access (SPEC R22-R25). wwan-recover decides when; this script only
+# switches, and the owner can run it by hand too.
+#   edge   EDGE marker, network.wwan.modes=all, AT+ZSNT=0,0,0, ifup wwan
+#   lte    no EDGE marker, network.wwan.modes=lte, AT+ZSNT=6,0,0, ifup wwan
+#   mode   prints lte in LTE-only mode (no EDGE marker and modes=lte), otherwise edge
+# EDGE needs the modem's auto mode because a modem on EDGE never reselects LTE by itself (tested
+# 2026-11-06). The marker lives in /tmp and every boot puts uci and the modem back to LTE-only
+# (R10, R11), so a reboot always ends EDGE (R24). Watchcat is not paused while switching: its ifup
+# at that moment only delays the link.
+
+# shellcheck source=src/files/usr/lib/lw/common.sh
+. /usr/lib/lw/common.sh
+
+TAG=lw-fallback
+MARK=/tmp/lw-edge
+
+current_mode() {
+    if [ ! -e "$MARK" ] && [ "$(uci -q get network.wwan.modes)" = lte ]; then
+        echo lte
+    else
+        echo edge
+    fi
+}
+
+# switch_to edge|lte
+switch_to() {
+    if [ "$1" = edge ]; then
+        modes=all zsnt=0,0,0
+    else
+        modes=lte zsnt=6,0,0
+    fi
+    if [ "${DRYRUN:-0}" = 1 ]; then
+        lw_log "$TAG" "would switch to $1: network.wwan.modes=$modes, AT+ZSNT=$zsnt, ifup wwan"
+        return 0
+    fi
+    rc=0
+    # The marker goes first on the way to EDGE and first away on the way back, so an interrupted
+    # switch never reads as LTE-only while the modem may be in auto mode.
+    if [ "$1" = edge ]; then
+        : >"$MARK"
+    else
+        rm -f "$MARK"
+    fi
+    if ! { uci set network.wwan.modes="$modes" && uci commit network; }; then
+        lw_log "$TAG" "uci could not set network.wwan.modes=$modes"
+        rc=1
+    fi
+    if ! lw_at 15 "AT+ZSNT=$zsnt" >/dev/null; then
+        lw_log "$TAG" "AT+ZSNT=$zsnt got no answer, the modem may keep its old mode"
+        rc=1
+    fi
+    ifup wwan
+    lw_log "$TAG" "switched to $1: network.wwan.modes=$modes, AT+ZSNT=$zsnt, ifup wwan"
+    return "$rc"
+}
+
+case ${1:-} in
+    mode) current_mode ;;
+    edge | lte) switch_to "$1" ;;
+    *)
+        echo "usage: $0 edge|lte|mode" >&2
+        exit 2
+        ;;
+esac

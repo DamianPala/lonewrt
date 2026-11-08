@@ -1,0 +1,48 @@
+#!/bin/sh
+# Test stand-in for nlbw, the client of nlbwmon. The daemon's in-memory database is the file
+# /tmp/nlbw-mem (RAM: a simulated reboot removes it), one "<mac> <rx_bytes> <tx_bytes>" per line;
+# without that file the daemon is "not running" and every command fails like the real client does
+# (exit 247). Commands:
+#   nlbw -c json -g mac   {"columns":[...],"data":[[...],...]} in the form the client prints it;
+#                         with $LW_TEST/nlbw/pretty it is spread over lines with spaces
+#   nlbw -c commit        what the daemon does on SIGTERM and once a day: write the database to its
+#                         database_directory (uci nlbwmon), counted in $LW_TEST/nlbw/commits
+# The fake init script (nlbwmon-init) restores the file from that directory on start.
+T=${LW_TEST:-/lwtest}
+MEM=/tmp/nlbw-mem
+[ -f "$MEM" ] || { echo "Error while processing command: Bad file descriptor" >&2; exit 247; }
+cmd=
+while getopts c:g:o:t:s:p:q:e:n o; do
+    case $o in c) cmd=$OPTARG ;; *) ;; esac
+done
+case $cmd in
+    json)
+        pretty=
+        [ ! -f "$T/nlbw/pretty" ] || pretty=1
+        if [ -n "$pretty" ]; then
+            printf '{\n  "columns": ["mac", "conns", "rx_bytes", "rx_pkts", "tx_bytes", "tx_pkts"],\n  "data": [\n'
+        else
+            printf '{"columns":["mac","conns","rx_bytes","rx_pkts","tx_bytes","tx_pkts"],"data":['
+        fi
+        sep=
+        while read -r mac rx tx; do
+            [ -n "$mac" ] || continue
+            if [ -n "$pretty" ]; then
+                printf '%s    [ "%s", 3, %s, 7, %s, 9 ]' "$sep" "$mac" "$rx" "$tx"
+                sep=',
+'
+            else
+                printf '%s["%s",3,%s,7,%s,9]' "$sep" "$mac" "$rx" "$tx"
+                sep=,
+            fi
+        done <"$MEM"
+        if [ -n "$pretty" ]; then printf '\n  ]\n}\n'; else printf ']}\n'; fi
+        ;;
+    commit)
+        dir=$(uci -q get nlbwmon.@nlbwmon[0].database_directory) || dir=/var/lib/nlbwmon
+        mkdir -p "$dir" "$T/nlbw"
+        cp "$MEM" "$dir/db"
+        echo commit >>"$T/nlbw/commits"
+        ;;
+    *) echo "Unrecognized command '$cmd'" >&2 && exit 1 ;;
+esac

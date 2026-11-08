@@ -1,0 +1,35 @@
+#!/bin/sh /etc/rc.common
+# Logs the image identity from /etc/lw-build once after a flash or a reset (SPEC R7b), so the
+# persistent log shows that a reset happened and which image runs. zz-lw-config leaves the marker
+# on first boot; the entry waits in the background until logd and the log file writer run.
+
+# shellcheck disable=SC2034  # read by /etc/rc.common
+START=99
+
+PENDING=/etc/lw-firstboot.pending
+BUILD=/etc/lw-build
+WAIT=120
+
+log_ready() {
+    pidof logd >/dev/null || return 1
+    [ -z "$(uci -q get system.@system[0].log_file)" ] && return 0
+    # logread -f -F is the process that appends syslog to the persistent log file
+    pidof logread >/dev/null
+}
+
+log_build() {
+    i=0
+    while ! log_ready && [ "$i" -lt "$WAIT" ]; do
+        sleep 2
+        i=$((i + 2))
+    done
+    # shellcheck source=src/files/usr/lib/lw/common.sh
+    . /usr/lib/lw/common.sh
+    lw_log lw-firstboot "$(tr '\n' ' ' <"$BUILD" | sed 's/ *$//')"
+    rm -f "$PENDING"
+}
+
+start() {
+    [ -f "$PENDING" ] || return 0
+    (log_build) </dev/null >/dev/null 2>&1 &
+}

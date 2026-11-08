@@ -1,0 +1,3 @@
+#!/bin/sh
+# Test stand-in for ifup: records the call in $LW_TEST/events.
+echo "ifup $*" >>"${LW_TEST:-/lwtest}/events"

@@ -1,0 +1,7 @@
+
+config sms_tool_js
+	option storage 'SM'
+	option readport ''
+	option sendport ''
+	option ussdport ''
+	option atport ''

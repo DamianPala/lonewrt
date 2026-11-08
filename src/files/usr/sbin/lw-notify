@@ -1,0 +1,558 @@
+#!/bin/sh
+# Telegram notifications for the full image (SPEC R34 to R38, D43 to D48): every new SMS to the
+# owner's chat, the weekly balance check, and a bot (/status, /wifi, /devices, /speedtest, /balance,
+# /sms, /alerts, /reboot, /help) that changes only the 2G backup message and, after a tap on a
+# button, restarts the router (R37a, R37c, R45).
+# Nothing runs without a bot token and chat in uci lonewrt.notify (the default image, D43).
+#
+#   lw-notify run     the procd service: poll the modem every 15 s, long-poll the bot in between
+#   lw-notify once    one pass without waiting (tests, manual check)
+#   lw-notify flush   send the queue now (wwan hotplug, R34a)
+#   lw-notify balance the Monday balance check from cron (R35)
+#   lw-notify speedtest-run   the worker of /speedtest, started by the service only (R41)
+
+# shellcheck source=src/files/usr/lib/lw/common.sh
+. /usr/lib/lw/common.sh
+# shellcheck source=src/files/usr/lib/lw/notify.sh
+. /usr/lib/lw/notify.sh
+# shellcheck source=src/files/usr/lib/lw/operators.sh
+. /usr/lib/lw/operators.sh
+# shellcheck source=src/files/usr/lib/lw/multipart.sh
+. /usr/lib/lw/multipart.sh
+# shellcheck source=src/files/usr/lib/lw/speedtest.sh
+. /usr/lib/lw/speedtest.sh
+# shellcheck source=src/files/usr/lib/lw/devices.sh
+. /usr/lib/lw/devices.sh
+# shellcheck source=src/files/usr/lib/lw/reboot.sh
+. /usr/lib/lw/reboot.sh
+# shellcheck source=src/files/usr/lib/lw/smsctl.sh
+. /usr/lib/lw/smsctl.sh
+
+# nt_ping_try: the "online" of the recovery script: ping 8.8.8.8 or 1.1.1.1 through wwan0. On
+# success NT_PING_MS holds the average round trip in whole ms (empty when ping printed none).
+nt_ping_try() {
+    for _h in 8.8.8.8 1.1.1.1; do
+        _po=$(timeout 5 ping -c 2 -w 3 -I wwan0 "$_h" 2>/dev/null) || continue
+        NT_PING_MS=$(printf '%s\n' "$_po" |
+            sed -n 's|^.* = [0-9.]*/\([0-9.]*\)/.*|\1|p' | head -n 1)
+        NT_PING_MS=$(nt_st_int "$NT_PING_MS")
+        return 0
+    done
+    return 1
+}
+
+nt_online() { nt_ping_try; }
+
+# nt_sig KEY: one value of the newest signal log line; empty for a missing or "?" reading.
+nt_sig() {
+    printf '%s\n' "$_sig" | tr ' ' '\n' | sed -n "s/^$1=//p" | head -n 1 | grep -v '^?$' || :
+}
+
+# nt_num TEXT: the number in a reading such as "-86dBm"; empty when there is none.
+nt_num() {
+    printf '%s\n' "$1" | sed -n 's/^\(-\{0,1\}[0-9][0-9]*\(\.[0-9][0-9]*\)\{0,1\}\).*/\1/p'
+}
+
+# nt_rating RSRP SINR (R39e): good, fair or poor; a missing reading cannot make it good, and
+# without both it is unknown unless the other one is already poor.
+nt_rating() {
+    awk -v r="$1" -v s="$2" 'BEGIN {
+        if ((r != "" && r + 0 < -105) || (s != "" && s + 0 < 0)) print "poor"
+        else if (r == "" || s == "") print "unknown"
+        else if (r + 0 >= -95 && s + 0 >= 10) print "good"
+        else print "fair" }'
+}
+
+# nt_netname NET: "4G+" for the LTE-A of the log, 4G, 3G, 2G; empty when unknown.
+nt_netname() {
+    case $1 in
+        LTE-A*) echo '4G+' ;;
+        LTE*) echo 4G ;;
+        5G* | NR*) echo 5G ;;
+        WCDMA* | UMTS* | HSPA* | HSDPA* | HSUPA*) echo 3G ;;
+        EDGE* | GSM* | GPRS*) echo 2G ;;
+    esac
+}
+
+nt_signal_line() {
+    _net=$(nt_netname "$(nt_sig net)")
+    _rate=$(nt_rating "$(nt_num "$(nt_sig rsrp)")" "$(nt_num "$(nt_sig sinr)")")
+    printf '📶 Signal: %s' "$_rate"
+    [ -z "$_net" ] || printf ' (%s)' "$_net"
+}
+
+# nt_wifi_count: devices associated on all Wi-Fi networks, from hostapd over ubus (it needs no
+# extra package); fails when no network answers.
+nt_wifi_count() {
+    _wl=$(timeout 5 ubus list 'hostapd.*' 2>/dev/null) || return 1
+    _wn=0
+    _wk=0
+    for _wo in $_wl; do
+        _wj=$(timeout 5 ubus call "$_wo" get_clients 2>/dev/null) || continue
+        _wk=$((_wk + 1))
+        _wn=$((_wn + $(printf '%s\n' "$_wj" | jsonfilter -e '@.clients[@.assoc=true].assoc' |
+            wc -l)))
+    done
+    [ "$_wk" -gt 0 ] || return 1
+    echo "$_wn"
+}
+
+nt_wifi_line() {
+    _wc=$(nt_wifi_count) || _wc=
+    case $_wc in
+        '') echo '📱 Wi-Fi: unknown' ;;
+        1) echo '📱 Wi-Fi: 1 device connected' ;;
+        *) echo "📱 Wi-Fi: $_wc devices connected" ;;
+    esac
+}
+
+# nt_bal_amount / nt_bal_time: the last known balance and its time from flash.
+nt_bal_amount() { head -n 1 "$NT_LASTBAL" 2>/dev/null | cut -d'|' -f1; }
+nt_bal_time() { head -n 1 "$NT_LASTBAL" 2>/dev/null | cut -d'|' -f2; }
+
+# nt_bal_low: the last known balance is below the threshold. Without a preset there is no balance
+# to judge (R47a).
+nt_bal_low() {
+    nt_preset_ok || return 1
+    _ba=$(nt_bal_amount)
+    [ -n "$_ba" ] && [ -n "$NT_LOW" ] && nt_below "$_ba" "$NT_LOW"
+}
+
+nt_balance_lines() {
+    if ! nt_preset_ok; then
+        nt_na_line
+        return 0
+    fi
+    _ba=$(nt_bal_amount)
+    if [ -z "$_ba" ]; then
+        echo '💶 Balance: unknown'
+        return 0
+    fi
+    echo "💶 Balance: $_ba $NT_P_CUR ($(nt_when L "$(nt_bal_time)"))"
+    ! nt_bal_low || echo "   ⚠️ below $NT_LOW $NT_P_CUR needed for the next data month"
+}
+
+nt_since_line() {
+    _why=$(head -n 1 "$NT_RUN/boot_reason" 2>/dev/null)
+    _why=${_why:-power cut or manual restart}
+    if nt_clock_ok; then
+        echo "⏱ On since $(nt_when L "$(nt_local $(($(nt_wall) - $(lw_uptime))))") ($_why)"
+    else
+        echo "⏱ On for $(nt_span "$(lw_uptime)") ($_why)"
+    fi
+}
+
+# nt_outage_line (R40a): the record on flash; an open one is the failure going on now.
+nt_outage_line() {
+    _os=$(nt_rec_get start)
+    case $_os in
+        '' | *[!0-9]*)
+            echo '🔧 Last outage: none recorded'
+            return 0
+            ;;
+    esac
+    _ot=$(nt_when L "$(nt_local "$_os")")
+    if [ "$(nt_rec_get state)" = open ]; then
+        if [ "$(nt_rec_get ntp)" != 1 ]; then
+            # start before NTP: counted back from the cycles once the clock is right, as the 2G one
+            ! nt_clock_ok ||
+                _ot=$(nt_when L "$(nt_local $(($(nt_wall) - NT_RC_CYCLES * NT_CYCLE)))")
+            _ot="~$_ot"
+        fi
+        _or="$NT_RC_REBOOTS restarts"
+        [ "$NT_RC_REBOOTS" != 1 ] || _or='1 restart'
+        echo "🔧 Last outage: since $_ot, still going, $_or so far"
+        return 0
+    fi
+    [ "$(nt_rec_get start_approx)" = 0 ] || _ot="~$_ot"
+    _od=$(nt_span "$(nt_rec_get dur)")
+    [ "$(nt_rec_get dur_approx)" = 0 ] || _od="~$_od"
+    echo "🔧 Last outage: $_ot, $_od, $(nt_restarts_text "$(nt_rec_get restarts)")"
+}
+
+# nt_action_line (R39d)
+nt_action_line() {
+    if [ "$NT_RC_PASSIVE" = 1 ]; then
+        echo '❗ Needs a person: unplug the router for 10 s'
+    elif nt_bal_low; then
+        echo "⚠️ Top up at least $NT_LOW $NT_P_CUR"
+    else
+        echo '✅ Nothing to do'
+    fi
+}
+
+# nt_ping_text MS / nt_age_text SECONDS: the readings of the Tech line in words.
+nt_ping_text() {
+    [ -n "$1" ] || { echo unknown; return 0; }
+    awk -v r="$1" 'BEGIN { printf "%.0f ms\n", r }'
+}
+
+nt_age_text() {
+    [ -n "$1" ] || { echo unknown; return 0; }
+    awk -v a="$1" 'BEGIN { if (a < 60) printf "%d s\n", a
+        else if (a < 3600) printf "%.0f min\n", a / 60
+        else printf "%.0f h\n", a / 3600 }'
+}
+
+# nt_tech_line: the one line of numbers, from the newest signal log line.
+nt_tech_line() {
+    _b1=$(nt_sig pb | sed 's/(.*//')
+    _b2=$(nt_sig s1 | sed 's/(.*//')
+    _bands=${_b1:-unknown}
+    [ -z "$_b1" ] || [ -z "$_b2" ] || _bands="$_b1+$_b2"
+    _rsrp=$(nt_num "$(nt_sig rsrp)")
+    _sinr=$(nt_num "$(nt_sig sinr)")
+    printf 'Tech: %s · RSRP %s · SINR %s · ping %s · VPN %s' "$_bands" "${_rsrp:-unknown}" \
+        "${_sinr:-unknown}" "$(nt_ping_text "$(nt_num "$(nt_sig rtt)")")" \
+        "$(nt_age_text "$(nt_num "$(nt_sig wg_age)")")"
+}
+
+# nt_verdict (R39c): the first lines of /status. Ping decides online; the EDGE marker the 2G backup.
+nt_verdict() {
+    if nt_online; then
+        if [ -e "$NT_EDGE" ]; then
+            printf '🟠 Internet works, but slow (2G backup)\nMessages and email OK, video and calls no.'
+        else
+            printf '🟢 Internet works'
+        fi
+        return 0
+    fi
+    printf '🔴 Internet does not work\n'
+    if [ "$NT_RC_PASSIVE" = 1 ]; then
+        printf 'The router has used up its self-repair restarts.'
+    elif [ "$NT_RC_CYCLES" -gt 0 ]; then
+        printf 'The router is trying to repair it by itself.'
+    else
+        printf 'The router checks the connection every 5 minutes.'
+    fi
+}
+
+nt_status() {
+    nt_recover_read || :
+    nt_boot_reason
+    _sig=$(tail -n 1 "$NT_SIGLOG" 2>/dev/null)
+    nt_send "$(nt_verdict)
+
+$(nt_signal_line)
+$(nt_wifi_line)
+$(nt_balance_lines)$(nt_st_status_line)$(nt_data_status_line)
+$(nt_since_line)
+$(nt_outage_line)
+$(nt_action_line)
+
+$(nt_tech_line)"
+}
+
+# nt_balance_cmd: the balance query of the preset unless a request already waits for its reply
+# (R37, R37a). A SIM without a preset gets the "not available" line and no SMS (R47a).
+nt_balance_cmd() {
+    if ! nt_preset_ok; then
+        nt_send "$(nt_na_line)"
+        return
+    fi
+    _req=$(nt_get "$NT_RUN/balance_req")
+    if [ -n "$_req" ] && [ $(($(nt_now) - _req)) -lt "$NT_BALANCE_WAIT" ]; then
+        nt_send "⏳ Still waiting for $NT_P_NAME's answer (asked $(($(nt_now) - _req)) s ago)."
+        return
+    fi
+    if nt_balance_query; then
+        nt_now >"$NT_RUN/balance_req"
+        rm -f "$NT_RUN/balance_late"
+        nt_send "💶 Asked $NT_P_NAME for the balance (SMS to $NT_P_QTO). The answer comes here, usually
+within a minute."
+    else
+        nt_send "⚠️ Could not ask $NT_P_NAME for the balance (the modem is busy or not answering).
+Try again in a minute."
+    fi
+}
+
+# nt_sms_count ARG: n for /sms, default 5, between 1 and 10 (R37).
+nt_sms_count() {
+    case ${1:-x} in
+        *[!0-9]*) echo 5 ;;
+        *)
+            _n=${1#"${1%%[!0]*}"}
+            [ "${#_n}" -le 2 ] || _n=10
+            [ "${_n:-0}" -ge 1 ] || _n=1
+            [ "$_n" -le 10 ] || _n=10
+            echo "$_n"
+            ;;
+    esac
+}
+
+# nt_sms_order JSON: one line "<sortable time> <position> <id>" per message in $NT_RUN/sms.order,
+# id m<position> for a message of its own and g<group> for a long SMS, whose parts are collected in
+# $NT_MP_SMS (nt_mp_join builds it from there). MM/DD/YY hh:mm:ss -> YYMMDDhhmmss sorts by time; the
+# position breaks ties, the newest last. A group sorts by the time of the first part listed.
+nt_sms_order() {
+    rm -rf "$NT_MP_SMS"
+    : >"$NT_RUN/sms.order"
+    printf '%s\n' "$1" | jsonfilter -e '@.msg[*]' >"$NT_RUN/sms.msgs"
+    _p=0
+    _groups=' '
+    while IFS= read -r _m; do
+        nt_fields "$_m"
+        _t=$(printf '%s\n' "$NT_TS" |
+            awk '{split($1, d, "/"); gsub(":", "", $2); print d[3] d[1] d[2] $2}')
+        _id=m$_p
+        if nt_mp_part; then
+            nt_mp_add "$NT_MP_SMS" "$_p"
+            _id=g$NT_MP_GID
+            case $_groups in
+                *" $NT_MP_GID "*) _id= ;;
+                *) _groups="$_groups$NT_MP_GID " ;;
+            esac
+        fi
+        [ -z "$_id" ] || printf '%s %03d %s\n' "${_t:-000000000000}" "$_p" "$_id" >>"$NT_RUN/sms.order"
+        _p=$((_p + 1))
+    done <"$NT_RUN/sms.msgs"
+    rm -f "$NT_RUN/sms.msgs"
+}
+
+# nt_sms N: the N newest messages by modem time, in replies of at most NT_CHUNK bytes. The parts of
+# a long SMS count and show as the one message they are (R34g), with a line for each part missing.
+nt_sms() {
+    _n=$(nt_sms_count "$1")
+    _rc=0
+    _json=$(timeout "$NT_READ_LIMIT" flock "$LW_AT_LOCK" sms_tool -d "$LW_AT_PORT" -s ME -j recv \
+        </dev/null 2>/dev/null) || _rc=$?
+    if [ "$_rc" != 0 ] || ! printf '%s\n' "$_json" | jsonfilter -e '@.msg' >/dev/null 2>&1; then
+        nt_send "⚠️ Could not read the SMS from the modem (busy or not answering).
+Try again in a minute."
+        return
+    fi
+    nt_sms_order "$_json"
+    _total=$(wc -l <"$NT_RUN/sms.order" | tr -d ' ')
+    if [ "$_total" -le 0 ]; then
+        rm -rf "$NT_RUN/sms.order" "$NT_MP_SMS"
+        nt_send "📥 No SMS in the modem."
+        return
+    fi
+    [ "$_n" -le "$_total" ] || _n=$_total
+    _order=$(sort -r "$NT_RUN/sms.order" | head -n "$_n" | cut -d' ' -f3)
+    _buf="📥 Newest $_n of $_total SMS
+"
+    _sep='
+'
+    for _id in $_order; do
+        case $_id in
+            g*) nt_mp_join "$NT_MP_SMS" "${_id#g}" ;;
+            *) nt_fields "$(printf '%s\n' "$_json" | jsonfilter -e "@.msg[${_id#m}]")" ;;
+        esac
+        _item=$(nt_format)
+        if [ $((${#_buf} + ${#_item} + 20)) -gt "$NT_CHUNK" ]; then
+            nt_send "$_buf" || { rm -rf "$NT_RUN/sms.order" "$NT_MP_SMS"; return; }
+            _buf=$_item
+        else
+            _buf="$_buf$_sep$_item"
+        fi
+        _sep="
+$NT_SEP
+"
+    done
+    rm -rf "$NT_RUN/sms.order" "$NT_MP_SMS"
+    nt_send "$_buf"
+}
+
+# nt_command TEXT: commands from the configured chat, any member of a group (R37b). "/cmd@bot"
+# counts as "/cmd" when "bot" is ours, a command for another bot is ignored; the label of a
+# keyboard button counts as its command (R37e); other text gets nothing, an unknown command the help.
+nt_command() {
+    _line=$(printf '%s\n' "$1" | head -n 1)
+    case $_line in
+        /*) ;;
+        *)
+            _line=$(nt_button_cmd "$1")
+            [ -n "$_line" ] || return 0
+            ;;
+    esac
+    _word=$(printf '%s\n' "$_line" | awk '{print $1}')
+    _arg=$(printf '%s\n' "$_line" | awk '{print $2}')
+    _arg2=$(printf '%s\n' "$_line" | awk '{print $3}')
+    # with privacy mode off (or the bot an admin) "/cmd@OtherBot" of another bot reaches us too
+    case $_word in
+        *@*) [ "$(nt_lower "${_word#*@}")" = "$(nt_bot_name)" ] || return 0 ;;
+    esac
+    case $(nt_lower "${_word%%@*}") in
+        /status) nt_status ;;
+        /balance) nt_balance_cmd ;;
+        /sms) nt_sms "$_arg" ;;
+        /alerts) nt_alerts "$(nt_lower "$_arg")" "$(nt_lower "$_arg2")" ;;
+        /speedtest) nt_speedtest_cmd ;;
+        /wifi) nt_wifi_cmd ;;
+        /devices) nt_devices_cmd ;;
+        /reboot) nt_reboot_cmd ;;
+        /help | /start) nt_send "$(nt_help)" "$(nt_kb_markup)" ;;
+        *) nt_send "$(nt_help)" ;;
+    esac
+}
+
+# nt_callback: a tap on a button, from the configured chat only (R45); the tap of any other chat is
+# ignored without an answer, like its messages (R37). The data names the button: "rb:<nonce>:go|no"
+# of the restart question (R45), "al:2g:on|off" of the alerts list (R37d). An unknown button just
+# gets its spinner stopped.
+nt_callback() {
+    [ "$NT_CBCHAT" = "$NT_CHAT" ] || return 0
+    case $NT_CBDATA in
+        rb:*) nt_reboot_tap ;;
+        al:2g:off) nt_alerts_tap off ;;
+        al:2g:on) nt_alerts_tap on ;;
+        *) nt_answer "$NT_CB" ;;
+    esac
+}
+
+# nt_update JSON: one update. The offset moves first, so a command or a tap runs at most once; other
+# chats get no answer (R37). A group moved to a supergroup gets one syslog entry with its new ID
+# (R37b).
+nt_update() {
+    NT_UID='' NT_CID='' NT_CMD='' NT_MIG='' NT_CB='' NT_CBCHAT='' NT_CBMSG='' NT_CBDATA='' NT_CBNAME=''
+    eval "$(printf '%s\n' "$1" | jsonfilter -e 'NT_UID=@.update_id' -e 'NT_CID=@.message.chat.id' \
+        -e 'NT_CMD=@.message.text' -e 'NT_MIG=@.message.migrate_to_chat_id' \
+        -e 'NT_CB=@.callback_query.id' -e 'NT_CBCHAT=@.callback_query.message.chat.id' \
+        -e 'NT_CBMSG=@.callback_query.message.message_id' -e 'NT_CBDATA=@.callback_query.data' \
+        -e 'NT_CBNAME=@.callback_query.from.first_name' 2>/dev/null)"
+    case $NT_UID in '' | *[!0-9]*) return 0 ;; esac
+    echo $((NT_UID + 1)) >"$NT_RUN/offset"
+    if [ -n "$NT_CB" ]; then
+        # the ids go back to Telegram and into messages: digits only
+        case $NT_CBMSG in '' | *[!0-9]*) return 0 ;; esac
+        nt_callback
+        return 0
+    fi
+    [ "$NT_CID" = "$NT_CHAT" ] || return 0
+    if [ -n "$NT_MIG" ]; then
+        case $NT_MIG in *[!0-9-]*) return 0 ;; esac
+        [ "$(nt_get "$NT_RUN/migrated")" != "$NT_MIG" ] || return 0
+        echo "$NT_MIG" >"$NT_RUN/migrated"
+        lw_log "$NT_TAG" \
+            "chat $NT_CHAT moved to $NT_MIG: set TG_CHAT_ID='$NT_MIG' in the profile and rebuild"
+        return 0
+    fi
+    [ -z "$NT_CMD" ] || nt_command "$NT_CMD"
+}
+
+# nt_updates WAIT: one getUpdates (long poll of WAIT s). The first call after the start only
+# confirms what waits on the server, so commands sent before the start never run (R37).
+nt_updates() {
+    if [ -z "$(nt_get "$NT_RUN/offset")" ]; then
+        nt_api getUpdates "offset=-1&timeout=0" || return 1
+        _last=$(printf '%s\n' "$NT_RESP" | jsonfilter -e '@.result[*].update_id' 2>/dev/null |
+            tail -n 1)
+        case $_last in '' | *[!0-9]*) _last=-1 ;; esac
+        echo $((_last + 1)) >"$NT_RUN/offset"
+    fi
+    # allowed_updates=["message","callback_query"]: the taps on buttons come as callback_query
+    nt_api getUpdates \
+        "offset=$(nt_get "$NT_RUN/offset")&timeout=$1&allowed_updates=%5B%22message%22%2C%22callback_query%22%5D" \
+        "$1" || return 1
+    printf '%s\n' "$NT_RESP" | jsonfilter -e '@.result[*]' >"$NT_RUN/updates" 2>/dev/null
+    while IFS= read -r _u; do
+        nt_update "$_u"
+    done <"$NT_RUN/updates"
+    rm -f "$NT_RUN/updates"
+}
+
+# nt_pass MAXWAIT: inbox when due, balance timer, queue, then the bot. MAXWAIT 0 = no waiting.
+# A failed send or poll waits for the next inbox pass instead of retrying at once.
+nt_pass() {
+    _now=$(nt_now)
+    # the operator preset first: the inbox pass below reads balance answers by it (R47)
+    nt_preset_tick
+    if [ "$_now" -ge "$(nt_get "$NT_RUN/next_inbox" 0)" ]; then
+        nt_inbox
+        # counted from the end of the AT command, so a hung modem still gets NT_POLL s of rest
+        _now=$(nt_now)
+        _next=$((_now + NT_POLL))
+        # the list read is a pass of its own, right after the count changed (R34b)
+        [ ! -f "$NT_RUN/need_recv" ] || _next=$((_now + 1))
+        echo "$_next" >"$NT_RUN/next_inbox"
+    fi
+    if [ "$NT_TG" != 1 ]; then
+        # SMS control alone (R46d): no chat, so no queue, no bot, nothing to send there
+        [ "$1" != 0 ] || return 0
+        _wait=$(($(nt_get "$NT_RUN/next_inbox" 0) - $(nt_now)))
+        [ "$_wait" -ge 1 ] || _wait=1
+        [ "$_wait" -le "$NT_POLL" ] || _wait=$NT_POLL
+        nt_nap "$_wait"
+        return 0
+    fi
+    # the list read of a new SMS comes first: a command must not wait behind a Telegram call that
+    # ends only at its time limit (R46: a reply in 60 s, also when Telegram is unreachable)
+    if [ "$1" != 0 ] && [ -f "$NT_RUN/need_recv" ]; then
+        nt_nap 1
+        return 0
+    fi
+    nt_names_poll
+    nt_balance_tick
+    nt_outage_tick
+    nt_st_tick
+    nt_rb_check_stale
+    nt_rb_tick
+    _failed=0
+    [ "$(nt_queued)" = 0 ] || nt_flush || _failed=1
+    [ "$_failed" = 1 ] || nt_rb_back_tick || _failed=1
+    [ "$_failed" = 1 ] || nt_kb_tick || _failed=1
+    if [ "$1" = 0 ]; then
+        nt_updates 0 || :
+        return 0
+    fi
+    _wait=$(($(nt_get "$NT_RUN/next_inbox" 0) - $(nt_now)))
+    [ "$_wait" -ge 0 ] || _wait=0
+    [ "$_wait" -le "$1" ] || _wait=$1
+    # a test is on: look for its result often, not after a whole long poll
+    ! nt_st_active || [ "$_wait" -le "$NT_ST_POLL" ] || _wait=$NT_ST_POLL
+    # a restart question is open: look when it runs out
+    _wait=$(nt_rb_wait_cap "$_wait")
+    if [ "$_failed" = 0 ] && nt_updates "$_wait"; then
+        return 0
+    fi
+    _wait=$(($(nt_get "$NT_RUN/next_inbox" 0) - $(nt_now)))
+    [ "$_wait" -ge 1 ] || _wait=1
+    [ "$_wait" -le "$NT_POLL" ] || _wait=$NT_POLL
+    nt_nap "$_wait"
+}
+
+nt_run() {
+    # TERM waits for the call in flight and then skips its cleanup; the stderr file of that call
+    # holds the URL with the token (nt_api). A running speed test goes down with the service; if
+    # this handler comes late or never (kill -9), the watchdog of the test does it (R41d). The DHCP
+    # names go to flash when they changed, as the counters of nlbwmon do on its stop (R44a, R44b).
+    trap '[ -z "$NT_NAP" ] || kill "$NT_NAP" 2>/dev/null; rm -f "$NT_RUN/err.$$"; nt_st_kill
+        nt_names_save force
+        exit 0' TERM INT
+    # a killed call can leave its stderr file too
+    rm -f "$NT_RUN"/err.*
+    # a test of the previous run is stopped and forgotten; its watchdog may have done it already
+    nt_st_kill
+    NT_ST_WATCH=$$
+    rm -f "$NT_RUN/offset" "$NT_RUN/next_inbox" "$NT_RUN/need_recv" "$NT_RUN/count" \
+        "$NT_RUN/sc_todo" "$NT_RUN/sc_scanned" "$NT_RUN/botname" "$NT_RUN/mccmnc" \
+        "$NT_RUN/mccmnc_try" "$NT_RUN/preset_bad" "$NT_RUN/mp_due"
+    rm -rf "$NT_RUN/mp_first"
+    # a restart question of the previous run has no buttons that work any more
+    [ "$NT_TG" != 1 ] || nt_rb_expire
+    while :; do
+        nt_pass "$NT_LONGPOLL"
+    done
+}
+
+case ${1:-} in
+    run | once | flush | balance | speedtest-run) ;;
+    *)
+        echo "usage: lw-notify run|once|flush|balance" >&2
+        exit 2
+        ;;
+esac
+# no token and chat and no SMS admins: nothing runs (D43, R46d); the chat parts need the chat
+nt_config || exit 0
+case $1 in
+    flush | balance | speedtest-run) [ "$NT_TG" = 1 ] || exit 0 ;;
+esac
+mkdir -p "$NT_RUN"
+case $1 in
+    run) nt_run ;;
+    once) nt_pass 0 ;;
+    flush) nt_flush ;;
+    balance) nt_weekly ;;
+    speedtest-run) nt_st_run "${2:-}" ;;
+esac

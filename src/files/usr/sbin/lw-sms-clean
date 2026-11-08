@@ -1,0 +1,98 @@
+#!/bin/sh
+# Keeps the modem SMS store from filling up (SPEC R26 to R26e, D16). The ME store holds 50
+# messages, not the 100 AT+CPMS reports, and once full the network stops delivering until the
+# modem re-registers. Above MAX messages: archive the whole store, then delete the oldest down to
+# KEEP. Reads and deletes only; it never sends anything (R27).
+# DRYRUN=1 prints the count and the indices it would delete, and changes nothing (R26d).
+
+# shellcheck source=src/files/usr/lib/lw/common.sh
+. /usr/lib/lw/common.sh
+
+TAG=lw-sms-clean
+MAX=${MAX:-30}
+KEEP=${KEEP:-20}
+ARCH=/root/sms-archive
+ARCH_KEEP=20
+# seconds per modem command, lock wait included (R12b); tests shorten it
+LIMIT=${LW_SMS_LIMIT:-30}
+
+case "$MAX$KEEP" in '' | *[!0-9]*)
+    echo "MAX and KEEP must be whole numbers (got MAX='$MAX' KEEP='$KEEP')" >&2
+    exit 2
+    ;;
+esac
+
+# sms ARGS: one sms_tool store command on the scripts' AT port, under the shared lock and limit.
+sms() {
+    timeout "$LIMIT" flock "$LW_AT_LOCK" sms_tool -d "$LW_AT_PORT" "$@" </dev/null 2>/dev/null
+}
+
+# victims JSON COUNT: indices of the COUNT oldest messages. MM/DD/YY HH:MM:SS becomes
+# YYMMDDhhmmss, which sorts in time order; a message without a timestamp counts as oldest (R26a).
+# Index and timestamp come from the same object, so a missing timestamp cannot shift the pairing.
+victims() {
+    printf '%s\n' "$1" | jsonfilter -e '@.msg[*]' | while IFS= read -r _m; do
+        _i=$(printf '%s\n' "$_m" | jsonfilter -e '@.index')
+        _t=$(printf '%s\n' "$_m" | jsonfilter -e '@.timestamp' 2>/dev/null |
+            awk '{split($1, d, "/"); gsub(":", "", $2); print d[3] d[1] d[2] $2}')
+        echo "${_t:-000000000000} $_i"
+    done | sort -k1,1 -k2,2n | head -n "$2" | cut -d' ' -f2 | tr '\n' ' ' | sed 's/ $//'
+}
+
+# archive JSON: the whole store into a new dump before anything is deleted (R26e), then only the
+# ARCH_KEEP newest dumps stay (R26b). The new dump is never pruned, even when the clock (no RTC)
+# makes its name sort before older ones.
+archive() {
+    mkdir -p "$ARCH" || return 1
+    ARCH_FILE=$ARCH/$(date +%Y%m%d-%H%M%S).json
+    printf '%s\n' "$1" | lw_write_atomic "$ARCH_FILE" || return 1
+    sync
+    rm -f "$ARCH"/*.json.tmp.*
+    for _f in "$ARCH"/*.json; do
+        [ "$_f" = "$ARCH_FILE" ] || printf '%s\n' "$_f"
+    done | head -n "-$((ARCH_KEEP - 1))" | while IFS= read -r _old; do rm -f "$_old"; done
+}
+
+# a reset puts incoming SMS back into SR; a modem that cannot take this cannot delete either
+if [ "${DRYRUN:-0}" != 1 ]; then
+    rc=0
+    lw_at "$LIMIT" 'AT+CPMS="ME","ME","ME"' >/dev/null || rc=$?
+    if [ "$rc" = 124 ]; then
+        lw_log "$TAG" "modem not responding (AT+CPMS timed out), nothing deleted"
+        exit 1
+    fi
+fi
+json=$(sms -s ME -j recv)
+if [ -z "$json" ] || ! printf '%s\n' "$json" | jsonfilter -e '@.msg' >/dev/null 2>&1; then
+    lw_log "$TAG" "no message list from the modem, nothing deleted"
+    exit 1
+fi
+n=$(printf '%s\n' "$json" | jsonfilter -e '@.msg[*]' | wc -l)
+drop=$((n - KEEP))
+# a KEEP above MAX must not turn into a negative head count, which would select everything
+if [ "$n" -le "$MAX" ] || [ "$drop" -le 0 ]; then
+    [ "${DRYRUN:-0}" != 1 ] || lw_log "$TAG" "messages=$n max=$MAX keep=$KEEP, nothing to delete"
+    exit 0
+fi
+list=$(victims "$json" "$drop")
+if [ "${DRYRUN:-0}" = 1 ]; then
+    lw_log "$TAG" "messages=$n max=$MAX keep=$KEEP would delete $drop: $list"
+    exit 0
+fi
+
+if ! archive "$json"; then
+    lw_log "$TAG" "cannot write the archive in $ARCH, nothing deleted"
+    exit 1
+fi
+done_n=0
+failed=0
+for i in $list; do
+    rc=0
+    sms -s ME delete "$i" >/dev/null || rc=$?
+    if [ "$rc" = 124 ]; then
+        lw_log "$TAG" "modem stopped answering after $done_n of $drop deletions (archive $ARCH_FILE)"
+        exit 1
+    fi
+    if [ "$rc" = 0 ]; then done_n=$((done_n + 1)); else failed=$((failed + 1)); fi
+done
+lw_log "$TAG" "deleted $done_n of $n messages ($failed failed), archive $ARCH_FILE"

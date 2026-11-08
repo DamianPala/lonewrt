@@ -1,0 +1,12 @@
+#!/bin/sh
+# wwan hotplug: hands ifup and ifup-failed to the Auto-APN worker and returns at once (SPEC R13d).
+# A hotplug script that waited on the modem took the router down on 2026-09-20 (D29, D34), so the
+# worker runs detached in its own session, bounded by timeout on top of its own budget (R13c).
+# hotplug-call sources this file in a subshell; exit only leaves that subshell.
+
+[ "$INTERFACE" = wwan ] || exit 0
+case $ACTION in
+    ifup | ifup-failed) ;;
+    *) exit 0 ;;
+esac
+setsid timeout "${LW_APN_BUDGET:-150}" sh /usr/lib/lw/lw-apn "$ACTION" </dev/null >/dev/null 2>&1 &

@@ -1,0 +1,31 @@
+# Downloads of fetch-deps.sh: GROUP SHA256 PATH URL (whitespace separated).
+# PATH is relative to $LW_WORK; paths starting with vm/ are relative to $LWVM_WORK (default
+# $LW_WORK/vm). Every sum comes from the upstream sha256sums file of the download directory, or,
+# where upstream publishes none (GitHub releases, Ubuntu pool files), from the file as first fetched.
+#
+# ib      ImageBuilder for the router (ipq40xx/generic), build.sh
+# extra   .apk files from outside the official feeds, copied into the ImageBuilder (packages.md)
+# gawk    GNU awk for the ImageBuilder, only used when the host has no GNU awk
+# rootfs  x86_64 rootfs the tests run in (tests/rootfs/run.sh), with coreutils-timeout added
+# vm      x86_64 ImageBuilder of the VM bench (tests/vm)
+# rescue  stock images for a recovery over the serial console (README "Recovery")
+
+ib 9e377a6c51ad667b6aa277934714174467b44723b1456153317d7a4aef3f1fd2 dl/openwrt-imagebuilder-25.12.6-ipq40xx-generic.Linux-x86_64.tar.zst https://downloads.openwrt.org/releases/25.12.6/targets/ipq40xx/generic/openwrt-imagebuilder-25.12.6-ipq40xx-generic.Linux-x86_64.tar.zst
+
+extra f5569308fb17cdd9f8c0277b2330c2a6e06dd7dfcadbd40d3f507899244ab56a dl/extra/modemband-20260806-r1.apk https://dl.eko.one.pl/openwrt-25.12/packages/arm_cortex-a7_neon-vfpv4/base/modemband-20260806-r1.apk
+extra e1b0313ff57fe362b301fce26370c9149025b9837d52995e15eaa5bec7d0bc00 dl/extra/modemdata-20261017-r1.apk https://dl.eko.one.pl/openwrt-25.12/packages/arm_cortex-a7_neon-vfpv4/base/modemdata-20261017-r1.apk
+extra 1bdc224d1843c0d4a92d0312de6a266c761c08ece22ad330eb523d5a6d2dbea2 dl/extra/luci-app-modemband-1.0.31-r20260215.apk https://github.com/4IceG/luci-app-modemband/releases/download/1.0.31-r20260215/luci-app-modemband-1.0.31-r20260215.apk
+extra 9842b779b2218d6a73dde70bbd4569d98fc3047ba139c951b8c374edc93d8132 dl/extra/luci-app-modemdata-1.0.32-r20260709.apk https://github.com/4IceG/luci-app-modemdata/releases/download/1.0.32-r20260709/luci-app-modemdata-1.0.32-r20260709.apk
+extra 3335a54b49725e6b1d0fe582e54edd6a9db2e257fd5eb8bf8a0f955a98053160 dl/extra/luci-app-sms-tool-js-2.0.42-r20260831.apk https://github.com/4IceG/luci-app-sms-tool-js/releases/download/2.0.42-r20260831/luci-app-sms-tool-js-2.0.42-r20260831.apk
+
+gawk 125782ea78a32a9df4e9b7ef49f458dc57f2b81473658c73a5a5930f950ea330 tools/deb/gawk_1%3a5.3.2-1ubuntu1.1_amd64.deb https://archive.ubuntu.com/ubuntu/pool/main/g/gawk/gawk_5.3.2-1ubuntu1.1_amd64.deb
+gawk 03da23292f00cfbc2cc96379d2f1fdf9595a06498e218779408c58228525efa8 tools/deb/libsigsegv2_2.15-1build1_amd64.deb https://archive.ubuntu.com/ubuntu/pool/universe/libs/libsigsegv/libsigsegv2_2.15-1build1_amd64.deb
+
+rootfs 55e52bb34de582a1ebe56bd50f94ff54ac7c77f5bca9cae807656d1930456da4 dl/x86/openwrt-25.12.6-x86-64-rootfs.tar.gz https://downloads.openwrt.org/releases/25.12.6/targets/x86/64/openwrt-25.12.6-x86-64-rootfs.tar.gz
+rootfs fe275266eb3d917162986bad82d2d74bc3763db9f497a584b77215e40e53f158 dl/x86/apk/coreutils-9.9-r2.apk https://downloads.openwrt.org/releases/25.12.6/packages/x86_64/packages/coreutils-9.9-r2.apk
+rootfs 5a9d7cbff353150164ba6e61457b65c699c5f94a62c3eb48606a6b4c6abf7257 dl/x86/apk/coreutils-timeout-9.9-r2.apk https://downloads.openwrt.org/releases/25.12.6/packages/x86_64/packages/coreutils-timeout-9.9-r2.apk
+
+vm a792e29bd2233cda67a0823030bfb53c0b61fbb3836b2063e88adf89730d563b vm/dl/openwrt-imagebuilder-25.12.6-x86-64.Linux-x86_64.tar.zst https://downloads.openwrt.org/releases/25.12.6/targets/x86/64/openwrt-imagebuilder-25.12.6-x86-64.Linux-x86_64.tar.zst
+
+rescue 2a4b0edd99f8047f1b25a99deb0c763f5c1ac631a5176051ce6d99055f59125c dl/openwrt-25.12.6-ipq40xx-generic-zte_mf289f-initramfs-zImage.itb https://downloads.openwrt.org/releases/25.12.6/targets/ipq40xx/generic/openwrt-25.12.6-ipq40xx-generic-zte_mf289f-initramfs-zImage.itb
+rescue 01b9c77bb35ab6bb227216bad256c772a03404181eb1ec453ff4bd711e359a0a dl/openwrt-25.12.6-ipq40xx-generic-zte_mf289f-squashfs-sysupgrade.bin https://downloads.openwrt.org/releases/25.12.6/targets/ipq40xx/generic/openwrt-25.12.6-ipq40xx-generic-zte_mf289f-squashfs-sysupgrade.bin

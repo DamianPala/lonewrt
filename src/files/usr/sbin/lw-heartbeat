@@ -1,0 +1,14 @@
+#!/bin/sh
+# Heartbeat for healthchecks.io (SPEC R42, D57): called from cron every 5 minutes, calls the address
+# in uci lonewrt.heartbeat.url once. healthchecks.io raises the alarm when the calls stop; the router
+# says nothing itself. Silent always: no syslog, no flash, no output (R34c), because the address
+# is a secret like the bot token (R4, R34d). A failed call changes nothing: the next one is in 5
+# minutes. Without an address (the default image) it does nothing at all. It does not depend on the
+# notification keys.
+
+# uci reads a missing option and an empty one alike as "not set"
+url=$(uci -q get lonewrt.heartbeat.url) || exit 0
+# uclient-fetch prints the address when it fails unless -q; stdout and stderr go nowhere anyway.
+# The limit is short: a stuck call must not pile up behind the next cron run.
+timeout -k 2 20 uclient-fetch -q -T 10 -O /dev/null "$url" </dev/null >/dev/null 2>&1
+exit 0

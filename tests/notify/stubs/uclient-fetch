@@ -1,0 +1,203 @@
+#!/bin/sh
+# Test stand-in for uclient-fetch: a fake Telegram Bot API (getUpdates, sendMessage, editMessageText,
+# answerCallbackQuery, getMe) with its state in $LW_TEST/tg, and a fake healthchecks.io ping for every
+# address that is not the Bot API. Knobs:
+#   tg/net             up (default), down (fails at once, exit 4) or hang (never answers)
+#   tg/token           the token the fake bot accepts; another one fails with exit 8 (HTTP 401)
+#   tg/username        the bot's username that getMe gives (default TestBot)
+#   tg/updates/N.json  pending updates, update_id N (tests/notify/helpers.inc tg_push writes them)
+#   tg/reject400       sendMessage answered like Telegram does for a bad request: "HTTP error 400"
+#                      on stderr, exit 8, no body. One rule per line: "byte HH" rejects a text with
+#                      the percent-encoded byte %HH, "nonascii" a text with any byte above 7F,
+#                      "utf8" a text that is not valid UTF-8, "has STRING" a text that contains
+#                      STRING, "all" every text. Each rejection adds a line to tg/rejected; with
+#                      tg/down_after_reject present it also sets tg/net to down (the network drops
+#                      between a message and its retry).
+#   tg/status          an HTTP status (e.g. 500, 429) every call answers with: "HTTP error N" on
+#                      stderr, exit 8
+# Like the real one, it prints "Downloading '<URL with the token>'" and "Connecting to ..." on
+# stderr unless called with -q, so a test sees whether the caller keeps that stderr out of logs.
+#   hc/mode           for addresses outside the Bot API (the healthchecks.io ping): up (default),
+#                     down (exit 4), hang (never answers) or an HTTP status such as 500 ("HTTP error
+#                     500" on stderr, exit 8); every call is a line "quiet|loud <url>" in hc/calls
+# Buttons: tg_tap (helpers.inc) writes callback_query updates. sendMessage with a reply_markup keeps
+# it in tg/sent/N.markup (anything but a valid inline_keyboard or reply keyboard is a 400). editMessageText with an
+# unknown message_id or the text the message already shows is a 400 like Telegram's; it records
+# tg/edits/K.{msgid,text,markup}, shows the new text in tg/sent/N.shown and replaces the buttons
+# with its reply_markup; without a reply_markup it leaves them as they are (the conservative model:
+# the code must remove buttons explicitly). answerCallbackQuery goes to tg/answers/N (id, text,
+# alert).
+# Records: tg/allowed (the allowed_updates of the last getUpdates), tg/polls (the long-poll time of every getUpdates, one per line), tg/calls (one method per
+# call), tg/sent/N.chat, tg/sent/N.text and tg/sent/N.markup per sendMessage.
+# getUpdates follows the Bot API: offset > 0 confirms (deletes) older updates, offset -1 keeps
+# only the newest; an empty answer waits at most 1 s instead of the long-poll time.
+T=${LW_TEST:-/lwtest}
+G=$T/tg
+mkdir -p "$G/updates" "$G/sent"
+body=
+url=
+quiet=
+while [ $# -gt 0 ]; do
+    case $1 in
+        -q) quiet=1 && shift ;;
+        -T | -O | -U | -P) shift 2 ;;
+        --post-file=*) body=${1#--post-file=} && shift ;;
+        -*) shift ;;
+        *) url=$1 && shift ;;
+    esac
+done
+case $url in
+    */bot*/*) ;;
+    *)
+        # not the Bot API: the healthchecks.io ping
+        mkdir -p "$T/hc"
+        if [ -n "$quiet" ]; then echo "quiet $url" >>"$T/hc/calls"; else echo "loud $url" >>"$T/hc/calls"; fi
+        [ -n "$quiet" ] || printf "Downloading '%s'\n" "$url" >&2
+        case $(cat "$T/hc/mode" 2>/dev/null) in
+            down) echo "Connection error: Failed to resolve host" >&2 && exit 4 ;;
+            hang) sleep 3600 && exit 0 ;;
+            [0-9][0-9][0-9]) echo "HTTP error $(cat "$T/hc/mode")" >&2 && exit 8 ;;
+        esac
+        echo OK
+        exit 0
+        ;;
+esac
+method=${url##*/}
+token=${url%/*}
+token=${token##*/bot}
+echo "$method" >>"$G/calls"
+[ -n "$quiet" ] || printf "Downloading '%s'\nConnecting to api.telegram.org\n" "$url" >&2
+
+case $(cat "$G/net" 2>/dev/null) in
+    down) echo "Connection error: Failed to resolve host" >&2 && exit 4 ;;
+    hang) sleep 3600 && exit 0 ;;
+esac
+[ "$token" = "$(cat "$G/token" 2>/dev/null)" ] || { echo "HTTP error 401" >&2; exit 8; }
+
+# param NAME: one form field of the body, decoded
+param() {
+    v=$(tr '&' '\n' <"$body" | sed -n "s/^$1=//p")
+    printf '%b' "$(printf '%s' "$v" | sed 's/+/ /g; s/%/\\x/g')"
+}
+
+# utf8_valid: stdin (hex bytes, no separators) is valid UTF-8 (RFC 3629), by a regular expression
+# over the hex digits, so it shares no logic with the code under test
+utf8_valid() {
+    awk 'BEGIN { c = "[89AB][0-9A-F]"
+        r = "^([0-7][0-9A-F]|(C[2-9A-F]|D[0-9A-F])" c "|E0[AB][0-9A-F]" c
+        r = r "|(E[1-9A-CEF])" c c "|ED[89][0-9A-F]" c "|F0[9AB][0-9A-F]" c c
+        r = r "|F[123]" c c c "|F48[0-9A-F]" c c ")*$" }
+        { ok = ($0 ~ r) } END { exit !ok }'
+}
+
+# rejected: the sendMessage text in $body breaks a rule of tg/reject400
+rejected() {
+    [ -f "$G/reject400" ] || return 1
+    enc=$(tr '&' '\n' <"$body" | sed -n 's/^text=//p')
+    while read -r rule arg; do
+        case $rule in
+            all) return 0 ;;
+            byte) ! printf '%s' "$enc" | grep -qi "%$arg" || return 0 ;;
+            nonascii) ! printf '%s' "$enc" | grep -qi '%[89A-F][0-9A-F]' || return 0 ;;
+            utf8) param text | hexdump -v -e '/1 "%02X"' | utf8_valid || return 0 ;;
+            has) ! param text | grep -qF -- "$arg" || return 0 ;;
+        esac
+    done <"$G/reject400"
+    return 1
+}
+
+# markup_ok: the reply_markup field, when there is one, is an inline keyboard (a JSON object with
+# the list inline_keyboard) or a reply keyboard (the list keyboard, whose rows hold buttons with a
+# text; is_persistent and resize_keyboard must be booleans when present), as Telegram demands
+markup_ok() {
+    m=$(param reply_markup)
+    [ -z "$m" ] && return 0
+    [ -z "$(printf '%s\n' "$m" | jsonfilter -e '@.inline_keyboard' 2>/dev/null)" ] || return 0
+    [ -n "$(printf '%s\n' "$m" | jsonfilter -e '@.keyboard[0][0].text' 2>/dev/null)" ] || return 1
+    for k in is_persistent resize_keyboard; do
+        v=$(printf '%s\n' "$m" | jsonfilter -e "@.$k" 2>/dev/null)
+        case $v in '' | true | false) ;; *) return 1 ;; esac
+    done
+}
+
+ids() { for f in "$G"/updates/*.json; do [ -f "$f" ] && basename "$f" .json; done | sort -n; }
+
+if [ -n "$(cat "$G/status" 2>/dev/null)" ]; then
+    echo "HTTP error $(cat "$G/status")" >&2
+    exit 8
+fi
+
+case $method in
+    getUpdates)
+        offset=$(param offset)
+        param timeout >>"$G/polls"
+        echo >>"$G/polls"
+        if [ "$offset" = -1 ]; then
+            for i in $(ids | sed '$d'); do rm -f "$G/updates/$i.json"; done
+        elif [ "${offset:-0}" -gt 0 ]; then
+            for i in $(ids); do [ "$i" -ge "$offset" ] || rm -f "$G/updates/$i.json"; done
+        fi
+        [ -n "$(ids)" ] || [ "$(param timeout)" = 0 ] || sleep 1
+        # Telegram sends only the kinds of update the call allows (allowed_updates)
+        allowed=$(param allowed_updates)
+        [ -z "$allowed" ] || echo "$allowed" >"$G/allowed"
+        printf '{"ok":true,"result":['
+        sep=
+        for i in $(ids); do
+            if [ -n "$allowed" ] && grep -q '"callback_query"' "$G/updates/$i.json"; then
+                case $allowed in *callback_query*) ;; *) continue ;; esac
+            fi
+            printf '%s%s' "$sep" "$(cat "$G/updates/$i.json")"
+            sep=,
+        done
+        printf ']}\n'
+        ;;
+    sendMessage)
+        if rejected; then
+            echo x >>"$G/rejected"
+            ! [ -f "$G/down_after_reject" ] || echo down >"$G/net"
+            echo "HTTP error 400" >&2
+            exit 8
+        fi
+        markup_ok || { echo "HTTP error 400" >&2; exit 8; }
+        n=$(($(find "$G/sent" -name '*.text' | wc -l) + 1))
+        param chat_id >"$G/sent/$n.chat"
+        param text >"$G/sent/$n.text"
+        param text >"$G/sent/$n.shown"
+        param reply_markup >"$G/sent/$n.markup"
+        printf '{"ok":true,"result":{"message_id":%s}}\n' "$n"
+        ;;
+    editMessageText)
+        id=$(param message_id)
+        markup_ok || { echo "HTTP error 400" >&2; exit 8; }
+        [ -f "$G/sent/$id.text" ] && [ "$(param chat_id)" = "$(cat "$G/sent/$id.chat")" ] ||
+            { echo "HTTP error 400" >&2; exit 8; }
+        # Telegram refuses an edit that changes neither the text nor the buttons
+        if [ "$(param text)" = "$(cat "$G/sent/$id.shown")" ] &&
+            { [ -z "$(param reply_markup)" ] || [ "$(param reply_markup)" = "$(cat "$G/sent/$id.markup")" ]; }; then
+            echo "HTTP error 400" >&2
+            exit 8
+        fi
+        mkdir -p "$G/edits"
+        k=$(($(find "$G/edits" -name '*.msgid' | wc -l) + 1))
+        echo "$id" >"$G/edits/$k.msgid"
+        param text >"$G/edits/$k.text"
+        param reply_markup >"$G/edits/$k.markup"
+        param text >"$G/sent/$id.shown"
+        [ -z "$(param reply_markup)" ] || param reply_markup >"$G/sent/$id.markup"
+        printf '{"ok":true,"result":{"message_id":%s}}\n' "$id"
+        ;;
+    getMe)
+        printf '{"ok":true,"result":{"id":7,"is_bot":true,"first_name":"Router","username":"%s"}}\n' \
+            "$(cat "$G/username" 2>/dev/null || echo TestBot)"
+        ;;
+    answerCallbackQuery)
+        mkdir -p "$G/answers"
+        k=$(($(find "$G/answers" -name '*.id' | wc -l) + 1))
+        param callback_query_id >"$G/answers/$k.id"
+        param text >"$G/answers/$k.text"
+        param show_alert >"$G/answers/$k.alert"
+        printf '{"ok":true,"result":true}\n'
+        ;;
+    *) echo "HTTP error 404" >&2 && exit 8 ;;
+esac
