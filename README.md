@@ -12,18 +12,11 @@ I built it for a flat abroad with guests and no admin on site. What it fixes:
 - **Someone asks for the Wi-Fi password at 23:00.** You tap a button in Telegram and the bot posts the Wi-Fi name and password. Other buttons give the link state, the connected devices, the newest SMS, a speed test (about 330 MB of your data) and a restart. Typed commands do the same: `/status`, `/wifi`, `/devices`, `/sms`, `/speedtest`, `/balance`, `/alerts`, `/reboot`, `/help`.
 - **The internet is down and so is the bot.** A healthchecks.io heartbeat tells you from the outside, and the router posts when it is back and how long it was gone.
 
-What the chat looks like (made-up values):
+What the chat looks like, and the keyboard that saves remembering commands:
 
-```
-🟢 Internet works
-📶 Signal: good (4G+)
-📱 Wi-Fi: 3 devices connected
-💶 Balance: 7.80 EUR (Yesterday 09:12)
-⏱ On since 5 Nov 08:30 (power cut or manual restart)
-✅ Nothing to do
+<img src="docs/img/telegram-status.png" width="440" alt="Telegram chat: a tap on Status and the router's reply with signal, Wi-Fi, balance, data and uptime">
 
-Tech: B3+B1 · RSRP -85 · SINR 12 · ping 36 ms · VPN 3 s ago
-```
+<img src="docs/img/telegram-keyboard.png" width="440" alt="The bot's keyboard: Status, Wi-Fi, Devices, Speed, Balance, SMS, Alerts, Reboot, Help">
 
 Phone numbers you list can also text `status` or `reboot` to the SIM, for the day Telegram is not an option.
 The router checks only the sender's number, and numbers can be faked. So SMS can only ask for the state and a restart, and restarts by SMS are limited to 5 a day.
