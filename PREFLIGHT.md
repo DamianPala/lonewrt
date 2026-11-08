@@ -41,7 +41,7 @@ Decisions: name lonewrt · licence MIT · history squash · maturity experimenta
 | A08 | PASS | one approved identity |
 | A09 | PASS | English spec ships, ids stable; docs edited for plain English |
 | A10 | PASS | only patterned fake data |
-| A11 | N/A no non-text content | |
+| A11 | PASS | two Telegram screenshots in docs/img (added after the first push): metadata-free, read in full, name and avatar replaced |
 | A12 | PASS | no outside pointers |
 | A13 | PASS | first-party; packages fetched at build time, sha256 pinned |
 | A14 | PASS | 2FA on; recovery and actors confirmed by the owner |
@@ -61,9 +61,9 @@ Decisions: name lonewrt · licence MIT · history squash · maturity experimenta
 | B11 | N/A no distributed artefact | |
 | B12 | PASS | squashed hashes point at the history bundle |
 | B13 | PASS | secret scanning, push protection, private vulnerability reporting on |
-| B14 | DEFERRED after the owner's upload | fresh clone from the public URL |
+| B14 | PASS | fresh clone from the public URL at c10c2ad: full download, build, quick build tests and smoke |
 | B15 | PASS | status names the destination and the source of truth |
-| B16 | N/A no agent instructions shipped | |
+| B16 | PASS | AGENTS.md (since 9247e94): repo commands only, resolve in the B04 PATH, no house tools or outside paths |
 | L13 | PASS | no credentials or ids in shipped files |
 | L14 | PASS | outward steps listed, confirmations, dry run, kill switch |
 | L15 | PASS | reruns send no duplicates (tests) |
