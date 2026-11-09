@@ -17,6 +17,7 @@ The tests need `bubblewrap` and `squashfs-tools`; the VM bench also `qemu-system
 | Path | What | Git |
 |---|---|---|
 | `build.sh`, `src/render.py` | profile checks, overlay, ImageBuilder run | yes |
+| `pinned-packages.sh` | the checked copy of the third-party `.apk` files into an ImageBuilder, sourced by `build.sh` and `tests/vm/build-image.sh` | yes |
 | `src/files/` | the files of the image (init scripts, `wwan-recover`, `lw-notify`, `uci-defaults/zz-lw-config`, cron, ...) | yes |
 | `src/files/usr/share/lw/operators/` | operator presets, one data file per MCC-MNC (`29702`), see [operators.md](operators.md) | yes |
 | `profiles/generic.conf` | the template profile and the list of all keys, see [profile.md](profile.md) | yes |
@@ -32,13 +33,16 @@ The tests need `bubblewrap` and `squashfs-tools`; the VM bench also `qemu-system
 
 | Command | What it checks |
 |---|---|
-| `tests/run-all.sh [area]` | the scripts of the image inside the official OpenWrt x86_64 rootfs (same busybox, `uci`, `jsonfilter`) under `bwrap`, with modem and network as stubs: recovery ladder, APN, SMS, notifications, first boot. Areas: `ladder modem notify firstboot smoke` |
+| `tests/run-all.sh [-j N] [area]` | the scripts of the image inside the official OpenWrt x86_64 rootfs (same busybox, `uci`, `jsonfilter`) under `bwrap`, with modem and network as stubs: recovery ladder, APN, SMS, notifications, first boot. Areas: `ladder modem notify firstboot smoke` |
 | `tests/build/run.sh [--quick]` | profile validation, `sh -n` with the rootfs busybox, rendered overlays, `.gitignore`, then the first-boot tests; without `--quick` also two real ImageBuilder builds (about 3 minutes) |
 | `tests/vm/run-all.sh` | an x86 image in QEMU/KVM with a stand-in for the modem: first boot, no modem, power cut during first boot, reset, cron, log rotation, modem mode; see `tests/vm/README.md` |
 
 All test data is made up: phone numbers, names, keys, tokens, SMS texts and device names in `tests/` belong to nobody.
 The build tests use `tests/build/fixtures/fake-full.conf`, a profile of made-up values, and check that the generic image contains none of them.
 Put values of your own private profile, one per line, into `tests/build/private-values.txt` (git ignores it) to check that they never reach the generic image either.
+
+`tests/run-all.sh` runs 6 tests at once (`-j N` or `LW_JOBS`); the report keeps the listing order.
+A change in one area needs that area during the work and the full run once before it is reported.
 
 Not testable without the router: the real modem and operator network (bands, APN, 2G fallback), WiFi, the ipq40xx kernel.
 

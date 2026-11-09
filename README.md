@@ -39,7 +39,10 @@ $EDITOR profiles/mine.conf           # at least WIFI_COUNTRY; every key is expla
 ./build.sh mine                      # image/mine-sysupgrade.bin, image/mine.manifest
 ```
 
-Leave `WIFI_KEY` and `ROOT_PASSWORD_HASH` empty and the build generates random ones and writes a password card to `image/mine-passwords.txt`. Later builds of the same profile reuse the card, so the passwords stay. Keep the card: the passwords are stored nowhere else, and without it the next build draws new ones.
+Leave `WIFI_KEY`, `ROOT_PASSWORD` and `ROOT_PASSWORD_HASH` empty and the build generates random passwords and writes a password card to `image/mine-passwords.txt`.
+Later builds of the same profile reuse the card, so the passwords stay.
+Keep the card: the drawn passwords are stored nowhere else, and without it the next build draws new ones.
+To choose the root password yourself, write it in `ROOT_PASSWORD`; the build puts only its hash into the image.
 
 Then back up the router and flash. The examples use `192.168.1.1` for the router's current address:
 
@@ -62,7 +65,8 @@ Balance checks for your operator: [docs/operators.md](docs/operators.md).
 ## What goes over the network
 
 The build downloads the ImageBuilder and the official packages from `downloads.openwrt.org`, the modem tools `modemband` and `modemdata` from `dl.eko.one.pl`, the Polish OpenWrt site that packages them, and three LuCI apps for the modem, the bands and SMS from 4IceG's GitHub releases.
-Every download is checked against a sha256 pinned in `deps.lst`.
+The ImageBuilder, the third-party packages and the test files are pinned by sha256 in `deps.lst`.
+The official packages are downloaded by the ImageBuilder and checked with OpenWrt's signing keys, which come inside the pinned ImageBuilder.
 The build sends nothing about your profile anywhere.
 [packages.md](packages.md) lists what ends up in the image.
 
@@ -81,6 +85,10 @@ The router talks to the operator, the NTP pool and, depending on the profile:
 There is no telemetry.
 The bot answers only in the chat from the profile, and anyone in that chat can read the Wi-Fi password and restart the router, so keep it to people you trust.
 A profile with a Telegram token, a WireGuard key, a heartbeat URL or admin numbers makes a private image: those values sit in the image as root-readable files, so do not pass that image on.
+Any built image carries its Wi-Fi password and root hash, so share the repository, not a built image, and build one image per router.
+
+Whoever gets hold of the router also has its WireGuard private key.
+So on your WireGuard server allow the router's peer only its own tunnel address, and block connections from it into your network; the router never needs them.
 
 ## Project
 

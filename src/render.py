@@ -21,6 +21,7 @@ from pathlib import Path
 
 MAY_BE_EMPTY = {
     "WIFI_KEY",
+    "ROOT_PASSWORD",
     "ROOT_PASSWORD_HASH",
     "WWAN_APN",
     "WWAN_AUTH",
@@ -55,17 +56,19 @@ REQUIRED_WHEN_WG_ENABLED = (
 IPV4 = r"(?:(?:25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])"
 CIDR_LIST = rf"{IPV4}/[0-9]{{1,2}}(?: {IPV4}/[0-9]{{1,2}})*"
 WG_KEY = r"[A-Za-z0-9+/]{43}="
+PASSWORD = r"[\x20-\x7e]{8,63}"
 # What a non-empty value must look like; keys not listed take any text without a single quote.
 FORMATS = {
     "HOSTNAME": r"[A-Za-z0-9][A-Za-z0-9-]{0,62}",
     "LAN_IP": IPV4,
     "WIFI_SSID": r"[^\x00-\x1f]{1,32}",
-    "WIFI_KEY": r"[\x20-\x7e]{8,63}",
+    "WIFI_KEY": PASSWORD,
     "WIFI_COUNTRY": r"[A-Z]{2}",
     "WIFI_CHANNEL_2G": r"auto|[0-9]{1,3}",
     "WIFI_CHANNEL_5G": r"auto|[0-9]{1,3}",
     "WIFI_HTMODE_2G": r"[A-Z0-9+-]{2,10}",
     "WIFI_HTMODE_5G": r"[A-Z0-9+-]{2,10}",
+    "ROOT_PASSWORD": PASSWORD,
     "ROOT_PASSWORD_HASH": r"\$[A-Za-z0-9./$]+",
     "WWAN_AUTH": r"none|pap|chap|both",
     "LTE_BANDS": r"[0-9]{1,2}(?:,[0-9]{1,2})*",
@@ -141,8 +144,14 @@ def validate(values: dict[str, str], required: list[str], name: str) -> None:
             raise RenderError(f"profile {name}: unknown key {key} (not in generic.conf)")
     for key in required:
         if key not in values:
-            raise RenderError(f"profile {name}: key {key} is missing")
+            # a profile older than a new key fails here (R3); say how to bring it up to date
+            fix = f"add the line {key}=''" if key in MAY_BE_EMPTY else "copy it from generic.conf"
+            raise RenderError(f"profile {name}: key {key} is missing; {fix}")
         check_value(key, values[key], name)
+    if values["ROOT_PASSWORD"] and values["ROOT_PASSWORD_HASH"]:
+        raise RenderError(
+            f"profile {name}: keys ROOT_PASSWORD and ROOT_PASSWORD_HASH are both set; use one"
+        )
     if values["WG_ENABLED"] == "1":
         for key in REQUIRED_WHEN_WG_ENABLED:
             if not values[key]:
@@ -194,8 +203,11 @@ def read_card(path: Path | None) -> dict[str, str]:
         key, sep, value = line.partition("=")
         if sep and key in ("ssid", "wifi", "root") and key not in card:
             card[key] = value
-    if card.get("wifi") and not re.fullmatch(FORMATS["WIFI_KEY"], card["wifi"]):
+    if card.get("wifi") and not re.fullmatch(PASSWORD, card["wifi"]):
         raise RenderError(f"card {path}: wifi= must be 8-63 printable ASCII characters")
+    # a cut or edited card would otherwise give the router a root password like "x"
+    if card.get("root") and not re.fullmatch(PASSWORD, card["root"]):
+        raise RenderError(f"card {path}: root= must be 8-63 printable ASCII characters")
     return card
 
 
@@ -219,10 +231,22 @@ def hash_password(password: str) -> str:
 
 
 def resolve_passwords(values: dict[str, str], card_in: Path | None) -> tuple[str, dict] | None:
-    """Fill empty WIFI_KEY / ROOT_PASSWORD_HASH; return (card text, origin) when a card applies."""
+    """Fill empty WIFI_KEY and the root hash; return (card text, origin) when a card applies.
+
+    A ROOT_PASSWORD from the profile is hashed here (D73). A card is written when a password is
+    drawn, and whenever a card for the profile already exists: then it is rewritten from what the
+    image holds (R33b), so it never names a password the image does not have. Drawn values come
+    from the old card; a value the profile sets replaces the card's. With only a root hash there
+    is no clear root password and the card says so. A hash gets a new salt on every build, as for
+    a drawn password: the password stays, the hash not.
+    """
     need_wifi = not values["WIFI_KEY"]
-    need_root = not values["ROOT_PASSWORD_HASH"]
-    if not (need_wifi or need_root):
+    own_root = values["ROOT_PASSWORD"]
+    need_root = not own_root and not values["ROOT_PASSWORD_HASH"]
+    has_card = card_in is not None and card_in.is_file()
+    if own_root:
+        values["ROOT_PASSWORD_HASH"] = hash_password(own_root)
+    if not (need_wifi or need_root or has_card):
         return None
     old = read_card(card_in)
     origin = {}
@@ -231,7 +255,10 @@ def resolve_passwords(values: dict[str, str], card_in: Path | None) -> tuple[str
         card["wifi"] = old.get("wifi") or draw_password()
         values["WIFI_KEY"] = card["wifi"]
         origin["wifi"] = "reused from card" if old.get("wifi") else "drawn"
-    if need_root:
+    if own_root:
+        card["root"] = own_root
+        origin["root"] = "from profile"
+    elif need_root:
         card["root"] = old.get("root") or draw_password()
         values["ROOT_PASSWORD_HASH"] = hash_password(card["root"])
         origin["root"] = "reused from card" if old.get("root") else "drawn"
@@ -242,11 +269,16 @@ def card_text(card: dict[str, str], values: dict[str, str]) -> str:
     lines = [f"{key}={card[key]}" for key in ("ssid", "wifi", "root") if key in card]
     lan = values["LAN_IP"]
     country = values["WIFI_COUNTRY"]
+    root = (
+        "password from the root= line"
+        if "root" in card
+        else "password behind ROOT_PASSWORD_HASH in the profile (it is not on this card)"
+    )
     hints = f"""
 LTE router with OpenWrt (ZTE MF289F): passwords and hints
 
 - WiFi: the network name is ssid=, the password is wifi= (the same network on 2.4 and 5 GHz).
-- Router panel (LuCI): https://{lan}, user root, password from the root= line.
+- Router panel (LuCI): https://{lan}, user root, {root}.
   The browser warns that the certificate is not trusted. The router signs it itself, so this is expected:
   choose Advanced and continue.
 - A reset with the button restores the settings from the image, including the passwords on this card.
@@ -335,7 +367,9 @@ def set_modes(out: Path) -> list[str]:
         if rel.startswith("etc/dropbear/") or rel == "etc/crontabs/root":
             path.chmod(0o600)
         elif rel.startswith("etc/uci-defaults/"):
-            path.chmod(0o700)  # holds the profile's secrets until first boot deletes it
+            # D15: first boot deletes it only from the writable layer; the copy in the read-only
+            # image keeps the secrets for whoever holds the image or the router
+            path.chmod(0o700)
         elif has_shebang(path):
             path.chmod(0o755)  # executables, e.g. /usr/lib/lw/lw-apn run by the hotplug
         else:

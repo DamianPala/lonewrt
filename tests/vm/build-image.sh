@@ -14,6 +14,10 @@ LW_WORK=${LW_WORK:-$FW/work}
 VMWORK=${LWVM_WORK:-$LW_WORK/vm}
 IB_TAR=$VMWORK/dl/openwrt-imagebuilder-25.12.6-x86-64.Linux-x86_64.tar.zst
 IB=$VMWORK/ib
+# shellcheck disable=SC2034  # read by install_extra_packages in pinned-packages.sh
+DEPS=${LW_DEPS_LIST:-$FW/deps.lst}
+# shellcheck source=pinned-packages.sh
+source "$FW/pinned-packages.sh"
 # ImageBuilder wants GNU awk; the laptop only has mawk
 export PATH=$LW_WORK/tools/bin:$PATH
 
@@ -49,7 +53,8 @@ tune_ib() {
         -e 's/^CONFIG_GRUB_EFI_IMAGES=y/# CONFIG_GRUB_EFI_IMAGES is not set/' \
         -e 's/^CONFIG_GRUB_TIMEOUT=.*/CONFIG_GRUB_TIMEOUT="0"/' \
         "$IB/.config"
-    cp "$LW_WORK"/dl/extra/*.apk "$IB/packages/"
+    # the same checked copy as build.sh: only the pins of deps.lst, each with its sha256 (R2a)
+    install_extra_packages "$IB/packages" "$VMWORK/pkg-stage"
 }
 
 render_overlay() {

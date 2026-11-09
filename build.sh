@@ -11,7 +11,7 @@
 #
 # Environment: LW_WORK (ImageBuilder and downloads, default work/ next to this script; fill it with
 # ./fetch-deps.sh), LW_ROOTFS (OpenWrt rootfs whose busybox runs the sh -n check). Tests also set
-# LW_PROFILES, LW_SRC and LW_IMAGE to work on copies.
+# LW_PROFILES, LW_SRC, LW_IMAGE and LW_DEPS_LIST (the pins of deps.lst) to work on copies.
 set -euo pipefail
 
 FW="$(cd "$(dirname "$0")" && pwd)"
@@ -20,7 +20,11 @@ LW_ROOTFS=${LW_ROOTFS:-$LW_WORK/dl/x86/rootfs}
 PROFILES=${LW_PROFILES:-$FW/profiles}
 SRC=${LW_SRC:-$FW/src}
 IMAGE=${LW_IMAGE:-$FW/image}
+# shellcheck disable=SC2034  # read by install_extra_packages in pinned-packages.sh
+DEPS=${LW_DEPS_LIST:-$FW/deps.lst}
 IB=$LW_WORK/ib
+# shellcheck source=pinned-packages.sh
+source "$FW/pinned-packages.sh"
 IB_TAR=$LW_WORK/dl/openwrt-imagebuilder-25.12.6-ipq40xx-generic.Linux-x86_64.tar.zst
 
 # The "Included" table of packages.md (SPEC R2); the device profile adds the default set.
@@ -56,6 +60,14 @@ usage() {
     exit 2
 }
 
+# Profile keys whose value is a secret (SPEC R4, D15); a profile that holds one should be 0600
+SECRET_KEYS=(
+    WIFI_KEY ROOT_PASSWORD ROOT_PASSWORD_HASH WWAN_PASSWORD WG_PRIVATE_KEY TG_BOT_TOKEN HC_PING_URL
+)
+# Private key files of profiles/<name>/ that the build copies into the image (render.py KEY_FILES;
+# authorized_keys is public and not listed)
+SECRET_KEY_FILES=(dropbear_ed25519_host_key dropbear_rsa_host_key)
+
 # need CMD...: stop before any work when a host program is missing (README, "What you need")
 need() {
     local c
@@ -67,6 +79,33 @@ check_name() {
     [ -f "$PROFILES/$1.conf" ] || die "no profile $PROFILES/$1.conf"
 }
 
+# warn_profile_mode NAME: one warning, never an error, when the profile file holds a secret, or
+# its folder holds a private key file, and group or others can read it (SPEC R3a, D78); names the
+# files, never a value
+warn_profile_mode() {
+    local file=$PROFILES/$1.conf key loose=()
+    for key in "${SECRET_KEYS[@]}"; do
+        if grep -Eq "^[[:space:]]*$key='[^']+'" "$file"; then
+            if is_loose "$file"; then loose+=("$file"); fi
+            break
+        fi
+    done
+    for key in "${SECRET_KEY_FILES[@]}"; do
+        file=$PROFILES/$1/$key
+        if [ -f "$file" ] && is_loose "$file"; then loose+=("$file"); fi
+    done
+    if [ "${#loose[@]}" -gt 0 ]; then
+        echo "build: warning: secrets readable by group or others: chmod 600 ${loose[*]}" >&2
+    fi
+}
+
+# is_loose FILE: group or others can access it
+is_loose() {
+    local mode
+    mode=$(stat -L -c %a "$1")
+    ((8#$mode & 8#077))
+}
+
 # render NAME OUT CARD_OUT: profile checks (R3), passwords (R33), overlay, sh -n (R6)
 render() {
     python3 -I "$SRC/render.py" --name "$1" --profiles "$PROFILES" --src "$SRC" --out "$2" \
@@ -76,6 +115,7 @@ render() {
 render_only() {
     local name=$1 dir=${2%/} parent
     check_name "$name"
+    warn_profile_mode "$name"
     if [ -e "$dir" ] && [ -n "$(ls -A "$dir")" ]; then
         die "$dir is not empty; pass a new or empty directory"
     fi
@@ -122,7 +162,7 @@ run_imagebuilder() {
     flock 9
     SCRUB=$1
     # Packages from outside the official feeds (packages.md)
-    cp "$LW_WORK"/dl/extra/*.apk "$IB/packages/"
+    install_extra_packages "$IB/packages" "$TMP/extra"
     # ImageBuilder wants GNU awk; the laptop only has mawk, so a locally extracted gawk goes first
     PATH=$LW_WORK/tools/bin:$PATH make -C "$IB" image \
         PROFILE=zte_mf289f \
@@ -148,6 +188,7 @@ publish() {
 build() {
     local name=$1 bin manifest
     check_name "$name"
+    warn_profile_mode "$name"
     mkdir -p "$IMAGE"
     TMP=$(mktemp -d "$IMAGE/.build-$name.XXXXXX")
     render "$name" "$TMP/files" "$TMP/passwords.txt"
@@ -163,6 +204,8 @@ build() {
     if [ -f "$TMP/passwords.txt" ] && ! cmp -s "$TMP/passwords.txt" "$IMAGE/$name-passwords.txt"; then
         publish "$TMP/passwords.txt" "$IMAGE/$name-passwords.txt"
     fi
+    # R33: the card is 0600 even when an older copy of it was not
+    if [ -f "$TMP/passwords.txt" ]; then chmod 0600 "$IMAGE/$name-passwords.txt"; fi
     # A profile image carries its secrets (SPEC D15): readable by the owner only
     chmod 0600 "$bin"
     publish "$bin" "$IMAGE/$name-sysupgrade.bin"

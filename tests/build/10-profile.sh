@@ -16,7 +16,7 @@ build() { LW_PROFILES=$P LW_IMAGE=$I "$FW/build.sh" "$@"; }
 variant() { sed "$2" "$P/fake-full.conf" >"$P/$1.conf"; }
 
 variant no-lan '/^LAN_IP=/d'
-expect_fail_with "key LAN_IP is missing" build no-lan
+expect_fail_with "key LAN_IP is missing; copy it from generic.conf" build no-lan
 
 variant empty-host "s/^HOSTNAME=.*/HOSTNAME=''/"
 expect_fail_with "key HOSTNAME is empty" build empty-host
@@ -144,6 +144,66 @@ for key in SMS_REBOOT_MAX_AGE_MIN SMS_REBOOT_MAX_PER_DAY; do
             fail "$key '$good' not written verbatim"
     done
 done
+
+# R33b: ROOT_PASSWORD is a key every profile must have; 8 to 63 printable ASCII characters like
+# WIFI_KEY; with ROOT_PASSWORD_HASH also set the build stops naming both keys; the clear text reaches
+# neither the build output nor the overlay, only its $6$ hash does
+variant no-rootpw '/^ROOT_PASSWORD=/d'
+expect_fail_with "key ROOT_PASSWORD is missing; add the line ROOT_PASSWORD=''" build no-rootpw
+FAKE_ROOT=fake-root-pw-q7x9
+rootpw() { sed -e "s/^ROOT_PASSWORD=.*/ROOT_PASSWORD='$1'/" -e "s/^ROOT_PASSWORD_HASH=.*/ROOT_PASSWORD_HASH=''/" \
+    "$P/fake-full.conf" >"$P/$2.conf"; }
+i=0
+for bad in short7c "$(printf 'x%.0s' {1..64})" 'ünïcode-pw-q7x9' 'tab	tab-pw-q7x9'; do
+    i=$((i + 1))
+    rootpw "$bad" "bad-rootpw-$i"
+    expect_fail_with "key ROOT_PASSWORD has an invalid value" build "bad-rootpw-$i"
+    err=$(build "bad-rootpw-$i" 2>&1 || true)
+    ! grep -qF -- "$bad" <<<"$err" || fail "error message echoes the ROOT_PASSWORD value '$bad'"
+done
+variant both-root "s/^ROOT_PASSWORD=.*/ROOT_PASSWORD='$FAKE_ROOT'/"
+expect_fail_with "keys ROOT_PASSWORD and ROOT_PASSWORD_HASH are both set" build both-root
+err=$(build both-root 2>&1 || true)
+! grep -qF -- "$FAKE_ROOT" <<<"$err" || fail "the both-set error echoes the ROOT_PASSWORD value"
+for good in "$FAKE_ROOT" 12345678 'with space pw!' "$(printf 'y%.0s' {1..63})"; do
+    rootpw "$good" good-rootpw
+    out=$(build --render-only good-rootpw "$SCRATCH/good-rootpw" 2>&1) || fail "ROOT_PASSWORD '$good' was rejected"
+    ! grep -qF -- "$good" <<<"$out" || fail "the build output shows the ROOT_PASSWORD value"
+    assert_absent "$SCRATCH/good-rootpw" "$good"
+    hash=$(sed -n "s/^P_ROOT_PASSWORD_HASH='\(.*\)'$/\1/p" "$SCRATCH/good-rootpw/etc/uci-defaults/zz-lw-config")
+    [[ $hash == "\$6\$"* ]] || fail "ROOT_PASSWORD '$good' did not become a \$6\$ hash"
+    [ "$(openssl passwd -6 -salt "$(cut -d'$' -f3 <<<"$hash")" "$good")" = "$hash" ] ||
+        fail "the hash in the overlay does not match ROOT_PASSWORD '$good'"
+    [ ! -e "$SCRATCH/good-rootpw-passwords.txt" ] || fail "a profile with both passwords got a card"
+    rm -rf -- "$SCRATCH/good-rootpw"
+done
+# an unchanged rebuild keeps the password; the hash gets a new salt
+rootpw "$FAKE_ROOT" rootpw-twice
+build --render-only rootpw-twice "$SCRATCH/twice-1" 2>/dev/null
+build --render-only rootpw-twice "$SCRATCH/twice-2" 2>/dev/null
+h1=$(sed -n "s/^P_ROOT_PASSWORD_HASH='\(.*\)'$/\1/p" "$SCRATCH/twice-1/etc/uci-defaults/zz-lw-config")
+h2=$(sed -n "s/^P_ROOT_PASSWORD_HASH='\(.*\)'$/\1/p" "$SCRATCH/twice-2/etc/uci-defaults/zz-lw-config")
+[ "$(openssl passwd -6 -salt "$(cut -d'$' -f3 <<<"$h1")" "$FAKE_ROOT")" = "$h1" ] &&
+    [ "$(openssl passwd -6 -salt "$(cut -d'$' -f3 <<<"$h2")" "$FAKE_ROOT")" = "$h2" ] ||
+    fail "a rebuild does not keep the ROOT_PASSWORD"
+# the card is written because the WiFi key is drawn; it lists the profile's root password and wins
+# over an older card, and the drawn WiFi key comes back from the card
+sed -e "s/^WIFI_KEY=.*/WIFI_KEY=''/" "$P/good-rootpw.conf" >"$P/card-rootpw.conf"
+mkdir -p "$SCRATCH/cardimg"
+printf 'ssid=old\nwifi=keep-this-wifi\nroot=old-root-from-card\n' >"$SCRATCH/cardimg/card-rootpw-passwords.txt"
+LW_PROFILES=$P LW_IMAGE=$SCRATCH/cardimg "$FW/build.sh" --render-only card-rootpw "$SCRATCH/card-out" 2>/dev/null
+grep -qxF "root=$(printf 'y%.0s' {1..63})" "$SCRATCH/card-out-passwords.txt" ||
+    fail "the card does not list the profile's ROOT_PASSWORD"
+grep -qxF "wifi=keep-this-wifi" "$SCRATCH/card-out-passwords.txt" || fail "the card's WiFi key was not reused"
+! grep -q 'old-root-from-card' "$SCRATCH/card-out-passwords.txt" || fail "an older card won over ROOT_PASSWORD"
+# the hash alone is still accepted and lands verbatim; both empty draws a password (R33)
+hash_in=$(sed -n "s/^ROOT_PASSWORD_HASH='\(.*\)'$/\1/p" "$P/fake-full.conf")
+build --render-only fake-full "$SCRATCH/hash-only" 2>/dev/null || fail "ROOT_PASSWORD_HASH alone was rejected"
+grep -qxF "P_ROOT_PASSWORD_HASH='$hash_in'" "$SCRATCH/hash-only/etc/uci-defaults/zz-lw-config" ||
+    fail "ROOT_PASSWORD_HASH was not written verbatim"
+variant both-empty "s/^ROOT_PASSWORD_HASH=.*/ROOT_PASSWORD_HASH=''/"
+build --render-only both-empty "$SCRATCH/both-empty" 2>/dev/null || fail "both root keys empty was rejected"
+grep -qE '^root=.{8,}' "$SCRATCH/both-empty-passwords.txt" || fail "no root password was drawn"
 
 # Digits are ASCII digits only: fullwidth and Arabic-Indic digits are Unicode digits that a plain
 # regex class \d would let through, and that uci, cron or the router's shell would not read as numbers
