@@ -45,6 +45,7 @@ ask_balance() {
     tg_push "$TG_CHAT" /balance
     pass
 }
+balance_asked
 sms_in 10 1466 '11/07/26 11:05:00' 'Imate: 0.31 do 05.01.; '
 passes 2
 lw_expect_eq "$(last_text)" "✉️ Telekom 1466 · Today 11:05

@@ -117,6 +117,14 @@ uci set firewall.vpn_lan.src='vpn'
 uci set firewall.vpn_lan.dest='lan'
 uci commit firewall
 
+# LuCI: luci-ssl adds the HTTPS listener but leaves plain HTTP on port 80 answering with the login
+# form. The redirect keeps the root password from crossing the Wi-Fi in clear text (SPEC R30, D19).
+# Only on the section the package ships; an image without it gets no file from here.
+if uci -q get uhttpd.main >/dev/null; then
+    uci set uhttpd.main.redirect_https='1'
+    uci commit uhttpd
+fi
+
 # WiFi: both radios (radio0 2.4 GHz, radio1 5 GHz on the MF289F), one SSID, fast roaming
 for r in radio0 radio1; do
     uci set wireless."$r".country="$P_WIFI_COUNTRY"

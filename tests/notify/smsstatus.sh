@@ -47,6 +47,7 @@ lw_expect_eq "$(status)" "Home router: internet DOWN since 14:20 (32 min). Self-
 
 # with a signal reading and a balance there is room for both
 sig_line -86dBm 4.6dB
+balance_asked
 sms_in 50 1466 '11/07/26 14:00:00' 'Imate: 0.31 do 05.01.; '
 passes 2
 lw_expect_eq "$(status)" "Home router: internet DOWN since 14:20 (32 min). Self-repair step 3 of 6, cause: modem not responding. 2G backup: off. Signal fair. Balance 0.31 EUR (7 Nov)." \

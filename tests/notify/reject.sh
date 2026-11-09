@@ -130,5 +130,27 @@ passes 4
 expect_sent $((n + 1))
 lw_expect_eq "$(queue_n)" 0 "queue at the end"
 
+# R34i: what the service leaves behind is for root only. The queue holds SMS texts, a request body
+# holds an SMS text or the Wi-Fi password, and the stderr file next to it holds the token's URL; the
+# new files and directories are made by the service itself, so the state of a first start is built
+# from nothing
+rm -r -f /etc/lw-notify "$G/body-modes"
+lw_reboot_sim
+passes 2
+echo 500 >"$G/status"
+sms_in 40 +38200000011 '11/07/26 12:10:00' 'mode check'
+passes 3
+[ -n "$(find /etc/lw-notify/queue -type f)" ] || lw_fail "no queue file to check the mode of"
+[ -s "$G/body-modes" ] || lw_fail "no request body to check the mode of"
+lw_expect_eq "$(find /etc/lw-notify /tmp/lw-notify -perm /077)" "" "state files and directories open to group or others"
+lw_expect_eq "$(find /etc/lw-notify /tmp/lw-notify -type f | wc -l | tr -d ' ')" \
+    "$(find /etc/lw-notify /tmp/lw-notify -type f -perm 600 | wc -l | tr -d ' ')" "state files with mode 0600"
+# the bodies of the calls that went out, the Wi-Fi password among them
+rm -f "$G/status"
+tg_push "$TG_CHAT" /wifi
+pass
+lw_expect_eq "$(sort -u "$G/body-modes")" "-rw-------" "mode of the request bodies"
+lw_expect_eq "$(find /etc/lw-notify /tmp/lw-notify -perm /077)" "" "files and directories after the sends"
+
 no_orphans
 echo ok

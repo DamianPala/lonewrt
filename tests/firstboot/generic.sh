@@ -55,6 +55,12 @@ fb_expect firewall.vpn_lan.src vpn
 fb_expect firewall.vpn_lan.dest lan
 uci show firewall | grep -q "dest='vpn'" && lw_fail "a forwarding leads into the vpn zone"
 
+# LuCI answers on port 80 only with a redirect to HTTPS, so the root password never crosses the Wi-Fi
+# in clear text (R30, D19); the rest of the uhttpd section stays as the package has it
+fb_expect uhttpd.main.redirect_https 1
+fb_expect uhttpd.main.home /www
+fb_expect uhttpd.main.listen_https "0.0.0.0:443 [::]:443"
+
 # LuCI modem tools on ttyUSB1 (R12, R30a)
 fb_expect sms_tool_js.@sms_tool_js[0].atport /dev/ttyUSB1
 fb_expect sms_tool_js.@sms_tool_js[0].storage ME

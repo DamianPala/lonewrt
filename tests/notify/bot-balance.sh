@@ -46,11 +46,12 @@ expect_last 'Imate: 0.32'
 expect_last '⚠️ Low balance: 0.32 EUR (today 10:05)'
 expect_last 'Top up at least 7.50 EUR'
 # the low reading is remembered: the next weekly reply below the threshold stays quiet
+lw-notify balance
 sms_in 2 1466 '11/09/26 10:00:20' 'Imate: 0.30 do 05.01.; '
 passes 2
 expect_sent 6
 
-# a reply after 10 min answers nothing
+# a reply after 10 min answers nothing: it is an ordinary SMS then (R36, D72)
 tg_push "$TG_CHAT" /balance
 pass
 expect_sent 7
@@ -62,7 +63,9 @@ lw_uptime_add 500
 pass
 sms_in 3 1466 '11/09/26 11:00:20' 'Imate: 20.00 do 05.01.; '
 passes 2
-expect_sent 8
+expect_sent 9
+expect_last 'Imate: 20.00 do 05.01.;'
+case $(last_text) in *'= Balance'*) lw_fail "late reply with a translation: $(last_text)" ;; esac
 
 # a modem that does not take the SMS
 echo HANG >"$T/at/SEND"

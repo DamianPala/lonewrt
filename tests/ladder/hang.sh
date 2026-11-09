@@ -5,7 +5,7 @@
 . /fw/tests/ladder/ladder.inc
 
 before_run() {
-    echo "kern.crit kernel: qmi_wwan wwan0: NETDEV WATCHDOG: transmit queue 0 timed out" |
+    echo "Mon Nov  9 10:00:18 2026 kern.err kernel: [  123.456789] NETDEV WATCHDOG: wwan0 (qmi_wwan): transmit queue 0 timed out" |
         tee -a /root/openwrt.log >>"$T/logread"
 }
 lw_net down down

@@ -60,4 +60,5 @@ done
 first=$(fb_state)
 fb_uci_defaults
 lw_expect_eq "$(fb_state)" "$first" "state after a second uci-defaults run"
+fb_expect uhttpd.main.redirect_https 1
 echo ok

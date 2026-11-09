@@ -3,7 +3,8 @@
 # with them. A national form (067..., or 9 digits with no prefix) matches the international entry;
 # 7 digits do not; a foreign sender in international form does not match, but one that arrives with
 # the same 8 final digits and no country code does (accepted). The reply goes to the matched admin
-# number, without a plus (the installed sms_tool encodes "+" as a digit). All numbers here are fake.
+# number, without a plus (the installed sms_tool encodes "+" as a digit). A sender with anything but
+# digits and one leading "+" is no number and never matches. All numbers here are fake.
 # shellcheck source=tests/lib.sh
 . /fw/tests/lib.sh
 # shellcheck source=tests/notify/helpers.inc
@@ -58,4 +59,15 @@ match 67000001 38267000001
 nomatch 1466
 nomatch Telekom
 nomatch ''
+# a sender that is not a number never matches, whatever digits it holds: text sender IDs are free
+# for anyone to choose, a forged number is not (R46)
+nomatch X600000001
+nomatch 'Bank 48600000001'
+nomatch '48600000001 '
+nomatch ' 48600000001'
+nomatch '+48600000001x'
+nomatch '+48 600000001'
+nomatch '++48600000001'
+nomatch '48-600000001'
+nomatch '+'
 echo ok

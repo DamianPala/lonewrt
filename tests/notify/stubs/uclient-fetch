@@ -63,6 +63,8 @@ case $url in
         ;;
 esac
 method=${url##*/}
+# the mode of the request body, as ls prints it: the body can hold SMS texts or the Wi-Fi password
+[ -z "$body" ] || ls -ld "$body" | cut -c1-10 >>"$G/body-modes"
 token=${url%/*}
 token=${token##*/bot}
 echo "$method" >>"$G/calls"

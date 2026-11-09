@@ -5,6 +5,9 @@
 # KEEP. Reads and deletes only; it never sends anything (R27).
 # DRYRUN=1 prints the count and the indices it would delete, and changes nothing (R26d).
 
+# R34i: the dumps hold SMS texts; only root runs this script (cron) and reads them
+umask 077
+
 # shellcheck source=src/files/usr/lib/lw/common.sh
 . /usr/lib/lw/common.sh
 
@@ -63,7 +66,9 @@ if [ "${DRYRUN:-0}" != 1 ]; then
     fi
 fi
 json=$(sms -s ME -j recv)
-if [ -z "$json" ] || ! printf '%s\n' "$json" | jsonfilter -e '@.msg' >/dev/null 2>&1; then
+# R26f: the same repair of the sender as lw-notify, so one message with a quote in it cannot stop
+# the cleaning; the archive holds the repaired list, which is valid JSON
+if [ -z "$json" ] || ! json=$(lw_sms_list "$json"); then
     lw_log "$TAG" "no message list from the modem, nothing deleted"
     exit 1
 fi

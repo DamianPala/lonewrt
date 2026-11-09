@@ -47,4 +47,23 @@ case $(basename "$new") in
 esac
 lw_expect_grep "$T/syslog" "lw-sms-clean: deleted 15 of 35 messages (0 failed)"
 lw_expect_eq "$(grep -cv '^/dev/ttyUSB2 ' "$T/at-calls" || :)" 0 "modem calls off /dev/ttyUSB2"
+
+# R26f: a sender with a quote or a backslash makes the raw list invalid JSON (sms_tool does not
+# escape it); the cleaning repairs the field like lw-notify (R34h), deletes by the repaired list, and
+# the dump holds the repaired list, which is valid JSON
+rm -r -f "$A" "$T/modem/sms"
+mkdir -p "$T/modem/sms"
+for i in $(seq 0 34); do sms_add "$i" "10/$(printf %02d $((i % 28 + 1)))/26 08:00:00"; done
+printf '{"index":3,"sender":"%s","timestamp":"10/04/26 08:00:00","content":"quote"}' 'AB"CD' >"$T/modem/sms/3.json"
+printf '{"index":4,"sender":"%s","timestamp":"10/05/26 08:00:00","content":"backslash"}' 'AB\CD' >"$T/modem/sms/4.json"
+: >"$T/syslog"
+lw-sms-clean
+lw_expect_eq "$(njson "$T/modem/sms")" 20 "messages after cleaning a store with unescaped senders"
+lw_expect_grep "$T/syslog" "lw-sms-clean: deleted 15 of 35 messages (0 failed)"
+dump=$(find "$A" -name '*.json')
+lw_expect_eq "$(jsonfilter -i "$dump" -e '@.msg[*].index' | wc -l)" 35 "messages in the repaired dump"
+lw_expect_eq "$(jsonfilter -i "$dump" -e '@.msg[@.index=3].sender')" 'AB"CD' "quote sender in the dump"
+lw_expect_eq "$(jsonfilter -i "$dump" -e '@.msg[@.index=4].sender')" 'AB\CD' "backslash sender in the dump"
+# R34i: the dump holds SMS texts, so only root reads it
+lw_expect_eq "$(find "$A" -perm /077)" "" "archive open to group or others"
 echo ok

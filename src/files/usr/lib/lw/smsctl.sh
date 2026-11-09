@@ -30,11 +30,14 @@ SC_LEN=160
 # step are left out as a whole when they do not fit (sc_fit, sc_down_text), so no word is ever cut
 # in two. sc_clean only guards the limit.
 
-# sc_is_admin SENDER (R46, D65): SENDER without "+", a leading 00 or a single leading 0 has at least
-# 8 digits and the end of an admin number. That number is left in SC_MATCH. A sender with no digits
+# sc_is_admin SENDER (R46, D65): SENDER is a number, that is one optional "+" and digits only, and
+# without "+", a leading 00 or a single leading 0 it has at least 8 digits and the end of an admin
+# number. That number is left in SC_MATCH. Anything else never matches: a text sender ID is free for
+# anyone to choose, and "X600000001" must not become 600000001. A sender with no digits
 # ("Telekom") and a short code never match. A foreign number with the same 8 or more final digits
 # matches too; that is accepted.
 sc_is_admin() {
+    case ${1#+} in '' | *[!0-9]*) return 1 ;; esac
     _scd=$(nt_core "$1")
     [ "${#_scd}" -ge 8 ] || return 1
     for _sca in $NT_ADMINS; do
@@ -49,17 +52,20 @@ sc_is_admin() {
 }
 
 # sc_fresh TIMESTAMP: the SMSC time ("MM/DD/YY hh:mm:ss", the router's zone) is at most NT_SMS_AGE
-# minutes before or after now; further ahead means the clocks or zones disagree, so the age says
-# nothing. Without a synced clock there is nothing to compare with, so it passes; with one, a time
-# that cannot be read does not.
+# minutes before now (R46b, D65). With an NTP-synced clock it is also at most that far ahead; further
+# ahead means the clocks or zones disagree, so the age says nothing, and a time that cannot be read
+# is not fresh. Without NTP the clock is the one the router had at the boot, never ahead of the real
+# time, so an SMS older than the limit by that clock is certainly too old, while the bound towards
+# the future would refuse a fresh SMS: it is skipped, and a time that cannot be read is not judged.
 sc_fresh() {
-    nt_clock_ok || return 0
     _scts=$(printf '%s\n' "$1" | awk '{ if (split($1, d, "/") == 3 && split($2, t, ":") == 3)
         printf "20%s-%s-%s %s:%s:%s\n", d[3], d[1], d[2], t[1], t[2], t[3] }')
-    [ -n "$_scts" ] || return 1
-    _sce=$(date -d "$_scts" +%s 2>/dev/null) || return 1
+    if [ -z "$_scts" ]; then nt_clock_ok || return 0; return 1; fi
+    _sce=$(date -d "$_scts" +%s 2>/dev/null) || { nt_clock_ok || return 0; return 1; }
     _sce=$(($(nt_wall) - _sce))
-    [ "$_sce" -le $((NT_SMS_AGE * 60)) ] && [ "$_sce" -ge $((-NT_SMS_AGE * 60)) ]
+    [ "$_sce" -le $((NT_SMS_AGE * 60)) ] || return 1
+    nt_clock_ok || return 0
+    [ "$_sce" -ge $((-NT_SMS_AGE * 60)) ]
 }
 
 # sc_kind CONTENT: status, reboot or help for exactly that word (any case, spaces around it), own for

@@ -28,6 +28,44 @@ lw_at_nowait() {
     return "$_lw_rc"
 }
 
+# lw_sms_list JSON: the message list of `sms_tool -j recv` on stdout, readable by jsonfilter, exit
+# 0; exit 1 when it still is not. The tool prints the "sender" field as the network gave it, without
+# escaping `"` and `\`, and a text sender ID may hold both, so one such message makes the whole list
+# invalid JSON and stops everything that reads it (R34h, D71). Only that field is repaired, and only
+# when the list is unreadable as it is, so a valid list passes unchanged. A sender cannot hold the
+# 15 characters that end the field (`","timestamp":"`), so the first one after its start is the end,
+# unless the start of the next entry comes first (a cut-off entry), and then the field is left
+# alone. Its 19 characters (`{"index":` and `"sender":"`) do not fit in a sender of 11, its 10 do.
+# The list is one record, because the GSM alphabet has a line break.
+lw_sms_list() {
+    if printf '%s\n' "$1" | jsonfilter -e '@.msg' >/dev/null 2>&1; then
+        printf '%s\n' "$1"
+        return 0
+    fi
+    _lw_fx=$(printf '%s\n' "$1" | awk '{ all = (NR > 1) ? all "\n" $0 : $0 }
+    END {
+        out = ""; rest = all
+        while ((i = index(rest, "\"sender\":\"")) > 0) {
+            out = out substr(rest, 1, i + 9)
+            rest = substr(rest, i + 10)
+            j = index(rest, "\",\"timestamp\":\"")
+            if (j == 0) break
+            s = substr(rest, 1, j - 1); e = ""
+            # no boundary of its own (a cut-off entry): the next message must not be taken as its sender
+            if (j > 64 || (index(s, "{\"index\":") > 0 && index(s, "\"sender\":\"") > 0)) continue
+            for (k = 1; k <= length(s); k++) {
+                c = substr(s, k, 1)
+                if (c == "\"" || c == "\\") e = e "\\"
+                e = e c
+            }
+            out = out e; rest = substr(rest, j)
+        }
+        print out rest }')
+    printf '%s\n' "$_lw_fx"
+    # jsonfilter's own exit code for a parse error is not 1
+    printf '%s\n' "$_lw_fx" | jsonfilter -e '@.msg' >/dev/null 2>&1 || return 1
+}
+
 # lw_imsi SECONDS [nowait]: the SIM's IMSI (AT+CIMI through lw_at, so on the scripts' port under the
 # shared lock, SPEC R12) on stdout; fails without a line of 6 to 15 digits. With "nowait" a busy lock
 # fails at once (lw_at_nowait). The operator preset reads it this way (R47); /usr/lib/lw/lw-apn still

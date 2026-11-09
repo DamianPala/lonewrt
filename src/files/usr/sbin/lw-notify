@@ -11,6 +11,11 @@
 #   lw-notify balance the Monday balance check from cron (R35)
 #   lw-notify speedtest-run   the worker of /speedtest, started by the service only (R41)
 
+# R34i: everything this script writes (the queue, the SMS keys, the request bodies with SMS texts
+# and the Wi-Fi password) is for root. Only root processes (procd, cron, hotplug) start it and read
+# these files, so nothing else needs access.
+umask 077
+
 # shellcheck source=src/files/usr/lib/lw/common.sh
 . /usr/lib/lw/common.sh
 # shellcheck source=src/files/usr/lib/lw/notify.sh
@@ -257,6 +262,7 @@ nt_balance_cmd() {
     fi
     if nt_balance_query; then
         nt_now >"$NT_RUN/balance_req"
+        nt_now >"$NT_RUN/balance_asked"
         rm -f "$NT_RUN/balance_late"
         nt_send "💶 Asked $NT_P_NAME for the balance (SMS to $NT_P_QTO). The answer comes here, usually
 within a minute."
@@ -316,7 +322,8 @@ nt_sms() {
     _rc=0
     _json=$(timeout "$NT_READ_LIMIT" flock "$LW_AT_LOCK" sms_tool -d "$LW_AT_PORT" -s ME -j recv \
         </dev/null 2>/dev/null) || _rc=$?
-    if [ "$_rc" != 0 ] || ! printf '%s\n' "$_json" | jsonfilter -e '@.msg' >/dev/null 2>&1; then
+    [ "$_rc" != 0 ] || _json=$(lw_sms_list "$_json") || _rc=1
+    if [ "$_rc" != 0 ]; then
         nt_send "⚠️ Could not read the SMS from the modem (busy or not answering).
 Try again in a minute."
         return

@@ -25,6 +25,10 @@ gcheck "timezone from generic.conf ('$tz', '$zone')" \
     "[ -n '$tz' ] && [ \"\$(uci get system.@system[0].timezone)\" = '$tz' ] &&
      [ \"\$(uci get system.@system[0].zonename)\" = '$zone' ]"
 
+# LuCI: plain HTTP on port 80 only redirects to HTTPS (R30, D19)
+gcheck "uhttpd redirects HTTP to HTTPS (R30, D19)" \
+    '[ "$(uci get uhttpd.main.redirect_https)" = 1 ]'
+
 # WiFi: both bands, one SSID and key, psk-mixed, 802.11r, country and channels from the profile
 card_wifi=$(card_value wifi)
 card_root=$(card_value root)

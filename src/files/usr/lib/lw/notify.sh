@@ -47,6 +47,8 @@ NT_HTTP_LIMIT=${LW_NOTIFY_HTTP_LIMIT:-15}
 NT_AT_LIMIT=${LW_NOTIFY_AT_LIMIT:-10}
 NT_READ_LIMIT=${LW_NOTIFY_READ_LIMIT:-20}
 NT_SEND_LIMIT=${LW_NOTIFY_SEND_LIMIT:-30}
+# Reads of the SMS list in a row that must fail before the owner is told (R34h)
+NT_BAD_LIST=3
 NT_BALANCE_WAIT=${LW_NOTIFY_BALANCE_WAIT:-120}
 NT_BALANCE_WINDOW=${LW_NOTIFY_BALANCE_WINDOW:-600}
 NT_DOWN_GRACE=${LW_NOTIFY_DOWN_GRACE:-120}
@@ -183,6 +185,25 @@ nt_when() {
             ;;
         *) printf unknown ;;
     esac
+}
+
+# nt_defuse TEXT (R39f): TEXT from outside (an SMS, a sender, a first name, a speed test server) with
+# every "@@T" written as "@ @T", so nt_resolve cannot take it for a time marker; the result is in
+# NT_DEF (a global, so a text keeps its trailing new lines). One pass, left to right: the result
+# holds no "@@T" (a space always stands between the two at signs and the T).
+nt_defuse() {
+    _dfr=$1
+    _dfo=
+    while :; do
+        case $_dfr in
+            *'@@T'*)
+                _dfo=$_dfo${_dfr%%'@@T'*}'@ @T'
+                _dfr=${_dfr#*'@@T'}
+                ;;
+            *) break ;;
+        esac
+    done
+    NT_DEF=$_dfo$_dfr
 }
 
 # nt_resolve TEXT: the time markers as words. Today and yesterday only when the clock is right
@@ -545,23 +566,39 @@ nt_sender() {
     [ -n "$1" ] || { echo unknown; return 0; }
     case " $NT_P_CODES " in
         *" $1 "*)
-            echo "$NT_P_NAME $1"
+            printf '%s\n' "$NT_P_NAME $1"
             return 0
             ;;
     esac
+    # printf, not echo: a sender "-n" or "-e" is text, not an option (R39f)
     case $1 in
-        *[!0-9]*) echo "$1" ;;
+        *[!0-9]*)
+            nt_defuse "$1"
+            printf '%s\n' "$NT_DEF"
+            ;;
         *)
-            if [ "${#1}" -ge 9 ]; then echo "+$1"; else echo "$1"; fi
+            if [ "${#1}" -ge 9 ]; then printf '%s\n' "+$1"; else printf '%s\n' "$1"; fi
             ;;
     esac
 }
 
-# nt_amount FROM TEXT (R47): the balance from the answer to the balance query, i.e. a message from
-# the preset's sender whose first line fits its reply pattern ("Imate: 0.32 do 05.01.; "); empty for
-# anything else and for a SIM without a preset. A comma becomes a dot.
+# nt_asked: the router sent the balance query within the last NT_BALANCE_WINDOW s (R36, D72). The
+# stamp is left by the two callers of nt_balance_query, the weekly one and /balance, and only ages
+# out: no answer removes it, so a forged reply that comes first cannot take the slot of the real one
+# and hide its low-balance warning (D72).
+nt_asked() {
+    _asked=$(nt_get "$NT_RUN/balance_asked")
+    [ -n "$_asked" ] && [ $(($(nt_now) - _asked)) -le "$NT_BALANCE_WINDOW" ]
+}
+
+# nt_amount FROM TEXT [store] (R47, R36): the balance from the answer to the balance query, i.e. a
+# message from the preset's sender whose first line fits its reply pattern ("Imate: 0.32 do
+# 05.01.; ") while the router waits for an answer; empty for anything else, for a SIM without a
+# preset, and for such a message nobody asked for, which is an ordinary SMS: the sender of an SMS
+# can be forged (D72). With "store" (the first scan after a flash or reset, which forwards
+# nothing) the query is not required. A comma becomes a dot.
 nt_amount() {
-    nt_preset_ok && [ "$1" = "$NT_P_FROM" ] || return 0
+    nt_preset_ok && [ "$1" = "$NT_P_FROM" ] && { [ "${3:-}" = store ] || nt_asked; } || return 0
     printf '%s\n' "$2" | sed -n "1s#^[[:space:]]*$NT_P_RE.*#\\$NT_P_AREF#p" | tr , .
 }
 
@@ -581,9 +618,10 @@ nt_translate() {
 
 # nt_format: the message in NT_FROM, NT_TS, NT_TEXT as the chat shows it (R39, R39a, R39b).
 nt_format() {
-    _fb=$NT_TEXT
+    nt_defuse "$NT_TEXT"
+    _fb=$NT_DEF
     _fa=$(nt_amount "$NT_FROM" "$NT_TEXT")
-    [ -z "$_fa" ] || _fb="$NT_TEXT
+    [ -z "$_fa" ] || _fb="$_fb
 $(nt_translate "$NT_TEXT" "$_fa")"
     printf '✉️ %s · %s\n\n%s' "$(nt_sender "$NT_FROM")" "$(nt_when U "$(nt_wallstr "$NT_TS")")" \
         "$_fb"
@@ -676,7 +714,7 @@ nt_absorb() {
         echo "$_k" >>"$_keys"
         if [ "$_first" = 1 ]; then
             echo "$_k" >>"$_seen"
-            _amt=$(nt_amount "$NT_FROM" "$NT_TEXT")
+            _amt=$(nt_amount "$NT_FROM" "$NT_TEXT" store)
             [ -z "$_amt" ] || nt_pick_balance "$_amt" "$NT_TS"
             continue
         fi
@@ -720,6 +758,22 @@ nt_absorb() {
     rm -rf "$_keys" "$_seen" "$_keys.new" "$NT_RUN/msgs" "$NT_MP"
 }
 
+# nt_list_bad (R34h): sms_tool answered with exit code 0, but the list is not readable even after
+# the repair of the sender. After NT_BAD_LIST reads in a row one syslog entry and one chat message
+# say so; the flag in RAM holds them back until a read worked again, so a long outage is one report
+# and the next occurrence is a new one. Nothing is forwarded or run while the list is unreadable.
+nt_list_bad() {
+    _nbad=$(($(nt_get "$NT_RUN/list_bad" 0) + 1))
+    echo "$_nbad" >"$NT_RUN/list_bad"
+    [ "$_nbad" -ge "$NT_BAD_LIST" ] && [ ! -e "$NT_RUN/list_warned" ] || return 0
+    : >"$NT_RUN/list_warned"
+    lw_log "$NT_TAG" "the SMS list of the modem cannot be read ($_nbad reads in a row), forwarding" \
+        "and SMS control wait until the bad message is deleted"
+    [ "$NT_TG" != 1 ] || nt_enqueue unreadable "⚠️ One SMS in the modem cannot be read.
+New SMS are not posted here and SMS commands do not work until it is deleted.
+Delete it in LuCI: Modem, SMS."
+}
+
 # nt_inbox: one inbox pass with at most one short AT command under the shared lock, never waiting
 # for it (R34b): AT+CPMS? for the count, and the full list only in the pass after the count
 # changed (or every NT_FULL_EVERY passes, for a deletion and an arrival in the same window).
@@ -745,7 +799,15 @@ nt_inbox() {
     _rc=0
     _json=$(timeout "$NT_AT_LIMIT" flock -n "$LW_AT_LOCK" sms_tool -d "$LW_AT_PORT" -s ME -j recv \
         </dev/null 2>/dev/null) || _rc=$?
-    if [ "$_rc" != 0 ] || ! printf '%s\n' "$_json" | jsonfilter -e '@.msg' >/dev/null 2>&1; then
+    # an answer that is not a list, though the exit code is 0, is not a busy modem (R34h)
+    _bad=0
+    if [ "$_rc" = 0 ] && [ -n "$_json" ]; then
+        _json=$(lw_sms_list "$_json") || _bad=1
+    elif [ "$_rc" = 0 ]; then
+        _rc=1
+    fi
+    if [ "$_rc" != 0 ] || [ "$_bad" = 1 ]; then
+        [ "$_bad" = 0 ] || nt_list_bad
         # one quick retry (busy lock), then back to the count every NT_POLL s, so a failing or
         # hung modem does not get a list read every second (R34b); a timeout gets no retry
         _try=$(($(nt_get "$NT_RUN/need_recv" 0) + 1))
@@ -754,7 +816,7 @@ nt_inbox() {
         [ "$_try" -lt 2 ] || rm -f "$NT_RUN/need_recv"
         return 0
     fi
-    rm -f "$NT_RUN/need_recv" "$NT_RUN/passes"
+    rm -f "$NT_RUN/need_recv" "$NT_RUN/passes" "$NT_RUN/list_bad" "$NT_RUN/list_warned"
     nt_absorb "$_json"
     sc_run
 }
@@ -797,6 +859,7 @@ nt_weekly() {
     _rc=0
     nt_balance_query || _rc=$?
     if [ "$_rc" = 0 ]; then
+        nt_now >"$NT_RUN/balance_asked"
         lw_log "$NT_TAG" "weekly balance check: $NT_P_QTEXT sent to $NT_P_QTO"
     else
         lw_log "$NT_TAG" "weekly balance check: sending $NT_P_QTEXT to $NT_P_QTO failed (exit $_rc)"

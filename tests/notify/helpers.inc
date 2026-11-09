@@ -143,6 +143,14 @@ sms_in() {
         >"$T/modem/sms/$1.json"
 }
 
+# balance_asked: the router has just sent its balance query, so the next message that fits the
+# operator's reply pattern counts as the balance (R36, D72); one that nobody asked for is an
+# ordinary SMS. Same stamp as the weekly query and /balance leave.
+balance_asked() {
+    mkdir -p /tmp/lw-notify
+    cut -d. -f1 "$T/uptime" >/tmp/lw-notify/balance_asked
+}
+
 # sms_part INDEX SENDER TIMESTAMP REFERENCE PART TOTAL CONTENT: one part of a long SMS arrives in the
 # modem's ME store, with the extra fields sms_tool 2025.08.23 prints for it (R34g).
 sms_part() {

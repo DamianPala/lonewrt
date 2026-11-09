@@ -114,8 +114,14 @@ save_run() {
         lw_write_atomic "$RUN"
 }
 
+# A watchdog entry is a line of the kernel: 24-character date, facility.level, "kernel:", as in the
+# persistent log and in logread ("Mon Nov  9 10:00:18 2026 kern.err kernel: [ 1.5] NETDEV WATCHDOG: ...").
+# The same log holds text a LAN user chose (a user name in a failed login), which must not count and
+# turn the class of a used-up package into a hang (R18e).
+WD_RE='^.{24} kern\.[a-z]+ kernel: .*NETDEV WATCHDOG'
+
 wd_count() {
-    _c=$(grep -c 'NETDEV WATCHDOG' "$1" 2>/dev/null)
+    _c=$(grep -cE "$WD_RE" "$1" 2>/dev/null)
     is_num "$_c" || _c=0
     echo "$_c"
 }
@@ -129,7 +135,7 @@ wd_update() {
     _ino=${_ino:-none}
     _now=$(wd_count "$LOG")
     if [ -z "$wd_ino" ]; then
-        _ram=$(timeout 5 logread 2>/dev/null | grep -c 'NETDEV WATCHDOG')
+        _ram=$(timeout 5 logread 2>/dev/null | grep -cE "$WD_RE")
         is_num "$_ram" || _ram=0
         wd_base=$((_now - _ram))
         [ "$wd_base" -ge 0 ] || wd_base=0
@@ -330,7 +336,7 @@ snapshot_entry() {
     echo "--- modem (AT)"
     snapshot_at
     echo "--- last NETDEV WATCHDOG lines in $LOG"
-    grep 'NETDEV WATCHDOG' "$LOG" 2>/dev/null | tail -n 3
+    grep -E "$WD_RE" "$LOG" 2>/dev/null | tail -n 3
     echo "--- last 12 lines of $SIGLOG"
     tail -n 12 "$SIGLOG" 2>/dev/null
     echo

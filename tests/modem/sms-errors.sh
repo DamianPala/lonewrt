@@ -60,4 +60,23 @@ sleep 2
 lw-sms-clean
 lw_expect_eq "$(njson "$T/modem/sms")" 20 "messages after the next run"
 lw_expect_eq "$(njson "$A")" 2 "dumps"
+
+# R26f: a list that stays unreadable after the repair of the sender (a cut-off entry) deletes
+# nothing and archives nothing; the next run, with the entry gone, cleans as usual
+rm -r -f "$A" "$T/modem/sms"
+mkdir -p "$T/modem/sms"
+for i in $(seq 0 34); do
+    printf '{"index":%s,"timestamp":"09/21/26 10:%02d:00","content":"m"}' "$i" "$i" >"$T/modem/sms/$i.json"
+done
+printf '{"index":90,"sender":"x"' >"$T/modem/sms/90.json"
+: >"$T/syslog"
+rc=0
+MAX=10 KEEP=5 lw-sms-clean || rc=$?
+lw_expect_eq "$rc" 1 "exit code with an unreadable list"
+lw_expect_grep "$T/syslog" "lw-sms-clean: no message list from the modem, nothing deleted"
+[ ! -e "$A" ] || lw_fail "archive written with an unreadable list"
+lw_expect_eq "$(find "$T/modem/sms" -name '*.json' | wc -l | tr -d ' ')" 36 "messages with an unreadable list"
+rm -f "$T/modem/sms/90.json"
+MAX=10 KEEP=5 lw-sms-clean
+lw_expect_eq "$(njson "$T/modem/sms")" 5 "messages after the entry is gone"
 echo ok

@@ -81,7 +81,9 @@ nt_rb_wait_cap() {
 # nt_rb_name: who tapped, as one short line.
 nt_rb_name() {
     _rm=$(nt_clean "$NT_CBNAME" | cut -c1-40)
-    echo "${_rm:-someone}"
+    # printf, not echo: a name "-n" is text; no time marker from a first name (R39f)
+    nt_defuse "${_rm:-someone}"
+    printf '%s\n' "$NT_DEF"
 }
 
 # nt_rb_record NAME [VIA]: the one write to flash before the restart (R45a). The wall time counts

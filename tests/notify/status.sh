@@ -27,6 +27,7 @@ rating() {
 }
 
 # the balance reply of today 11:05 (the router reads it like any 1466 SMS)
+balance_asked
 sms_in 0 1466 '11/07/26 11:05:00' 'Imate: 0.31 do 05.01.; '
 passes 2
 expect_sent 1
@@ -53,6 +54,7 @@ lw_expect_eq "$(last_text | tail -n 1 | cut -c1-5)" "Tech:" "last line"
 if last_text | grep -v '^Tech:' | grep -q '[a-z_]=[^ ]'; then lw_fail "key=value in the answer"; fi
 
 # the balance is above the threshold: no warning, nothing to do
+balance_asked
 sms_in 1 1466 '11/07/26 11:30:00' 'Imate: 12.40 do 05.01.; '
 passes 2
 s=$(status)
@@ -60,7 +62,10 @@ lw_expect_eq "$(line_of "$s" '💶')" "💶 Balance: 12.40 EUR (today 11:30)" "b
 case $s in *'below 7.50'*) lw_fail "warning above the threshold" ;; esac
 lw_expect_eq "$(line_of "$s" '✅')" "✅ Nothing to do" "action line"
 # an older reading that arrives later does not replace the newest
+balance_asked
 sms_in 2 1466 '11/06/26 18:40:00' 'Imate: 12.40 do 05.01.; '
+passes 2
+balance_asked
 sms_in 3 1466 '11/05/26 09:12:00' 'Imate: 12.40 do 05.01.; '
 passes 2
 lw_expect_eq "$(cat /etc/lw-notify/lastbal)" "12.40|2026-11-07 11:30" "newest reading kept"
@@ -111,6 +116,7 @@ lw_expect_eq "$(line_of "$(status)" '📱')" "📱 Wi-Fi: unknown" "ubus failing
 rm -f "$T/wifi/FAIL"
 
 # the repair limit (R19): the person line wins over the top-up line, also with a low balance
+balance_asked
 sms_in 4 1466 '11/07/26 11:40:00' 'Imate: 0.31 do 05.01.; '
 passes 2
 printf 'cycles=40\nreboots=6\nclass=hang\npassive=1\nuptime=900\n' >/etc/wwan-recover.state

@@ -1,7 +1,8 @@
 # R46b, D65: a REBOOT by SMS restarts only when it is fresh and under the daily limit. Fresh: it
 # appeared in memory after the service started (what the first scan finds is old), and, with a
-# synced clock, its SMSC time is at most SMS_REBOOT_MAX_AGE_MIN minutes before or after now
-# (without NTP there is nothing to compare). A stale or over-limit REBOOT
+# synced clock, its SMSC time is at most SMS_REBOOT_MAX_AGE_MIN minutes before or after now; without
+# NTP only the age is checked, against the clock the router has (it is never ahead of the real
+# time, so a fresh SMS is never refused). A stale or over-limit REBOOT
 # gets a reply with the reason (one of the 10 replies of R46c) and restarts nothing. At most
 # SMS_REBOOT_MAX_PER_DAY restarts per day; the counter is a file on flash, written only when it
 # changes, and it survives a restart. All numbers here are fake.
@@ -53,9 +54,20 @@ reboot_refused "$(smsc_ts 660)" "$AGE10"
 # with the clock synced, a time that cannot be read is not fresh
 reboot_refused '' "$AGE10"
 reboot_refused 'soon' "$AGE10"
-# without NTP the router has no time to compare with: the age is not checked
+# without NTP the clock is at or behind the real time, so an SMS older than the limit is certainly
+# too old and is refused (a six-year-old one included); the bound towards the future is off, because
+# a clock that is behind would refuse a fresh SMS with it; a time that cannot be read is not judged
 ntp_off
-reboot_ok '11/07/20 01:00:00'
+reboot_refused '11/07/20 01:00:00' "$AGE10"
+reboot_refused "$(smsc_ts -660)" "$AGE10"
+reboot_refused "$(smsc_ts -86400)" "$AGE10"
+reboot_ok "$(smsc_ts -590)"
+reboot_ok "$(smsc_ts -5)"
+reboot_ok "$(smsc_ts 300)"
+reboot_ok "$(smsc_ts 660)"
+reboot_ok "$(smsc_ts 86400)"
+reboot_ok ''
+reboot_ok 'soon'
 ntp_on
 # the limit comes from the profile (uci lonewrt.notify.sms_reboot_max_age)
 uci -q set lonewrt.notify.sms_reboot_max_age=3
@@ -80,7 +92,7 @@ sms_put "$ADMIN" REBOOT "$(smsc_ts -30)"
 passes 3
 lw_expect_eq "$(sms_body "$(sms_out)")" "$STALE_START" "reply to a REBOOT waiting at the start"
 _r=$(reboots_n)
-lw_expect_eq "$_r" 6 "restarts after the stale REBOOT at the start (the earlier ones only)"
+lw_expect_eq "$_r" 12 "restarts after the stale REBOOT at the start (the earlier ones only)"
 # a STATUS waiting at the start is answered all the same; only the restart is held back
 sms_put "$ADMIN" STATUS "$(smsc_ts -30)"
 passes 3

@@ -96,7 +96,9 @@ nt_st_num() {
 
 # nt_st_txt VALUE: a name from the tool, as one short line without control characters.
 nt_st_txt() {
-    printf '%s' "$1" | tr -d '\000-\037\177' | cut -c1-60
+    _stt=$(printf '%s' "$1" | tr -d '\000-\037\177' | cut -c1-60)
+    nt_defuse "$_stt"
+    printf '%s' "$NT_DEF"
 }
 
 # nt_st_int VALUE: whole number, rounded half up; nothing for a missing or non-numeric value.

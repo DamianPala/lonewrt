@@ -182,6 +182,7 @@ rec_state 9000 5 account 1
 check "month, 2G, account"
 rec_state 9000 5 hang 1
 check "month, 2G, hang"
+balance_asked
 sms_in 50 1466 '11/07/26 14:00:00' 'Imate: 1234.56 do 05.01.; '
 passes 2
 check "month, 2G, hang, balance"

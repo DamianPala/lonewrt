@@ -4,7 +4,8 @@
 # shellcheck source=tests/ladder/ladder.inc
 . /fw/tests/ladder/ladder.inc
 
-WD="kern.crit kernel: qmi_wwan wwan0: NETDEV WATCHDOG: transmit queue 0 timed out"
+# the shape of a line in logread and in /root/openwrt.log: 24-character date, facility.level, tag
+WD="Mon Nov  9 10:00:18 2026 kern.err kernel: [  123.456789] NETDEV WATCHDOG: wwan0 (qmi_wwan): transmit queue 0 timed out"
 LEASE=$T/ifstatus/wwan_4.json
 
 # fresh: a new boot well past the grace, no failure, nothing sent, LTE dead, operator DNS answering.
@@ -98,6 +99,33 @@ lw_expect_eq "$(class_after 1)" sim "sim set"
 lw_at_override 'AT+CPIN?' '+CPIN: READY'
 lw_dns down down
 lw_expect_eq "$(class_after 1)" sim "sim sticks to the end of the failure"
+
+# R18e: only the kernel's own lines count. A service writes text a LAN user chose (a user name in a
+# failed login, a host name) into the same log; such a line, with the words or with the whole kernel
+# prefix inside its message, changes no class, in the persistent log or in logread
+for fake in \
+    "Mon Nov  9 10:00:18 2026 daemon.notice uhttpd[1234]: luci: failed login for NETDEV WATCHDOG from 192.168.1.50" \
+    "Mon Nov  9 10:00:18 2026 authpriv.info dropbear[99]: Bad password attempt for 'NETDEV WATCHDOG'" \
+    "Mon Nov  9 10:00:18 2026 daemon.info dnsmasq-dhcp[7]: DHCPREQUEST(br-lan) kern.err kernel: NETDEV WATCHDOG" \
+    "Mon Nov  9 10:00:18 2026 user.notice kernel: NETDEV WATCHDOG typed by a user"; do
+    fresh
+    echo "$fake" | tee -a /root/openwrt.log >>"$T/logread"
+    lw_expect_eq "$(class_after 1)" account "foreign line in both logs: $fake"
+    fresh
+    echo "$fake" >>/root/openwrt.log
+    lw_expect_eq "$(class_after 1)" account "foreign line only in the persistent log: $fake"
+done
+# a kernel line next to the foreign ones still counts
+fresh
+echo "Mon Nov  9 10:00:18 2026 daemon.notice uhttpd[1234]: failed login for NETDEV WATCHDOG" |
+    tee -a /root/openwrt.log >>"$T/logread"
+echo "$WD" | tee -a /root/openwrt.log >>"$T/logread"
+lw_expect_eq "$(class_after 1)" hang "kernel line among foreign lines"
+# the day of the month with two digits has the same 24 characters
+fresh
+echo "Mon Nov 19 10:00:18 2026 kern.warn kernel: [  1.5] NETDEV WATCHDOG: wwan0 (qmi_wwan): transmit queue 0 timed out" |
+    tee -a /root/openwrt.log >>"$T/logread"
+lw_expect_eq "$(class_after 1)" hang "kernel line with a two-digit day"
 
 check_format
 echo ok
