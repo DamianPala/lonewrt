@@ -260,6 +260,15 @@ printf '%s\n' "$GOOD" | sed "s/^BALANCE_REPLY_PATTERN=.*/BALANCE_REPLY_PATTERN='
 printf '%s\n' "$GOOD" | sed "s/^BALANCE_REPLY_PATTERN=.*/BALANCE_REPLY_PATTERN='Balance {any} {amount} EUR'/" | bad_case "any, space, amount"
 printf '%s\n' "$GOOD" | sed "s/^BALANCE_REPLY_PATTERN=.*/BALANCE_REPLY_PATTERN='Imate: {amount} {any}{day}.{month}'/" | bad_case "any right before day and month"
 printf '%s\n' "$GOOD" | sed "s/^BALANCE_REPLY_PATTERN=.*/BALANCE_REPLY_PATTERN='Imate: {amount} {any}  {month}.{day}'/" | bad_case "any, spaces, month"
+# R47c: the same when only characters of a number (digits, dot, comma) and spaces stand between
+# {any} and the number: "12.50" read by {any}.{amount} would give 50
+printf '%s\n' "$GOOD" | sed "s/^BALANCE_REPLY_PATTERN=.*/BALANCE_REPLY_PATTERN='Saldo {any}.{amount}'/" | bad_case "any, dot, amount"
+printf '%s\n' "$GOOD" | sed "s/^BALANCE_REPLY_PATTERN=.*/BALANCE_REPLY_PATTERN='Saldo {any},{amount}'/" | bad_case "any, comma, amount"
+printf '%s\n' "$GOOD" | sed "s/^BALANCE_REPLY_PATTERN=.*/BALANCE_REPLY_PATTERN='Saldo {any} . {amount}'/" | bad_case "any, spaced dot, amount"
+printf '%s\n' "$GOOD" | sed "s/^BALANCE_REPLY_PATTERN=.*/BALANCE_REPLY_PATTERN='Saldo {any}0{amount}'/" | bad_case "any, digit, amount"
+printf '%s\n' "$GOOD" | sed "s/^BALANCE_REPLY_PATTERN=.*/BALANCE_REPLY_PATTERN='Saldo {any}.,{amount}'/" | bad_case "any, dot and comma, amount"
+printf '%s\n' "$GOOD" | sed "s/^BALANCE_REPLY_PATTERN=.*/BALANCE_REPLY_PATTERN='Saldo {amount} do {any}.{day}.{month}'/" | bad_case "any, dot, day"
+printf '%s\n' "$GOOD" | sed "s/^BALANCE_REPLY_PATTERN=.*/BALANCE_REPLY_PATTERN='Saldo {any}.{any}{amount}'/" | bad_case "any, dot, any, amount"
 { printf '%s\n' "$GOOD"; i=0; while [ "$i" -lt 150 ]; do echo '# padding padding padding padding padding padding padding'; i=$((i + 1)); done; } |
     bad_case "file over 4096 bytes"
 printf '' | bad_case "empty file"
@@ -380,5 +389,19 @@ lw_expect_eq "$(last_text)" "✉️ ACME · Today 12:30
 
 Stanje na racunu iznosi 12.40 EUR, vazi do 5 dana 15.03.
 = Balance 12.40 EUR, credit valid until 15 Mar" "any before fixed text"
+# R47c: any other character between {any} and the number is enough (a colon, a letter), and a
+# pattern that ends in {any} or has {any} before a name still passes: the whole number is read
+printf '%s\n' "OPERATOR_NAME='Acme Mobile'" "CURRENCY='EUR'" "BALANCE_QUERY_NUMBER='4040'" \
+    "BALANCE_QUERY_TEXT='STATE'" "BALANCE_REPLY_FROM='ACME'" \
+    "BALANCE_REPLY_PATTERN='Saldo{any}:{amount} EUR'" >"$OPS/99996"
+reset_preset
+imsi 99996
+ask_balance
+sms_in 32 ACME '11/07/26 12:40:00' 'Saldo racuna:112.50 EUR'
+passes 2
+lw_expect_eq "$(last_text)" "✉️ ACME · Today 12:40
+
+Saldo racuna:112.50 EUR
+= Balance 112.50 EUR" "any, colon, amount"
 no_orphans
 echo ok

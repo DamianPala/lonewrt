@@ -463,6 +463,8 @@ nt_updates() {
 # A failed send or poll waits for the next inbox pass instead of retrying at once.
 nt_pass() {
     _now=$(nt_now)
+    # first of all: the passes below write to $NT_DIR, and an empty one is the sign of a reset (R37f)
+    nt_reset_mark
     # the operator preset first: the inbox pass below reads balance answers by it (R47)
     nt_preset_tick
     if [ "$_now" -ge "$(nt_get "$NT_RUN/next_inbox" 0)" ]; then

@@ -125,8 +125,9 @@ nt_p_read() {
 # of the groups that hold the amount, the day and the month (NT_P_AREF, NT_P_DREF, NT_P_MREF).
 # Literal text matches itself, a space matches any white space (also none), {amount} is the balance
 # with a dot or comma, {day} and {month} are 1 or 2 digits, {any} is any text. {amount} must be
-# there once, {day} and {month} together or not at all. {any} may not be followed (after spaces) by
-# {amount}, {day} or {month}. Fails for anything else in braces.
+# there once, {day} and {month} together or not at all. {any} may not be followed by {amount},
+# {day} or {month} with nothing but spaces, digits, dots and commas between (R47c). Fails for
+# anything else in braces.
 nt_p_compile() {
     _pc=$1
     _pn=0
@@ -157,10 +158,18 @@ nt_p_compile() {
             '{any}'*)
                 NT_P_RE=$NT_P_RE'.*'
                 _pc=${_pc#'{any}'}
-                # greedy: {any} straight before a number would swallow its leading digits, so a
-                # fixed word must sit between them
+                # R47c: greedy, so {any} takes the last place where the rest still fits. When only
+                # characters a number is made of (digits, dot, comma) or spaces (they match none)
+                # stand between {any} and the number, that place is inside the number: "12.50"
+                # read by {any}.{amount} gives 50. Anything else in between (a letter, ':') cannot
+                # be inside a number, so the whole number is read.
                 _pr=$_pc
-                while [ "${_pr# }" != "$_pr" ]; do _pr=${_pr# }; done
+                while :; do
+                    case $_pr in
+                        ' '* | '.'* | ','* | [0-9]*) _pr=${_pr#?} ;;
+                        *) break ;;
+                    esac
+                done
                 case $_pr in '{amount}'* | '{day}'* | '{month}'*) return 1 ;; esac
                 ;;
             '{'* | '}'*) return 1 ;;

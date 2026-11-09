@@ -44,8 +44,11 @@ Plain text matches itself, a space matches any white space (also none), and thes
 |---|---|---|
 | `{amount}` | digits with an optional `.` or `,` part, e.g. `0.31`, `12,5` | exactly once |
 | `{day}`, `{month}` | 1 or 2 digits | both or neither; they give "credit valid until 5 Jan" in the chat |
-| `{any}` | any text | optional, as often as needed; put a fixed word between `{any}` and a number placeholder (`Stanje {any} iznosi {amount}`), otherwise the preset is rejected |
+| `{any}` | any text | optional, as often as needed; put a fixed word or a sign between `{any}` and a number placeholder (`Stanje {any} iznosi {amount}`, `Saldo{any}:{amount}`), otherwise the preset is rejected |
 
+Between `{any}` and `{amount}`, `{day}` or `{month}` there must be at least one character that is not a space, digit, dot or comma.
+`{any}` takes as much text as it can, so with `{any}.{amount}` or `{any},{amount}` it would stop inside the number and `12.50` would read as `50`; `{any} {amount}` and `{any}{day}` fail for the same reason.
+`{any}: {amount}`, `{any}EUR {amount}` and `{any}={amount}` are fine.
 Any other brace is an error.
 The date is taken as day then month in the order the placeholders appear, so `{month}/{day}` works for operators that print the month first.
 A reply whose sender is `BALANCE_REPLY_FROM` and whose first line fits the pattern is shown with `= Balance <amount> <CURRENCY>` (and the date when the pattern has one) and feeds `/status`, the low-balance alert and `LOW_BALANCE`.

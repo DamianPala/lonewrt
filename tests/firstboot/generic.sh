@@ -16,14 +16,14 @@ fb_expect system.@system[0].log_file /root/openwrt.log
 fb_expect system.@system[0].log_size 1024
 fb_expect system.@system[0].cronloglevel 9
 
-# WiFi: both radios, one SSID and the card's key, psk-mixed, 802.11r, PL, schedule off
+# WiFi: both radios, one SSID and the card's key, psk2, 802.11r, PL, schedule off
 for r in radio0 radio1; do
     fb_expect wireless.$r.country PL
     fb_expect wireless.$r.channel auto
     fb_expect wireless.$r.disabled "<unset>"
     fb_expect wireless.default_$r.ssid OpenWrt-LTE
     fb_expect wireless.default_$r.key "$wifi"
-    fb_expect wireless.default_$r.encryption psk-mixed
+    fb_expect wireless.default_$r.encryption psk2
     fb_expect wireless.default_$r.ieee80211r 1
     fb_expect wireless.default_$r.disabled "<unset>"
 done

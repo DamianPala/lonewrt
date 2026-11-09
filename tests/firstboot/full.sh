@@ -13,7 +13,7 @@ for r in radio0 radio1; do
     fb_expect wireless.$r.country DE
     fb_expect wireless.default_$r.ssid FakeLwSsid-q7x9
     fb_expect wireless.default_$r.key fake-wifi-key-q7x9
-    fb_expect wireless.default_$r.encryption psk-mixed
+    fb_expect wireless.default_$r.encryption psk2
 done
 fb_expect wireless.radio0.channel 5
 fb_expect wireless.radio0.htmode HT40

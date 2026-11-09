@@ -5,9 +5,9 @@
 # Files: $NT_DIR on flash holds what must survive a reboot (keys of the SMS already handled, the
 # send queue, the low-balance memory, the last known balance, the outage record) and is written
 # only for a new SMS, a sent message, a changed balance, the start and end of an outage, its 2G
-# message, a change of the 2G switch, the note of a restart asked in the chat, the one-time flag of
-# the keyboard message and the DHCP names (at most once a day, devices.sh) (R34c, R37c, R37e, R40a,
-# R44b, R45a). $NT_RUN in RAM holds the Bot API offset, the poll schedule, the link state, the reason of
+# message, a change of the 2G switch, the note of a restart asked in the chat, the one-time flag and
+# the reset note of the keyboard message and the DHCP names (at most once a day, devices.sh) (R34c,
+# R37c, R37e, R37f, R40a, R44b, R45a). $NT_RUN in RAM holds the Bot API offset, the poll schedule, the link state, the reason of
 # this boot, what the outage tracker saw since the boot and the restart question waiting for its
 # answer.
 # The bot token sits in the API URL only. Neither the URL nor uclient-fetch's stderr is ever
@@ -458,20 +458,45 @@ nt_bot_name() {
     cat "$NT_RUN/botname"
 }
 
-# nt_kb_tick (R37e): the keyboard goes to the chat once after the first start of the image. Returns
-# 1 when Telegram could not be reached, so the next pass tries again. The flag on flash is written
-# after the send; a RAM copy keeps a full flash from turning one send into one per pass.
+# R37f: the first greeting also says the router was reset. The router cannot tell a button reset from
+# a flash (both start with an empty $NT_DIR), but an empty $NT_DIR with no flag is the only sign it
+# can trust: an image flashed with its state kept (sysupgrade -o, from an image before the keyboard)
+# has files there, and the greeting is sent for it too. A plain sysupgrade keeps /etc/config but not
+# $NT_DIR, so it counts as fresh. The mark is written at the first pass, before anything else writes
+# there, and lives until the greeting went out, so a Telegram outage or a restart of the router in
+# between does not lose it.
+NT_KB_RESET=$NT_DIR/reset-note
+NT_RESET_TEXT='🔄 Router was reset to its built-in settings.
+Earlier logs and saved SMS are gone.'
+
+# nt_reset_mark (R37f): at the first pass of a fresh state, the note that the greeting must carry the
+# reset lines. A flash that cannot be written leaves no note, so the lines are never claimed falsely.
+nt_reset_mark() {
+    [ "$NT_TG" = 1 ] && [ ! -e "$NT_KB_FLAG" ] && [ ! -e "$NT_KB_RESET" ] || return 0
+    [ -z "$(ls -A "$NT_DIR" 2>/dev/null)" ] || return 0
+    mkdir -p "$NT_DIR"
+    : | lw_write_atomic "$NT_KB_RESET" || :
+}
+
+# nt_kb_tick (R37e, R37f): the keyboard goes to the chat once after the first start of the image, in
+# one message with the reset lines when the state was fresh. Returns 1 when Telegram could not be
+# reached, so the next pass tries again. The flag on flash is written after the send; a RAM copy
+# keeps a full flash from turning one send into one per pass.
 nt_kb_tick() {
     [ ! -e "$NT_KB_FLAG" ] && [ ! -e "$NT_RUN/keyboard" ] || return 0
+    _kt="🤖 The router bot is ready. Tap a button below, or send /help to see what each one does."
+    [ ! -e "$NT_KB_RESET" ] || _kt="$NT_RESET_TEXT
+
+$_kt"
     _kr=0
-    nt_send "🤖 The router bot is ready. Tap a button below, or send /help to see what each one does." \
-        "$(nt_kb_markup)" || _kr=$?
+    nt_send "$_kt" "$(nt_kb_markup)" || _kr=$?
     [ "$_kr" != 1 ] || return 1
     : >"$NT_RUN/keyboard"
     [ "$_kr" = 0 ] ||
         lw_log "$NT_TAG" "Telegram rejected the keyboard message (HTTP 400), not sent again"
     mkdir -p "$NT_DIR"
-    : | lw_write_atomic "$NT_KB_FLAG" || :
+    # the note goes only after the flag is on flash: with no flag the greeting comes again
+    if : | lw_write_atomic "$NT_KB_FLAG"; then rm -f "$NT_KB_RESET"; fi
 }
 
 # nt_answer CALLBACK_ID [EXTRA]: answers a button tap, which stops the spinner on the button; EXTRA

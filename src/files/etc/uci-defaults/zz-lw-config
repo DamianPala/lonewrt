@@ -140,7 +140,8 @@ for iface in default_radio0 default_radio1; do
     uci set wireless."$iface".network='lan'
     uci set wireless."$iface".mode='ap'
     uci set wireless."$iface".ssid="$P_WIFI_SSID"
-    uci set wireless."$iface".encryption='psk-mixed'
+    # D74: WPA2 only, no WPA1/TKIP; a very old device may not connect
+    uci set wireless."$iface".encryption='psk2'
     uci set wireless."$iface".key="$P_WIFI_KEY"
     uci set wireless."$iface".ieee80211r='1'
     uci set wireless."$iface".ft_over_ds='0'

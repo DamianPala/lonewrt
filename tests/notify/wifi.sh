@@ -18,7 +18,7 @@ ap() {
     uci set wireless.default_radio"$1".mode=ap
     uci set wireless.default_radio"$1".network=lan
     uci set wireless.default_radio"$1".ssid="$2"
-    uci set wireless.default_radio"$1".encryption=psk-mixed
+    uci set wireless.default_radio"$1".encryption=psk2
     uci set wireless.default_radio"$1".key="$3"
 }
 # wireless SSID0 KEY0 SSID1 KEY1: both radios and both networks

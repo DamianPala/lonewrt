@@ -5,6 +5,9 @@
 # the label (with or without U+FE0F, with white space around) runs its command; other text without
 # a slash is ignored without an answer and without a log line; typed commands, also with the bot's
 # name, keep working, and a command for another bot ("/help@OtherBot") is ignored.
+# R37f, D75: the same message starts with two lines that say the router was reset, but only when the
+# state on flash was empty at the start (no flag, nothing else in /etc/lw-notify), and it stays one
+# message.
 # shellcheck source=tests/lib.sh
 . /fw/tests/lib.sh
 # shellcheck source=tests/notify/helpers.inc
@@ -17,6 +20,9 @@ echo HomeRouterBot >"$G/username"
 
 FE=$(printf '\357\270\217')
 ENVELOPE=$(printf '\342\234\211')
+HELLO='🤖 The router bot is ready. Tap a button below, or send /help to see what each one does.'
+RESET='🔄 Router was reset to its built-in settings.
+Earlier logs and saved SMS are gone.'
 LABELS='🟢 Status|📶 Wi-Fi|📱 Devices|⚡ Speed|💶 Balance|✉'"$FE"' SMS|🔔 Alerts|🔄 Reboot|❓ Help|'
 
 # ---- first start: nothing sent before the first pass, then one message with the keyboard
@@ -36,6 +42,10 @@ lw_expect_eq "$(printf '%s\n' "$KB" | jsonfilter -e '@.is_persistent')" true "is
 lw_expect_eq "$(printf '%s\n' "$KB" | jsonfilter -e '@.resize_keyboard')" true "resize_keyboard"
 case $KB in *"$ENVELOPE$FE SMS"*) ;; *) lw_fail "the envelope button lacks U+FE0F: $KB" ;; esac
 [ -e /etc/lw-notify/keyboard ] || lw_fail "no flag after the first start"
+lw_expect_eq "$(sent_text 1)" "$RESET
+
+$HELLO" "greeting of the first start"
+[ ! -e /etc/lw-notify/reset-note ] || lw_fail "reset note left after the greeting went out"
 lw_expect_eq "$(cat "$T/syslog")" "" "syslog after the first start"
 passes 3
 expect_sent 1
@@ -69,6 +79,9 @@ echo up >"$G/net"
 pass
 expect_sent 2
 lw_expect_eq "$(markup_of 2)" "$KB" "keyboard after a reset"
+lw_expect_eq "$(sent_text 2)" "$RESET
+
+$HELLO" "greeting after a reset"
 [ -e /etc/lw-notify/keyboard ] || lw_fail "no flag after the second first start"
 passes 3
 expect_sent 2
@@ -93,6 +106,39 @@ expect_sent 3
 lw_expect_eq "$(wc -l <"$T/syslog" | tr -d ' ')" 1 "syslog lines for a rejected keyboard message"
 lw_expect_grep "$T/syslog" "lw-notify: Telegram rejected the keyboard message"
 rm -f "$G/reject400"
+
+# ---- a reset while Telegram is down and a router restart before the greeting went out: the reset
+# lines are not lost, though other state (the SMS keys) is on flash by then
+n=$(sent)
+rm -rf /etc/lw-notify /tmp/lw-notify
+mkdir -p /tmp/lw-notify
+echo down >"$G/net"
+passes 3
+[ -e /etc/lw-notify/seen ] || lw_fail "the first scan wrote no SMS keys: the case is not tested"
+reboot_sim 60
+passes 2
+expect_sent "$n"
+echo up >"$G/net"
+pass
+expect_sent $((n + 1))
+lw_expect_eq "$(sent_text $((n + 1)))" "$RESET
+
+$HELLO" "greeting after a reset and a restart before it went out"
+passes 2
+expect_sent $((n + 1))
+
+# ---- not a reset: an image flashed with its state kept (sysupgrade -o) has state on flash but no
+# flag (an earlier image had no keyboard): the greeting alone, without the reset lines
+rm -rf /etc/lw-notify /tmp/lw-notify
+mkdir -p /etc/lw-notify /tmp/lw-notify
+: >/etc/lw-notify/seen
+pass
+expect_sent $((n + 2))
+lw_expect_eq "$(sent_text $((n + 2)))" "$HELLO" "greeting on an image that kept its state"
+[ -e /etc/lw-notify/keyboard ] || lw_fail "no flag on an image that kept its state"
+[ ! -e /etc/lw-notify/reset-note ] || lw_fail "reset note on an image that kept its state"
+passes 2
+expect_sent $((n + 2))
 
 # ---- /help and /start carry the keyboard, also with the bot's name; an unknown command does not
 n=$(sent)

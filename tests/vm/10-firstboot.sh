@@ -29,19 +29,19 @@ gcheck "timezone from generic.conf ('$tz', '$zone')" \
 gcheck "uhttpd redirects HTTP to HTTPS (R30, D19)" \
     '[ "$(uci get uhttpd.main.redirect_https)" = 1 ]'
 
-# WiFi: both bands, one SSID and key, psk-mixed, 802.11r, country and channels from the profile
+# WiFi: both bands, one SSID and key, psk2, 802.11r, country and channels from the profile
 card_wifi=$(card_value wifi)
 card_root=$(card_value root)
 # an empty password in the profile means a drawn one on the card; without it the checks below skip
 [ -n "$(profile_value WIFI_KEY)" ] || check "password card has wifi= (R33)" test -n "$card_wifi"
 [ -n "$(profile_value ROOT_PASSWORD_HASH)" ] ||
     check "password card has root= (R33)" test -n "$card_root"
-gcheck "WiFi: every AP is OpenWrt-LTE, psk-mixed, 802.11r, key from the password card" \
+gcheck "WiFi: every AP is OpenWrt-LTE, psk2, 802.11r, key from the password card" \
     "n=0
      for s in \$(uci show wireless | sed -n \"s/^wireless\\.\\([^.=]*\\)=wifi-iface\$/\\1/p\"); do
          n=\$((n + 1))
          [ \"\$(uci get wireless.\$s.ssid)\" = OpenWrt-LTE ] || { echo \"\$s ssid\"; exit 1; }
-         [ \"\$(uci get wireless.\$s.encryption)\" = psk-mixed ] || { echo \"\$s enc\"; exit 1; }
+         [ \"\$(uci get wireless.\$s.encryption)\" = psk2 ] || { echo \"\$s enc\"; exit 1; }
          [ \"\$(uci -q get wireless.\$s.ieee80211r)\" = 1 ] || { echo \"\$s 11r\"; exit 1; }
          [ \"\$(uci -q get wireless.\$s.disabled)\" != 1 ] || { echo \"\$s disabled\"; exit 1; }
          k=\$(uci -q get wireless.\$s.key); [ -n \"\$k\" ] || { echo \"\$s no key\"; exit 1; }
