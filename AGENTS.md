@@ -19,6 +19,7 @@ Profile keys: `docs/profile.md`. Operator presets and how to write one: `docs/op
 ./build.sh generic                       # the secret-free image, image/generic-sysupgrade.bin
 ./build.sh --render-only generic tests/.out/overlay   # rendered overlay only, seconds, no ImageBuilder
 tests/build/run.sh --quick               # profile checks, sh -n, rendered overlays, first boot
+tests/run-all.sh                         # all rootfs tests, 6 at once (-j N or LW_JOBS), one PASS/FAIL line each
 tests/run-all.sh smoke                   # the image's scripts in the OpenWrt rootfs under bwrap
 tests/run-all.sh notify                  # one area: ladder | modem | notify | firstboot | smoke
 tests/rootfs/run.sh tests/notify/x.sh    # one test script
@@ -27,6 +28,7 @@ shellcheck -s sh src/files/usr/sbin/lw-notify   # a changed image script; the te
 
 A full `tests/build/run.sh` runs two ImageBuilder builds (about 3 minutes). `tests/vm/` needs KVM.
 Tests under load can be timing-sensitive; rerun a single failing script alone before calling it a bug.
+During work run the area you changed; run everything (`tests/run-all.sh`, `tests/build/run.sh`) once before you report.
 
 ## Rules
 
