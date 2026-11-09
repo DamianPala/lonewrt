@@ -33,6 +33,17 @@ reboots() { grep -c '^reboot' "$T/events" || :; }
 lapse() { lw_uptime_add "$1"; wall_add "$1"; }
 files() { find /etc /root -type f | sort; }
 note() { sed -n "s/^$1=//p" /etc/lw-notify/reboot; }
+# polls_n: long polls the fake Bot API has seen; wait_polls N: until it has seen N (the service runs
+# on its own, so this waits at most 30 s and then fails)
+polls_n() { wc -l <"$G/polls" | tr -d ' '; }
+wait_polls() {
+    _i=0
+    while [ "$(polls_n)" -lt "$1" ] && [ "$_i" -lt 30 ]; do
+        sleep 1
+        _i=$((_i + 1))
+    done
+    [ "$(polls_n)" -ge "$1" ] || lw_fail "the service made $(polls_n) polls, expected $1"
+}
 
 # --- the question: text, two buttons, one nonce, nothing restarted yet
 ask
@@ -312,20 +323,38 @@ lw_expect_eq "$(cat "$T/modem/zsnt")" 6,0,0 "modem mode"
 lw_expect_eq "$(uci get network.wwan.modes)" lte "network.wwan.modes"
 no_orphans
 # --- the long poll does not sleep through the end of an open question: with a 30 s poll and an 8 s
-# limit, the polls after the question are cut to what is left of the 8 s (the real clock here)
-rm -f "$G/polls"
+# limit, the polls after the question are cut to what is left of the 8 s (the real clock here). The
+# test waits for the service's state rather than sleeping: two polls mean the confirm call has set
+# the offset (a /reboot sent before that would count as an old update), and the question file means
+# the question is open.
+: >"$G/polls"
 LW_NOTIFY_CLOCK=/proc/uptime LW_NOTIFY_REBOOT_TTL=8 LW_NOTIFY_LONGPOLL=30 LW_NOTIFY_POLL=20 \
     lw-notify run </dev/null >/dev/null 2>&1 &
 svc=$!
-sleep 3
+wait_polls 2
 tg_push "$TG_CHAT" /reboot
-sleep 5
+_i=0
+while [ ! -f /tmp/lw-notify/reboot_req ] && [ "$_i" -lt 30 ]; do
+    sleep 1
+    _i=$((_i + 1))
+done
+[ -f /tmp/lw-notify/reboot_req ] || lw_fail "no question after /reboot"
+asked=$(polls_n)
+wait_polls $((asked + 2))
 kill "$svc"
 wait "$svc" 2>/dev/null || :
 rm -f /tmp/lw-notify/reboot_req
-polls=$(grep -v '^$' "$G/polls" | tr '\n' ' ')
-case $polls in *'20 19'*) ;; *) lw_fail "polls before the question: $polls" ;; esac
-# the polls of the question: after the last one above 8 there is no poll longer than 8
-lw_expect_eq "$(grep -v '^$' "$G/polls" | tail -n 4 | awk '$1 > 8' | wc -l | tr -d ' ')" 0 \
-    "polls cut to the end of the question: $polls"
+before=$(head -n "$asked" "$G/polls" | grep -v '^$' | tr '\n' ' ')
+after=$(tail -n +"$((asked + 1))" "$G/polls" | grep -v '^$' | tr '\n' ' ')
+# before the question the long poll waits for the inbox pass (NT_POLL, 20 s), never for the 30 s
+# LONGPOLL, and at least one of those waits is longer than the 8 s limit, so the cut has work to do.
+# The exact values move by a second with the clock (each stubbed poll takes about a second), so
+# only the bounds are checked.
+lw_expect_eq "$(head -n "$asked" "$G/polls" | awk '$1 > 20' | wc -l | tr -d ' ')" 0 \
+    "poll longer than NT_POLL before the question: $before"
+[ "$(head -n "$asked" "$G/polls" | awk '$1 > 8' | wc -l | tr -d ' ')" -ge 1 ] ||
+    lw_fail "no poll longer than the limit before the question: $before"
+# the polls of the question: the wait is cut to what is left of the 8 s, so none is longer than 8
+lw_expect_eq "$(tail -n +"$((asked + 1))" "$G/polls" | awk '$1 > 8' | wc -l | tr -d ' ')" 0 \
+    "polls cut to the end of the question: $after"
 echo ok
