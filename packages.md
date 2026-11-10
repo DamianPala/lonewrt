@@ -11,7 +11,7 @@ Compared against: `/etc/apk/world` of a clean eko.one.pl r32944 image (262 top-l
 | `luci`, `luci-proto-qmi` | web panel, LTE interface in LuCI | official |
 | `luci-ssl` | HTTPS in LuCI (pulls in `px5g-mbedtls` for the certificate); without it the router's https:// address does not work | official |
 | `wireguard-tools`, `luci-proto-wireguard` | remote access through a WireGuard server | official |
-| `watchcat`, `luci-app-watchcat` | soft link repair (`ifup` every 5 min) | official |
+| `watchcat`, `luci-app-watchcat` | soft link repair (restarts `wwan` after `LINK_RESTART_AFTER_S`, 120 s by default) | official |
 | `sms-tool` | AT commands and SMS from the console; all scripts of the image and the recovery use it | official |
 | `comgt` | required by `modemdata`, `luci-app-modemdata` and `luci-app-sms-tool-js` (apk dependency); the image does not use it directly | official |
 | `luci-app-sms-tool-js` | AT commands and SMS from LuCI: on-site repair without SSH, balance queries | 4IceG (via eko.one.pl), third-party |

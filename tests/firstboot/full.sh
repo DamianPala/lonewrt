@@ -46,6 +46,9 @@ lw_expect_eq "$(grep -c lw-heartbeat /etc/crontabs/root)" 1 "heartbeat lines in 
 grep -qxF '*/5 * * * * /usr/sbin/lw-heartbeat' /etc/crontabs/root || lw_fail "no heartbeat cron line"
 ! grep -q 'hc-ping' /etc/crontabs/root || lw_fail "the heartbeat address is in the crontab"
 
+# R14a: the profile's delay is the period of the soft restart of wwan
+fb_expect watchcat.wwan_soft.period 180
+
 # R46: the SMS admin list lands verbatim in the same root-only config, and nowhere else
 fb_expect lonewrt.notify.sms_admins "+15550100123,15550100456"
 ! grep -rqF 15550100123 /etc/crontabs /etc/rc.d /etc/init.d 2>/dev/null ||

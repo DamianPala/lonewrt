@@ -75,6 +75,11 @@ grep -qF "root:$(sed -n "s/^P_ROOT_PASSWORD_HASH='\(.*\)'$/\1/p" "$RENDER/generi
     /etc/shadow || lw_fail "root hash is not the rendered one"
 [ ! -e /etc/dropbear/authorized_keys ] || lw_fail "generic image has authorized_keys"
 
+# Watchcat: the soft restart of wwan after 120 s without a ping answer (R14a, D79), pings as before
+fb_expect watchcat.wwan_soft.mode restart_iface
+fb_expect watchcat.wwan_soft.period 120
+fb_expect watchcat.wwan_soft.pingperiod 60
+
 # Cron table and services
 printf '%s\n' '*/5 * * * * /usr/sbin/wwan-recover' '2-59/5 * * * * /usr/sbin/lw-siglog' \
     '10 4 * * * /usr/sbin/lw-sms-clean' | cmp -s - /etc/crontabs/root || lw_fail "crontab differs"

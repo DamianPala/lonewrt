@@ -97,7 +97,14 @@ FORMATS = {
     # integers of up to 4 digits, written to uci lonewrt.notify.sms_reboot_max_age / _max_day
     "SMS_REBOOT_MAX_AGE_MIN": r"[1-9][0-9]{0,3}",
     "SMS_REBOOT_MAX_PER_DAY": r"[1-9][0-9]{0,3}",
+    # seconds until watchcat restarts wwan (SPEC R14a); the range is in RANGES
+    "LINK_RESTART_AFTER_S": r"[1-9][0-9]{0,3}",
 }
+# Inclusive range of a numeric key, checked after FORMATS. LINK_RESTART_AFTER_S (SPEC R14a, D79):
+# the lower bound is two ping periods of the watchcat entry (60 s), the upper bound keeps the
+# interface restart ahead of the first router restart of wwan-recover (6 cycles of 5 min), also
+# for a failure already there at boot.
+RANGES = {"LINK_RESTART_AFTER_S": (120, 900)}
 LINE = re.compile(r"([A-Z][A-Z0-9_]*)='([^']*)'")
 PLACEHOLDER = re.compile(r"@([A-Z][A-Z0-9_]*)@")
 KEY_FILES = ("authorized_keys", "dropbear_ed25519_host_key", "dropbear_rsa_host_key")
@@ -134,8 +141,14 @@ def check_value(key: str, value: str, name: str) -> None:
     if not value and key not in MAY_BE_EMPTY:
         raise RenderError(f"profile {name}: key {key} is empty")
     pattern = FORMATS.get(key)
-    if value and pattern and not re.fullmatch(pattern, value):
-        raise RenderError(f"profile {name}: key {key} has an invalid value")
+    valid = not (value and pattern) or re.fullmatch(pattern, value) is not None
+    if valid and value and key in RANGES:
+        valid = RANGES[key][0] <= int(value) <= RANGES[key][1]
+    if not valid:
+        hint = ""
+        if key in RANGES:
+            hint = f"; use a whole number from {RANGES[key][0]} to {RANGES[key][1]}"
+        raise RenderError(f"profile {name}: key {key} has an invalid value{hint}")
 
 
 def validate(values: dict[str, str], required: list[str], name: str) -> None:

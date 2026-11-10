@@ -1,10 +1,10 @@
-
+# period is LINK_RESTART_AFTER_S of the profile (R14a, D79); the build fills it in
 config watchcat 'wwan_soft'
 	option mode 'restart_iface'
 	option interface '@wwan'
 	option pinghosts '8.8.8.8 1.1.1.1'
 	option pingperiod '60'
-	option period '300'
+	option period '@LINK_RESTART_AFTER_S@'
 	option pingsize 'standard'
 	option addressfamily 'ipv4'
 	option reset_failure_timer '1'

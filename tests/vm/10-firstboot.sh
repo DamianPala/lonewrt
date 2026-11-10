@@ -29,6 +29,13 @@ gcheck "timezone from generic.conf ('$tz', '$zone')" \
 gcheck "uhttpd redirects HTTP to HTTPS (R30, D19)" \
     '[ "$(uci get uhttpd.main.redirect_https)" = 1 ]'
 
+# Watchcat: soft restart of wwan after LINK_RESTART_AFTER_S without a ping answer (R14a, D79)
+link_after=$(profile_value LINK_RESTART_AFTER_S)
+gcheck "watchcat wwan_soft restarts the interface after ${link_after}s (R14a)" \
+    "[ -n '$link_after' ] &&
+     [ \"\$(uci get watchcat.wwan_soft.mode)\" = restart_iface ] &&
+     [ \"\$(uci get watchcat.wwan_soft.period)\" = '$link_after' ]"
+
 # WiFi: both bands, one SSID and key, psk2, 802.11r, country and channels from the profile
 card_wifi=$(card_value wifi)
 card_root=$(card_value root)

@@ -145,6 +145,42 @@ for key in SMS_REBOOT_MAX_AGE_MIN SMS_REBOOT_MAX_PER_DAY; do
     done
 done
 
+# R14a: LINK_RESTART_AFTER_S is a key every profile must have, a whole number of seconds from 120 to
+# 900 (D79); anything else stops the build naming the key and the range, and the error never shows
+# the value. The default and a value in range land in the watchcat config as its period.
+key=LINK_RESTART_AFTER_S
+range="use a whole number from 120 to 900"
+variant "no-$key" "/^$key=/d"
+expect_fail_with "key $key is missing; copy it from generic.conf" build "no-$key"
+variant "empty-$key" "s/^$key=.*/$key=''/"
+expect_fail_with "key $key is empty" build "empty-$key"
+i=0
+# the edges (119, 901), zero, a leading zero, signs, a fraction, text, a unit, a space and
+# fullwidth digits
+for bad in 0 60 119 901 99999 0120 -120 +120 120.5 ten 120s '1 20' ' 120' '１２０'; do
+    i=$((i + 1))
+    variant "bad-$key-$i" "s|^$key=.*|$key='$bad'|"
+    expect_fail_with "key $key has an invalid value; $range" build "bad-$key-$i"
+    err=$(build "bad-$key-$i" 2>&1 || true)
+    ! grep -qF -- "'$bad'" <<<"$err" || fail "error message echoes the $key value '$bad'"
+done
+for good in 120 121 300 600 899 900; do
+    variant "good-$key-$good" "s|^$key=.*|$key='$good'|"
+    build --render-only "good-$key-$good" "$SCRATCH/good-$key-$good" 2>/dev/null ||
+        fail "$key '$good' was rejected"
+    grep -qxF "	option period '$good'" "$SCRATCH/good-$key-$good/etc/config/watchcat" ||
+        fail "$key '$good' is not the period of wwan_soft in etc/config/watchcat"
+done
+build --render-only generic "$SCRATCH/generic-link" 2>/dev/null || fail "the generic profile was rejected"
+grep -qxF "	option period '120'" "$SCRATCH/generic-link/etc/config/watchcat" ||
+    fail "the generic image does not restart wwan after 120 s"
+# D79: the lower bound is two ping periods; the ping period is not a profile key, so it must stay 60
+grep -qxF "	option pingperiod '60'" "$SCRATCH/generic-link/etc/config/watchcat" ||
+    fail "pingperiod of wwan_soft is not 60: the range of $key (D79) no longer holds"
+[ "$(grep -c 'option period' "$SCRATCH/generic-link/etc/config/watchcat")" = 1 ] ||
+    fail "etc/config/watchcat has more than one period"
+! grep -Eq '@[A-Z]' "$SCRATCH/generic-link/etc/config/watchcat" || fail "a placeholder is left in etc/config/watchcat"
+
 # R33b: ROOT_PASSWORD is a key every profile must have; 8 to 63 printable ASCII characters like
 # WIFI_KEY; with ROOT_PASSWORD_HASH also set the build stops naming both keys; the clear text reaches
 # neither the build output nor the overlay, only its $6$ hash does
