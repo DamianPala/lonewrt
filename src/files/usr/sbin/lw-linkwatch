@@ -1,0 +1,450 @@
+#!/bin/sh
+# Data session watcher (SPEC R49 to R49g, D80). When the mobile network detaches the modem and the
+# modem attaches again by itself, the call of netifd stays dead: wwan0 keeps its old address and
+# netifd shows wwan as up, but the modem is "Out of call". This script looks every 5 s, and when the
+# session is lost with the modem registered it starts the call again on netifd's own QMI client and
+# renews the DHCP lease, about 2 s in all; a full `ifup wwan` takes 32 to 40 s. After 20 s without
+# success it runs `ifup wwan` once; watchcat (R14) and wwan-recover (R16) stay behind it.
+#
+#   lw-linkwatch run    the procd service: one pass every LW_LINKWATCH_PERIOD seconds (5)
+#   lw-linkwatch once   one pass without waiting (tests, manual check)
+#
+# This is the only script of the image that runs uqmi (R12c, D80). uqmi has no event mode and a
+# second reader of /dev/cdc-wdm0 would steal answers, so it polls; it makes no call unless netifd
+# shows wwan as up, because qmi.sh uses uqmi while it sets the interface up (R49a). Every call has
+# -t and a timeout around it: uqmi is known to hang. State lives in RAM under $LK_RUN, written only
+# when something changes, so a healthy pass writes nothing to syslog or flash (R49f).
+
+# shellcheck source=src/files/usr/lib/lw/common.sh
+. /usr/lib/lw/common.sh
+
+LK_TAG=lw-linkwatch
+LK_IFACE=wwan
+LK_RUN=${LW_LINKWATCH_RUN:-/tmp/lw-linkwatch}
+# the command that signals udhcpc; tests put a recording stand-in here
+LK_KILL=${LW_LINKWATCH_KILL:-kill}
+# Seconds; tests shorten them through the environment
+LK_PERIOD=${LW_LINKWATCH_PERIOD:-5}
+LK_STEP=${LW_LINKWATCH_STEP:-2}
+LK_SETTLE=${LW_LINKWATCH_SETTLE:-1}
+LK_HEARTBEAT=${LW_LINKWATCH_HEARTBEAT:-300}
+LK_AT_LIMIT=${LW_LINKWATCH_AT_LIMIT:-5}
+# timeout around each uqmi call; empty = the call's own -t plus 2 s
+LK_UQMI_LIMIT=${LW_LINKWATCH_UQMI_LIMIT:-}
+# R49d: seconds from the first sight of the loss to `ifup wwan`
+LK_GIVE_UP=20
+# R49c: a renew that did not bring the address is repeated after this many seconds
+LK_KICK_EVERY=6
+# R49e: this many restores within the window mean the restore does not hold; then a pause
+LK_BRAKE_COUNT=3
+LK_BRAKE_WINDOW=600
+LK_BRAKE_PAUSE=600
+# R49c: looks at the device address after the release before USR1 is sent (25 are about 0.2 s)
+LK_RELEASE_LOOKS=25
+# a call this slow (centiseconds) or one that fails counts in the debug heartbeat (R49g)
+LK_SLOW_CS=200
+
+LK_PASSES=0
+LK_BAD=0
+LK_SLOWEST=0
+LK_NAP=
+LK_NOTED=
+LK_OUT=
+
+# lk_cs: uptime in centiseconds in LK_CS, with shell builtins only (no fork per reading); the clock
+# is the uptime file of common.sh because the router has no RTC (D9) and tests move that file.
+lk_cs() {
+    read -r _lk_u _ <"$LW_UPTIME_FILE"
+    _lk_f=${_lk_u#*.}00
+    _lk_f=${_lk_f%"${_lk_f#??}"}
+    _lk_f=${_lk_f#0}
+    LK_CS=$((${_lk_u%%.*} * 100 + ${_lk_f:-0}))
+}
+
+# lk_elapsed: whole seconds since the loss was first seen, in LK_EL.
+lk_elapsed() {
+    lk_cs
+    LK_EL=$(((LK_CS - LK_T0) / 100))
+}
+
+lk_nap() {
+    sleep "$1" &
+    LK_NAP=$!
+    wait "$LK_NAP"
+    LK_NAP=
+}
+
+lk_dbg() { lw_debug "$LK_TAG" "$*"; }
+
+# lk_idbg MESSAGE: a step of an incident with its time since the loss was seen.
+lk_idbg() {
+    lw_is_debug || return 0
+    lk_elapsed
+    lw_debug "$LK_TAG" "+${LK_EL}s $*"
+}
+
+# lk_uqmi LABEL MS ARGS...: one uqmi call; the answer in LK_OUT (empty after a timeout), the exit
+# code of uqmi as return value. LABEL names the call in the debug log: the arguments are not logged,
+# they may hold the APN login.
+lk_uqmi() {
+    _lk_label=$1
+    _lk_ms=$2
+    shift 2
+    lk_cs
+    _lk_c0=$LK_CS
+    _lk_rc=0
+    LK_OUT=$(timeout -k 1 "${LK_UQMI_LIMIT:-$((_lk_ms / 1000 + 2))}" \
+        uqmi -s -d "$LK_DEV" -t "$_lk_ms" "$@" 2>/dev/null </dev/null) || _lk_rc=$?
+    case $_lk_rc in 124 | 137) LK_OUT= ;; esac
+    lk_cs
+    _lk_dt=$((LK_CS - _lk_c0))
+    [ "$_lk_dt" -le "$LK_SLOWEST" ] || LK_SLOWEST=$_lk_dt
+    if [ "$_lk_rc" != 0 ] || [ -z "$LK_OUT" ] || [ "$_lk_dt" -ge "$LK_SLOW_CS" ]; then
+        LK_BAD=$((LK_BAD + 1))
+        lk_dbg "uqmi $_lk_label: answer '$LK_OUT', exit $_lk_rc, $((_lk_dt * 10)) ms"
+    fi
+    return "$_lk_rc"
+}
+
+# lk_netifd: LK_UP, LK_L3, LK_CID, LK_PDH from the status of wwan; fails unless netifd shows it up.
+# cid_4 is the QMI client of netifd's session, pdh_4 the call handle it started (qmi.sh).
+lk_netifd() {
+    LK_UP='' LK_L3='' LK_CID='' LK_PDH=''
+    _lk_j=$(timeout 5 ifstatus "$LK_IFACE" 2>/dev/null) || return 1
+    eval "$(printf '%s\n' "$_lk_j" | jsonfilter -e 'LK_UP=@.up' -e 'LK_L3=@.l3_device' \
+        -e 'LK_CID=@.data.cid_4' -e 'LK_PDH=@.data.pdh_4' 2>/dev/null)"
+    # jsonfilter writes a JSON true as 1
+    [ "$LK_UP" = 1 ]
+}
+
+# lk_dev_addr DEVICE: the first IPv4 address of the network device.
+lk_dev_addr() {
+    ip -4 -o addr show dev "$1" 2>/dev/null | sed -n 's/.* inet \([0-9.]*\)\/.*/\1/p' | head -n 1
+}
+
+lk_paused() {
+    [ -f "$LK_RUN/pause_until" ] || return 1
+    read -r _lk_until <"$LK_RUN/pause_until"
+    lk_cs
+    [ $((LK_CS / 100)) -lt "${_lk_until:-0}" ] && return 0
+    rm -f "$LK_RUN/pause_until"
+    lk_dbg "pause is over, watching again"
+    return 1
+}
+
+# lk_note_restore: R49e. A restore that does not hold (3 within 10 min, as with an exhausted data
+# plan) is left to watchcat and wwan-recover for 10 min.
+lk_note_restore() {
+    lk_cs
+    _lk_now=$((LK_CS / 100))
+    _lk_keep=
+    for _lk_t in $(cat "$LK_RUN/restores" 2>/dev/null) "$_lk_now"; do
+        [ $((_lk_now - _lk_t)) -gt "$LK_BRAKE_WINDOW" ] || _lk_keep="$_lk_keep $_lk_t"
+    done
+    mkdir -p "$LK_RUN"
+    # shellcheck disable=SC2086  # a list of numbers
+    set -- $_lk_keep
+    if [ "$#" -ge "$LK_BRAKE_COUNT" ]; then
+        echo $((_lk_now + LK_BRAKE_PAUSE)) >"$LK_RUN/pause_until"
+        rm -f "$LK_RUN/restores"
+        lw_log "$LK_TAG" "$# restores in $((LK_BRAKE_WINDOW / 60)) min, pausing for $((LK_BRAKE_PAUSE / 60)) min"
+    else
+        printf '%s\n' "$@" >"$LK_RUN/restores"
+    fi
+}
+
+# lk_snapshot: R49g, the modem's own view after a restore, through the image's AT helper and lock.
+# It comes after the outcome line, so it never delays the restore; it stops at the first command
+# that gets no answer, like the recovery snapshot (R20a).
+lk_snapshot() {
+    lw_is_debug || return 0
+    for _lk_c in 'AT+CEER' 'AT+CEREG?' 'AT+CGATT?' 'AT+CGACT?' 'AT+CGPADDR=1'; do
+        _lk_r=$(lw_at "$LK_AT_LIMIT" "$_lk_c") || {
+            lk_dbg "AT snapshot stopped at $_lk_c: no answer within $LK_AT_LIMIT s"
+            return 0
+        }
+        lk_dbg "AT snapshot $_lk_c: $(printf '%s' "$_lk_r" | tr '\n' '|' | LC_ALL=C tr -c '\40-\176' '?' | cut -c1-300)"
+    done
+}
+
+# lk_escalate REASON: R49d. One `ifup wwan`, then nothing more for this incident: the marker stays
+# until a pass sees the session healthy.
+lk_escalate() {
+    lw_log "$LK_TAG" "data session lost, $1, ifup $LK_IFACE"
+    mkdir -p "$LK_RUN"
+    : >"$LK_RUN/escalated"
+    timeout 20 ifup "$LK_IFACE"
+}
+
+lk_restored() {
+    lk_elapsed
+    if [ -n "$LK_UNREG" ]; then
+        _lk_how="data session lost, modem was not registered at first"
+    else
+        _lk_how="data session lost with the modem registered"
+    fi
+    _lk_h=
+    if [ -n "$LK_HANDLE" ] && [ "$LK_HANDLE" != "$LK_PDH" ]; then
+        # qmi.sh clears the client with 0xffffffff, not by handle, so the stale pdh_4 does no harm
+        # and netifd's data is left alone (D80)
+        _lk_h=", new data handle $LK_HANDLE (netifd has ${LK_PDH:-none})"
+    fi
+    lw_log "$LK_TAG" "$_lk_how, restored in place after $LK_EL s, address ${LK_OLD:-none} -> $LK_NEW$_lk_h"
+    lk_note_restore
+    lk_snapshot
+}
+
+# lk_release_wait ADDRESS: after USR2, wait until udhcpc has handled the release, so that USR1 does
+# not arrive with USR2 still pending (two pending signals come in number order, USR1 first: udhcpc
+# would renew and then release, and end without an address). The sign of the release is the address
+# leaving the device (udhcpc runs its deconfig script inside the release, and netifd removes the
+# address). Up to LK_RELEASE_LOOKS looks, about 8 ms each on the router, where sleep takes whole
+# seconds only; when the address is still there after that, or there was none to watch, one second.
+lk_release_wait() {
+    _lk_l=0
+    if [ -n "$1" ]; then
+        while [ "$_lk_l" -lt "$LK_RELEASE_LOOKS" ]; do
+            _lk_a=$(lk_dev_addr "$LK_NET")
+            if [ "$_lk_a" != "$1" ]; then
+                lk_idbg "address of $LK_NET released after $_lk_l looks"
+                return 0
+            fi
+            _lk_l=$((_lk_l + 1))
+        done
+        lk_idbg "address $1 still on $LK_NET after $_lk_l looks, waiting 1 s"
+    else
+        lk_idbg "no address on $LK_NET to watch, waiting 1 s"
+    fi
+    sleep 1
+}
+
+# lk_dhcp_kick: release and then renew the lease of the device. A renew alone asks the old server
+# first and takes about 13 s (measured); release first gives the new lease within a second.
+# The pid file is netifd's own; the name check keeps a stale pid file from sending a signal that
+# kills some other process.
+lk_dhcp_kick() {
+    _lk_pf=/var/run/udhcpc-$LK_NET.pid
+    _lk_pid=
+    [ ! -r "$_lk_pf" ] || read -r _lk_pid <"$_lk_pf"
+    case $_lk_pid in '' | *[!0-9]*)
+        lk_idbg "no udhcpc pid in $_lk_pf"
+        return 1
+        ;;
+    esac
+    if [ "$(cat "/proc/$_lk_pid/comm" 2>/dev/null)" != udhcpc ]; then
+        lk_idbg "pid $_lk_pid from $_lk_pf is not udhcpc"
+        return 1
+    fi
+    _lk_before=$(lk_dev_addr "$LK_NET")
+    "$LK_KILL" -USR2 "$_lk_pid" || return 1
+    lk_release_wait "$_lk_before"
+    "$LK_KILL" -USR1 "$_lk_pid" || return 1
+    lk_elapsed
+    LK_KICK_AT=$LK_EL
+    lk_idbg "udhcpc $_lk_pid released and asked for a new lease"
+}
+
+# lk_start: one try to start the call again on netifd's client. The arguments are those of qmi.sh,
+# each only when the option of network.wwan is set.
+lk_start() {
+    lk_uqmi serving 3000 --get-serving-system
+    _lk_reg=$(printf '%s\n' "$LK_OUT" | jsonfilter -e '@.registration' 2>/dev/null)
+    if [ "$_lk_reg" != registered ]; then
+        LK_UNREG=1
+        lk_idbg "modem registration '${_lk_reg:-no answer}', waiting"
+        return
+    fi
+    set -- --set-client-id "wds,$LK_CID" --start-network
+    for _lk_o in apn:--apn auth:--auth-type username:--username password:--password; do
+        _lk_v=$(uci -q get "network.$LK_IFACE.${_lk_o%%:*}")
+        [ -z "$_lk_v" ] || set -- "$@" "${_lk_o#*:}" "$_lk_v"
+    done
+    lk_uqmi start 5000 "$@" --autoconnect
+    # uqmi prints the handle as a signed number: -882662896 on the router
+    case ${LK_OUT#-} in '' | *[!0-9]*)
+        lk_idbg "start-network answered '$LK_OUT'"
+        # qmi.sh clears this state the same way before it tries again
+        [ "$LK_OUT" != '"No effect"' ] ||
+            lk_uqmi clear 3000 --set-client-id "wds,$LK_CID" --stop-network 0xffffffff --autoconnect
+        return
+        ;;
+    esac
+    LK_HANDLE=$LK_OUT
+    lk_idbg "start-network gave handle $LK_HANDLE"
+    lk_dhcp_kick
+    LK_WAIT=$LK_SETTLE
+}
+
+# lk_verify: the call is up; done (0) when the device has the address the modem reports, else the
+# lease is renewed again every LK_KICK_EVERY seconds.
+lk_verify() {
+    lk_uqmi settings 3000 --set-client-id "wds,$LK_CID" --get-current-settings
+    LK_NEW=$(printf '%s\n' "$LK_OUT" | jsonfilter -e '@.ipv4.ip' 2>/dev/null)
+    if [ -z "$LK_NEW" ]; then
+        lk_idbg "connected, no IPv4 address in the settings ('$LK_OUT')"
+        return 1
+    fi
+    _lk_cur=$(lk_dev_addr "$LK_NET")
+    if [ "$_lk_cur" = "$LK_NEW" ]; then
+        lk_idbg "connected, device has the address of the call, $LK_NEW"
+        return 0
+    fi
+    lk_idbg "connected, modem address $LK_NEW, device has ${_lk_cur:-none}"
+    lk_elapsed
+    if [ $((LK_EL - LK_KICK_AT)) -ge "$LK_KICK_EVERY" ]; then
+        lk_dhcp_kick
+        LK_WAIT=$LK_SETTLE
+    fi
+    return 1
+}
+
+# lk_step: one look and, when needed, one action. 0 = restored, 1 = not yet, 2 = netifd took wwan
+# down meanwhile (someone restarted the interface, so the session is not ours any more).
+lk_step() {
+    lk_netifd || return 2
+    lk_uqmi data 3000 --get-data-status
+    case $LK_OUT in
+        '"connected"')
+            lk_verify
+            return
+            ;;
+        '"disconnected"') lk_start ;;
+        *) lk_idbg "data status '$LK_OUT', waiting" ;;
+    esac
+    return 1
+}
+
+# lk_incident: from the first sight of the loss until restored, abandoned or given up (R49c, R49d).
+lk_incident() {
+    lk_cs
+    LK_T0=$LK_CS
+    LK_KICK_AT=-100
+    LK_HANDLE='' LK_NEW='' LK_UNREG=''
+    LK_NET=$LK_L3
+    if [ -z "$LK_NET" ]; then
+        LK_NET=$(timeout 5 ifstatus "${LK_IFACE}_4" 2>/dev/null | jsonfilter -e '@.l3_device' 2>/dev/null)
+    fi
+    LK_OLD=
+    [ -z "$LK_NET" ] || LK_OLD=$(lk_dev_addr "$LK_NET")
+    lk_idbg "lost: data status disconnected, settings Out of call, device ${LK_NET:-unknown}, address ${LK_OLD:-none}, client $LK_CID, handle ${LK_PDH:-none}"
+    # busybox tr has no character classes
+    # shellcheck disable=SC2018,SC2019
+    _lk_pdp=$(uci -q get "network.$LK_IFACE.pdptype" | tr 'A-Z' 'a-z')
+    if [ -z "$LK_NET" ]; then
+        lk_escalate "no network device name from netifd"
+        return
+    fi
+    case $_lk_pdp in '' | ip | ipv4) ;; *)
+        lk_escalate "pdptype $_lk_pdp is not restored in place"
+        return
+        ;;
+    esac
+    while :; do
+        lk_elapsed
+        if [ "$LK_EL" -ge "$LK_GIVE_UP" ]; then
+            lk_escalate "not restored in place after $LK_EL s"
+            return
+        fi
+        LK_WAIT=$LK_STEP
+        _lk_s=0
+        lk_step || _lk_s=$?
+        case $_lk_s in
+            0)
+                lk_restored
+                return
+                ;;
+            2)
+                lk_elapsed
+                lw_log "$LK_TAG" "data session lost, netifd took $LK_IFACE down after $LK_EL s, nothing more to do"
+                return
+                ;;
+        esac
+        lk_nap "$LK_WAIT"
+    done
+}
+
+lk_healthy() {
+    if [ -f "$LK_RUN/escalated" ]; then
+        rm -f "$LK_RUN/escalated"
+        lk_dbg "data session healthy again after the escalation"
+    fi
+    LK_NOTED=
+}
+
+# lk_pass: R49, R49a, R49b. Only the exact answers of the measured failure start an incident;
+# anything else, a hung or confused uqmi included, changes nothing.
+lk_pass() {
+    LK_PASSES=$((LK_PASSES + 1))
+    lk_netifd || return 0
+    LK_DEV=$(uci -q get "network.$LK_IFACE.device")
+    [ -n "$LK_DEV" ] || LK_DEV=/dev/cdc-wdm0
+    [ -e "$LK_DEV" ] || return 0
+    ! lk_paused || return 0
+    lk_uqmi data 3000 --get-data-status
+    case $LK_OUT in
+        '"connected"')
+            lk_healthy
+            return 0
+            ;;
+        '"disconnected"') ;;
+        *)
+            lk_dbg "data status: no usable answer '$LK_OUT', no action"
+            return 0
+            ;;
+    esac
+    if [ -z "$LK_CID" ]; then
+        lk_dbg "no cid_4 in the data of netifd, cannot look at the call, no action"
+        return 0
+    fi
+    lk_uqmi settings 3000 --set-client-id "wds,$LK_CID" --get-current-settings
+    if [ "$LK_OUT" != '"Out of call"' ]; then
+        lk_dbg "data status disconnected but settings answer '$LK_OUT', no action"
+        return 0
+    fi
+    if [ -f "$LK_RUN/escalated" ]; then
+        [ -n "$LK_NOTED" ] || lk_dbg "session still lost, no action after the escalation until it is healthy"
+        LK_NOTED=1
+        return 0
+    fi
+    lk_incident
+}
+
+# lk_heartbeat: R49g, a line every LK_HEARTBEAT seconds at the debug level, so a quiet log still
+# shows that the watcher runs and how the modem answers.
+lk_heartbeat() {
+    lw_is_debug || return 0
+    lk_cs
+    [ $((LK_CS - LK_HB_AT)) -ge $((LK_HEARTBEAT * 100)) ] || return 0
+    lk_dbg "heartbeat: $LK_PASSES passes, $LK_BAD failed or slow uqmi calls, slowest answer $((LK_SLOWEST * 10)) ms"
+    LK_PASSES=0 LK_BAD=0 LK_SLOWEST=0
+    LK_HB_AT=$LK_CS
+}
+
+# lk_run: LW_LINKWATCH_PASSES (tests) ends the loop after that many passes.
+lk_run() {
+    trap '[ -z "$LK_NAP" ] || kill "$LK_NAP" 2>/dev/null; exit 0' TERM INT
+    lk_cs
+    LK_HB_AT=$LK_CS
+    _lk_n=0
+    while :; do
+        lk_pass
+        lk_heartbeat
+        _lk_n=$((_lk_n + 1))
+        [ "${LW_LINKWATCH_PASSES:-0}" = 0 ] || [ "$_lk_n" -lt "$LW_LINKWATCH_PASSES" ] || break
+        lk_nap "$LK_PERIOD"
+    done
+}
+
+case ${1:-} in
+    run | once) ;;
+    *)
+        echo "usage: lw-linkwatch run|once" >&2
+        exit 2
+        ;;
+esac
+# the level is read here once, in this shell, so lw_debug never forks uci (R29c)
+lw_is_debug || :
+case $1 in
+    run) lk_run ;;
+    once) lk_pass ;;
+esac

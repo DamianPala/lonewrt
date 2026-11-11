@@ -46,6 +46,12 @@ lw_expect_eq "$(grep -c lw-heartbeat /etc/crontabs/root)" 1 "heartbeat lines in 
 grep -qxF '*/5 * * * * /usr/sbin/lw-heartbeat' /etc/crontabs/root || lw_fail "no heartbeat cron line"
 ! grep -q 'hc-ping' /etc/crontabs/root || lw_fail "the heartbeat address is in the crontab"
 
+# R29c: the debug level of the profile: the level in uci and a persistent log of 2 MB before it rotates
+fb_expect lonewrt.log.level debug
+fb_expect system.@system[0].log_size 2048
+fb_expect system.@system[0].log_buffer_size 1024
+fb_expect system.@system[0].log_file /root/openwrt.log
+
 # R14a: the profile's delay is the period of the soft restart of wwan
 fb_expect watchcat.wwan_soft.period 180
 

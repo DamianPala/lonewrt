@@ -1,0 +1,22 @@
+#!/bin/sh
+# Test stand-in for ip: `ip -4 -o addr show dev DEV` prints the address in $LW_TEST/addr/DEV in the
+# format of the real tool (nothing when the file is empty or missing); every other call goes to the
+# real ip.
+T=${LW_TEST:-/lwtest}
+if [ "$1 $2 $3 $4 $5" = "-4 -o addr show dev" ]; then
+    echo look >>"$T/iplooks"
+    if [ -s "$T/release-pending" ]; then
+        n=$(cat "$T/release-pending")
+        if [ "$n" -le 0 ] && [ -e "$T/release-replace" ]; then
+            cp "$T/release-replace" "$T/addr/$6"
+            rm -f "$T/release-pending"
+        elif [ "$n" -le 0 ]; then
+            rm -f "$T/addr/$6" "$T/release-pending"
+        else echo $((n - 1)) >"$T/release-pending"; fi
+    fi
+    a=$(cat "$T/addr/$6" 2>/dev/null)
+    [ -z "$a" ] || printf '3: %s    inet %s/30 brd %s scope global %s\\       valid_lft forever preferred_lft forever\n' \
+        "$6" "$a" "$a" "$6"
+    exit 0
+fi
+exec /sbin/ip "$@"

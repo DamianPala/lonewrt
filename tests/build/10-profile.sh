@@ -181,6 +181,32 @@ grep -qxF "	option pingperiod '60'" "$SCRATCH/generic-link/etc/config/watchcat" 
     fail "etc/config/watchcat has more than one period"
 ! grep -Eq '@[A-Z]' "$SCRATCH/generic-link/etc/config/watchcat" || fail "a placeholder is left in etc/config/watchcat"
 
+# R3, R29c: LOG_LEVEL is a key every profile must have, exactly `info` or `debug`; anything else stops
+# the build naming the key and the allowed values, and the error never shows the value. Both values
+# land in the first-boot script as they are.
+key=LOG_LEVEL
+allowed="use info or debug"
+variant "no-$key" "/^$key=/d"
+expect_fail_with "key $key is missing; copy it from generic.conf" build "no-$key"
+variant "empty-$key" "s/^$key=.*/$key=''/"
+expect_fail_with "key $key is empty; $allowed" build "empty-$key"
+i=0
+for bad in DEBUG Debug INFO Info warn verbose trace 'info ' ' debug' 'debug,info' 0 1 true 'ｄｅｂｕｇ'; do
+    i=$((i + 1))
+    variant "bad-$key-$i" "s|^$key=.*|$key='$bad'|"
+    expect_fail_with "key $key has an invalid value; $allowed" build "bad-$key-$i"
+    err=$(build "bad-$key-$i" 2>&1 || true)
+    ! grep -qF -- "'$bad'" <<<"$err" || fail "error message echoes the $key value '$bad'"
+done
+for good in info debug; do
+    variant "good-$key-$good" "s|^$key=.*|$key='$good'|"
+    build --render-only "good-$key-$good" "$SCRATCH/good-$key-$good" 2>/dev/null || fail "$key '$good' was rejected"
+    grep -qxF "P_$key='$good'" "$SCRATCH/good-$key-$good/etc/uci-defaults/zz-lw-config" ||
+        fail "$key '$good' not written verbatim"
+done
+build --render-only generic "$SCRATCH/generic-log" 2>/dev/null || fail "the generic profile was rejected"
+grep -qxF "P_$key='info'" "$SCRATCH/generic-log/etc/uci-defaults/zz-lw-config" || fail "the generic image is not at the info level"
+
 # R33b: ROOT_PASSWORD is a key every profile must have; 8 to 63 printable ASCII characters like
 # WIFI_KEY; with ROOT_PASSWORD_HASH also set the build stops naming both keys; the clear text reaches
 # neither the build output nor the overlay, only its $6$ hash does

@@ -105,6 +105,8 @@ FORMATS = {
 # interface restart ahead of the first router restart of wwan-recover (6 cycles of 5 min), also
 # for a failure already there at boot.
 RANGES = {"LINK_RESTART_AFTER_S": (120, 900)}
+# Keys that take one of a few words (SPEC R3, R29c); an exact match, so DEBUG is refused.
+CHOICES = {"LOG_LEVEL": ("info", "debug")}
 LINE = re.compile(r"([A-Z][A-Z0-9_]*)='([^']*)'")
 PLACEHOLDER = re.compile(r"@([A-Z][A-Z0-9_]*)@")
 KEY_FILES = ("authorized_keys", "dropbear_ed25519_host_key", "dropbear_rsa_host_key")
@@ -137,18 +139,28 @@ def parse_profile(path: Path) -> dict[str, str]:
     return values
 
 
+def allowed_hint(key: str) -> str:
+    """What a stopped build tells the owner about the values a key takes."""
+    if key in RANGES:
+        return f"; use a whole number from {RANGES[key][0]} to {RANGES[key][1]}"
+    if key in CHOICES:
+        return f"; use {' or '.join(CHOICES[key])}"
+    return ""
+
+
 def check_value(key: str, value: str, name: str) -> None:
     if not value and key not in MAY_BE_EMPTY:
-        raise RenderError(f"profile {name}: key {key} is empty")
+        # a key with a fixed list of values names it also when it is empty
+        hint = allowed_hint(key) if key in CHOICES else ""
+        raise RenderError(f"profile {name}: key {key} is empty{hint}")
     pattern = FORMATS.get(key)
     valid = not (value and pattern) or re.fullmatch(pattern, value) is not None
     if valid and value and key in RANGES:
         valid = RANGES[key][0] <= int(value) <= RANGES[key][1]
+    if valid and value and key in CHOICES:
+        valid = value in CHOICES[key]
     if not valid:
-        hint = ""
-        if key in RANGES:
-            hint = f"; use a whole number from {RANGES[key][0]} to {RANGES[key][1]}"
-        raise RenderError(f"profile {name}: key {key} has an invalid value{hint}")
+        raise RenderError(f"profile {name}: key {key} has an invalid value{allowed_hint(key)}")
 
 
 def validate(values: dict[str, str], required: list[str], name: str) -> None:

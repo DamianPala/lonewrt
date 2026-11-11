@@ -1,0 +1,37 @@
+#!/bin/sh
+# Test stand-in for the kill that lw-linkwatch uses on udhcpc (LW_LINKWATCH_KILL): records the
+# signals in order, which a real signal would not keep (two pending signals arrive in number
+# order), and does what udhcpc does with them: USR1 after USR2 gives the device the modem's address
+# ($LW_TEST/addr/wwan0 from $LW_TEST/uqmi/addr), unless $LW_TEST/dhcp-deaf exists. USR2 also takes
+# the address off the device, as udhcpc's deconfig and netifd do: at once, after N looks of the
+# stand-in ip when $LW_TEST/release-delay holds N, or never when $LW_TEST/release-never exists; the address becomes the one in
+# $LW_TEST/release-replace instead of going when that file exists.
+# What the watcher had done when USR1 came is kept for the tests: $LW_TEST/usr1-saw (gone or
+# present), usr1-sleeps (naps so far), usr1-looks (looks at the address since USR2). Nothing is
+# signalled for real.
+T=${LW_TEST:-/lwtest}
+sig=${1#-}
+pid=$2
+echo "kill $sig $pid" >>"$T/events"
+kill -0 "$pid" 2>/dev/null || exit 1
+case $sig in
+    USR2)
+        echo released >"$T/dhcp-state"
+        : >"$T/iplooks"
+        if [ -e "$T/release-never" ]; then
+            :
+        elif [ -s "$T/release-delay" ]; then
+            cp "$T/release-delay" "$T/release-pending"
+        else
+            rm -f "$T/addr/wwan0"
+        fi
+        ;;
+    USR1)
+        if [ -s "$T/addr/wwan0" ]; then echo present >"$T/usr1-saw"; else echo gone >"$T/usr1-saw"; fi
+        wc -l <"$T/sleeps" | tr -d ' ' >"$T/usr1-sleeps"
+        wc -l <"$T/iplooks" | tr -d ' ' >"$T/usr1-looks"
+        [ "$(cat "$T/dhcp-state" 2>/dev/null)" = released ] || exit 0
+        [ -e "$T/dhcp-deaf" ] || cp "$T/uqmi/addr" "$T/addr/wwan0"
+        echo bound >"$T/dhcp-state"
+        ;;
+esac

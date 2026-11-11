@@ -111,10 +111,19 @@ gcheck "crontab: wwan-recover */5, lw-siglog 2-59/5, lw-sms-clean 10 4" \
      grep -qE "^10 4 \* \* \* /usr/sbin/lw-sms-clean$" "$c"'
 
 # Persistent log (R29) and the build identity (R7b)
-gcheck "syslog to /root/openwrt.log, 1 MB (R29)" \
+gcheck "syslog to /root/openwrt.log, 1 MB at the info level (R29, R29c)" \
     '[ "$(uci get system.@system[0].log_file)" = /root/openwrt.log ] &&
      [ "$(uci get system.@system[0].log_size)" = 1024 ] &&
+     [ "$(uci get lonewrt.log.level)" = info ] &&
      ps w | grep -q "[l]ogread -f -F /root/openwrt.log .*-S 1024" && [ -s /root/openwrt.log ]'
+
+# The data session watcher (R49): enabled by the image, one procd process, and on this guest (wwan
+# is a DHCP interface, there is no control node) it has nothing to do and logs nothing
+gcheck "lw-linkwatch is enabled, runs once under procd and stays silent (R49, R49f)" \
+    'ls /etc/rc.d/S*lw-linkwatch &&
+     [ "$(ps w | grep -c "[l]w-linkwatch run")" = 1 ] &&
+     ! ls /dev/cdc-wdm* >/dev/null 2>&1 &&
+     ! grep -q "lw-linkwatch" /root/openwrt.log'
 gcheck "/etc/lw-build has profile, build date and src hash (R7b)" \
     'cat /etc/lw-build; grep -q "^profile=generic$" /etc/lw-build &&
      grep -q "^built=." /etc/lw-build && grep -q "^src_sha256=." /etc/lw-build'

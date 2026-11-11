@@ -21,7 +21,7 @@ Profile keys: `docs/profile.md`. Operator presets and how to write one: `docs/op
 tests/build/run.sh --quick               # profile checks, sh -n, rendered overlays, first boot
 tests/run-all.sh                         # all rootfs tests, 6 at once (-j N or LW_JOBS), one PASS/FAIL line each
 tests/run-all.sh smoke                   # the image's scripts in the OpenWrt rootfs under bwrap
-tests/run-all.sh notify                  # one area: ladder | modem | notify | firstboot | smoke
+tests/run-all.sh notify                  # one area: ladder | modem | notify | firstboot | smoke | linkwatch
 tests/rootfs/run.sh tests/notify/x.sh    # one test script
 shellcheck -s sh src/files/usr/sbin/lw-notify   # a changed image script; the tests are bash
 ```
@@ -35,7 +35,7 @@ During work run the area you changed; run everything (`tests/run-all.sh`, `tests
 - **Private data.** `profiles/*` except `generic.conf`, `image/`, `work/` and `tests/build/private-values.txt` are the owner's and git ignores them. Never read, print or quote a private profile, a password card or a token. Report a profile problem by key name only; `build.sh` already does.
 - **Test data stays fake.** Phone numbers, tokens, keys, SMS texts and device names in `tests/` are made up. Keep them that way; never paste a real value, even redacted.
 - **Profiles and presets are data, not code.** `build.sh` parses `KEY='value'`; `operators.sh` parses a preset with a strict allowlist. Do not add `source`, `eval` or shell expansion to either path.
-- **Modem access.** The image's scripts talk to the modem only with AT commands through `sms_tool` under `/tmp/lw-at.lock`, never raw reads of the port and never QMI. Keep it so.
+- **Modem access.** The image's scripts talk to the modem only with AT commands through `sms_tool` under `/tmp/lw-at.lock`, never raw reads of the port and never QMI. The one exception is `lw-linkwatch` (SPEC R49a, D80): it runs `uqmi` only while netifd shows `wwan` up, every call with `-t` and a timeout. Keep it so.
 - **Busybox shell.** Everything under `src/files/` runs on the router's busybox `ash`: POSIX sh, no bashisms, no GNU-only flags. The rootfs tests catch most of it; `shellcheck -s sh` catches the rest. Variables shared between the sourced `lw/*.sh` files show up there as unused; everything else it reports is real.
 - **Comments say why,** and cite the spec id (`# R19: the limit counts restarts, not cycles`). No comments that narrate what the next line does.
 - **Flashing and rebooting a router** are the owner's actions. Produce the image and the command; do not run `sysupgrade` or `reboot` on a router you were not told to.

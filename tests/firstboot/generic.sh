@@ -14,6 +14,8 @@ fb_expect system.@system[0].hostname lte-router
 fb_expect system.@system[0].zonename Europe/Warsaw
 fb_expect system.@system[0].log_file /root/openwrt.log
 fb_expect system.@system[0].log_size 1024
+# R29c: the generic image logs at the info level
+fb_expect lonewrt.log.level info
 fb_expect system.@system[0].cronloglevel 9
 
 # WiFi: both radios, one SSID and the card's key, psk2, 802.11r, PL, schedule off

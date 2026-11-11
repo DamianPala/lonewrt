@@ -33,7 +33,7 @@ The tests need `bubblewrap` and `squashfs-tools`; the VM bench also `qemu-system
 
 | Command | What it checks |
 |---|---|
-| `tests/run-all.sh [-j N] [area]` | the scripts of the image inside the official OpenWrt x86_64 rootfs (same busybox, `uci`, `jsonfilter`) under `bwrap`, with modem and network as stubs: recovery ladder, APN, SMS, notifications, first boot. Areas: `ladder modem notify firstboot smoke` |
+| `tests/run-all.sh [-j N] [area]` | the scripts of the image inside the official OpenWrt x86_64 rootfs (same busybox, `uci`, `jsonfilter`) under `bwrap`, with modem and network as stubs: recovery ladder, APN, SMS, notifications, first boot, the data session watcher (stand-ins for `uqmi`, `ip`, `sleep` and the signals to `udhcpc` in `tests/linkwatch/stubs/`). Areas: `ladder modem notify firstboot smoke linkwatch` |
 | `tests/build/run.sh [--quick]` | profile validation, `sh -n` with the rootfs busybox, rendered overlays, `.gitignore`, then the first-boot tests; without `--quick` also two real ImageBuilder builds (about 3 minutes) |
 | `tests/vm/run-all.sh` | an x86 image in QEMU/KVM with a stand-in for the modem: first boot, no modem, power cut during first boot, reset, cron, log rotation, modem mode; see `tests/vm/README.md` |
 

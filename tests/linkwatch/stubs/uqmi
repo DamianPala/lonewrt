@@ -1,0 +1,94 @@
+#!/bin/sh
+# Test stand-in for uqmi: a model of the modem's data session in $LW_TEST/uqmi, and scripted answers.
+# Understands the calls of lw-linkwatch only: -s -d DEV -t MS [--set-client-id wds,CID] and one of
+# --get-data-status, --get-current-settings, --get-serving-system, --start-network, --stop-network.
+#
+# The world, one file each (the tests write them):
+#   session   up or down; start-network with a handle turns it up (default up)
+#   reg       the registration word of --get-serving-system (default registered)
+#   addr      the address of the modem's call, the one --get-current-settings reports
+#   newaddr   what addr becomes when start-network succeeds (default 10.4.5.6)
+#   handle    the handle start-network answers (default 3203210528)
+# Scripted answers: q-<kind> (kind data, settings, serving, start, clear) holds one answer per line;
+# a call takes the first line and removes it, the last line stays for every later call. Special
+# lines: @EMPTY (no output), @FAIL (exit 1), @HANG (never answers), @SLOW N (the test clock moves
+# N seconds, then the normal answer). A numeric answer to start turns the session up.
+# Every call is recorded in $LW_TEST/uqmi-calls, the arguments as they came.
+T=${LW_TEST:-/lwtest}
+U=$T/uqmi
+mkdir -p "$U"
+echo "$*" >>"$T/uqmi-calls"
+
+dev='' kind='' cid=''
+while [ $# -gt 0 ]; do
+    case $1 in
+        -s) shift ;;
+        -d) dev=$2; shift 2 ;;
+        -t) shift 2 ;;
+        --set-client-id) cid=$2; shift 2 ;;
+        --get-data-status) kind=data; shift ;;
+        --get-current-settings) kind=settings; shift ;;
+        --get-serving-system) kind=serving; shift ;;
+        --start-network) kind=start; shift ;;
+        --stop-network) kind=clear; shift 2 ;;
+        --apn | --auth-type | --username | --password) shift 2 ;;
+        --autoconnect) shift ;;
+        *) echo "stub uqmi: unsupported $1" >&2; exit 2 ;;
+    esac
+done
+[ -e "$dev" ] || { echo "Failed to connect to service" >&2; exit 1; }
+
+get() { cat "$U/$1" 2>/dev/null || echo "$2"; }
+
+advance() {
+    awk -v n="$1" '{ printf "%.2f %.2f\n", $1 + n, $2 + n }' "${LW_UPTIME_FILE:-$T/uptime}" >"$T/uptime.n" &&
+        mv "$T/uptime.n" "${LW_UPTIME_FILE:-$T/uptime}"
+}
+
+# the first scripted line of this kind; the last one is never removed
+f=$U/q-$kind
+a=
+if [ -s "$f" ]; then
+    a=$(sed -n 1p "$f")
+    [ "$(wc -l <"$f")" -le 1 ] || { tail -n +2 "$f" >"$f.n" && mv "$f.n" "$f"; }
+fi
+case $a in
+    @EMPTY) exit 0 ;;
+    @FAIL) exit 1 ;;
+    @HANG) exec /bin/sleep 3600 ;;
+    @SLOW*) advance "${a#@SLOW }"; a= ;;
+esac
+
+if [ -n "$a" ]; then
+    case $kind:$a in
+        start:*[!0-9]*) ;;
+        start:*) echo up >"$U/session"; get newaddr 10.4.5.6 >"$U/addr" ;;
+    esac
+    printf '%s\n' "$a"
+    exit 0
+fi
+
+up=$(get session up)
+case $kind in
+    data) [ "$up" = up ] && echo '"connected"' || echo '"disconnected"' ;;
+    settings)
+        [ -n "$cid" ] || { echo '"No client"'; exit 0; }
+        if [ "$up" = up ]; then
+            printf '{"ipv4":{"ip":"%s","dns1":"192.0.2.53","gateway":"10.0.0.1","subnet":"255.255.255.252"}}\n' \
+                "$(get addr 10.1.2.3)"
+        else
+            echo '"Out of call"'
+        fi
+        ;;
+    serving) printf '{"registration":"%s","plmn_mcc":297}\n' "$(get reg registered)" ;;
+    start)
+        if [ "$(get reg registered)" = registered ]; then
+            echo up >"$U/session"
+            get newaddr 10.4.5.6 >"$U/addr"
+            get handle 3203210528
+        else
+            echo '"Call failed"'
+        fi
+        ;;
+    clear) : ;;
+esac

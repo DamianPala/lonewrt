@@ -1,0 +1,14 @@
+#!/bin/sh
+# Test stand-in for sleep: moves the test clock ($LW_UPTIME_FILE) by the given seconds and returns
+# at once, so a watcher that naps 5 s per pass runs in milliseconds. An optional executable
+# $LW_TEST/on-sleep runs after each nap (the tests change the world from there). A long sleep (a
+# hung stand-in) is a real one.
+T=${LW_TEST:-/lwtest}
+U=${LW_UPTIME_FILE:-$T/uptime}
+case $1 in
+    '' | *[!0-9.]*) exec /bin/sleep "$@" ;;
+esac
+[ "${1%.*}" -lt 600 ] || exec /bin/sleep "$1"
+echo "sleep $1" >>"$T/sleeps"
+awk -v n="$1" '{ printf "%.2f %.2f\n", $1 + n, $2 + n }' "$U" >"$U.n" && mv "$U.n" "$U"
+[ ! -x "$T/on-sleep" ] || "$T/on-sleep"

@@ -98,6 +98,26 @@ lw_log() {
     fi
 }
 
+# lw_is_debug: true when the profile asked for detailed logs (uci lonewrt.log.level, R29c). The level
+# is read once per process, which is enough for a service: a changed level takes effect at its next
+# start. Tests may preset LW_LOG_LEVEL.
+lw_is_debug() {
+    [ -n "${LW_LOG_LEVEL+x}" ] || LW_LOG_LEVEL=$(uci -q get lonewrt.log.level)
+    [ "$LW_LOG_LEVEL" = debug ]
+}
+
+# lw_debug TAG MESSAGE: like lw_log at daemon.debug, written only at the debug level (R29c).
+lw_debug() {
+    lw_is_debug || return 0
+    _lw_tag=$1
+    shift
+    if [ "${DRYRUN:-0}" = 1 ]; then
+        logger -t "$_lw_tag" -p daemon.debug "[DRY-RUN] $*"
+    else
+        logger -t "$_lw_tag" -p daemon.debug "$*"
+    fi
+}
+
 # lw_write_atomic FILE: stdin to FILE via a temp file and rename, so an interrupted write leaves
 # either the old or the new content (SPEC R21c).
 lw_write_atomic() {

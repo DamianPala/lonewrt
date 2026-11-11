@@ -56,12 +56,12 @@ assert_absent "$R" "${LW_VALUES[@]}" "${FAKE_VALUES[@]}"
 [ "$(stat -c %a "$R" "$R/etc" "$R/usr/sbin" | sort -u)" = 755 ] || fail "/, /etc or /usr/sbin not 0755"
 for f in "$UD" etc/init.d/lw-firstboot etc/lw-build etc/config/lonewrt etc/config/watchcat \
     etc/crontabs/root usr/lib/lw/common.sh etc/init.d/lw-notify usr/sbin/lw-notify \
-    usr/sbin/lw-heartbeat etc/hotplug.d/ntp/30-lw-nlbwmon usr/lib/lw/devices.sh usr/lib/lw/reboot.sh; do
+    usr/sbin/lw-heartbeat etc/init.d/lw-linkwatch usr/sbin/lw-linkwatch etc/hotplug.d/ntp/30-lw-nlbwmon usr/lib/lw/devices.sh usr/lib/lw/reboot.sh; do
     [ -e "$R/$f" ] || fail "generic image lacks /$f"
 done
 # ImageBuilder enables every rc.common script of FILES in the image itself, so the services start
 # on the very first boot (procd globs /etc/rc.d before S10boot runs uci-defaults) and after a reset
-for s in lw-modem-mode lw-firstboot watchcat cron nlbwmon; do
+for s in lw-modem-mode lw-firstboot lw-linkwatch watchcat cron nlbwmon; do
     compgen -G "$R/etc/rc.d/S[0-9][0-9]$s" >/dev/null || fail "image does not enable $s in /etc/rc.d"
 done
 # Our set_up_bandz.sh replaces the package's, which talked to the modem inside S10boot (R8, R12a)

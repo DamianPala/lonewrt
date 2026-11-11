@@ -2,7 +2,8 @@
 # One line per run in /tmp/lw-signal.log: modem mode, network, bands, signal, ping and WireGuard
 # handshake age (SPEC R28, D17). RAM only, so the NAND is not worn, and trimmed to the last 5000
 # lines (R28a). Every read has a limit, so the line comes also without modem or internet and a run
-# ends well before the next one (R28b); a field without a reading is '?'.
+# ends well before the next one (R28b); a field without a reading is '?'. With the debug log level
+# the line goes to syslog too (R29c).
 
 # shellcheck source=src/files/usr/lib/lw/common.sh
 . /usr/lib/lw/common.sh
@@ -40,7 +41,11 @@ hs=$(timeout 5 wg show wg0 latest-handshakes 2>/dev/null | cut -f2 | sort -n | t
 age=
 case $hs in '' | 0 | *[!0-9]*) ;; *) age=$(($(date +%s) - hs))s ;; esac
 
-printf '%s zsnt=%s net=%s pb=%s s1=%s rsrp=%s rsrq=%s sinr=%s rssi=%s pci=%s loss=%s rtt=%s wg_age=%s\n' \
+line=$(printf '%s zsnt=%s net=%s pb=%s s1=%s rsrp=%s rsrq=%s sinr=%s rssi=%s pci=%s loss=%s rtt=%s wg_age=%s' \
     "$(date +%F_%T)" "${mode:-?}" "${net:-?}" "${pb:-?}" "${s1:-?}" "${rsrp:-?}" "${rsrq:-?}" \
-    "${sinr:-?}" "${rssi:-?}" "${pci:-?}" "${loss:-?}" "${rtt:-?}" "${age:-?}" >>"$LOG"
+    "${sinr:-?}" "${rssi:-?}" "${pci:-?}" "${loss:-?}" "${rtt:-?}" "${age:-?}")
+printf '%s\n' "$line" >>"$LOG"
 tail -n "$LOG_LINES" "$LOG" | lw_write_atomic "$LOG"
+# R29c: at the debug level the sample also goes to syslog, so the persistent log keeps the signal
+# history that the RAM log loses at a restart
+lw_debug lw-siglog "$line"

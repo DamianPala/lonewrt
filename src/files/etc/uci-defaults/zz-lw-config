@@ -38,6 +38,7 @@ P_SMS_ADMINS='@SMS_ADMINS@'
 P_SMS_REBOOT_MAX_AGE_MIN='@SMS_REBOOT_MAX_AGE_MIN@'
 P_SMS_REBOOT_MAX_PER_DAY='@SMS_REBOOT_MAX_PER_DAY@'
 P_ROUTER_NAME='@ROUTER_NAME@'
+P_LOG_LEVEL='@LOG_LEVEL@'
 
 # set_or_delete OPTION VALUE: empty profile values remove the option instead of storing ''.
 set_or_delete() {
@@ -161,7 +162,12 @@ uci set system.@system[0].hostname="$P_HOSTNAME"
 uci set system.@system[0].timezone="$P_TIMEZONE"
 uci set system.@system[0].zonename="$P_ZONENAME"
 uci set system.@system[0].log_file='/root/openwrt.log'
-uci set system.@system[0].log_size='1024'
+# R29c: the debug level doubles the size at which the persistent log rotates
+if [ "$P_LOG_LEVEL" = debug ]; then
+    uci set system.@system[0].log_size='2048'
+else
+    uci set system.@system[0].log_size='1024'
+fi
 uci set system.@system[0].log_buffer_size='1024'
 # busybox crond logs every job start at err level, which floods the persistent log on NAND (R29a)
 uci set system.@system[0].cronloglevel='9'
@@ -169,6 +175,9 @@ uci commit system
 
 # Band target for lw-modem-mode; empty means the modem's bands are left alone (SPEC R11c)
 set_or_delete lonewrt.modem.bands "$P_LTE_BANDS"
+# Log level of the image's scripts, read by lw_debug in common.sh (SPEC R29c); the build checks it
+uci set lonewrt.log=log
+uci set lonewrt.log.level="$P_LOG_LEVEL"
 # Telegram notifications; empty token and chat leave lw-notify without an instance (SPEC R34 to
 # R38, D43). The token and the admin numbers are private, so the file is readable by root only (uci
 # keeps the mode).
