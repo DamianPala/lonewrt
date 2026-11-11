@@ -37,6 +37,7 @@ fb_expect wifi_schedule.@global[0].enabled 0
 fb_expect network.wwan.proto qmi
 fb_expect network.wwan.device /dev/cdc-wdm0
 fb_expect network.wwan.modes lte
+fb_expect network.wwan.timeout 30
 fb_expect network.wwan.apn "<unset>"
 fb_expect network.wwan.auth "<unset>"
 fb_expect lonewrt.modem.bands "<unset>"

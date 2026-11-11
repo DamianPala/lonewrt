@@ -16,7 +16,10 @@ EXTRA=$W/dl/extra
 PKG=$W/ib/packages
 make_profiles "$P"
 mkdir -p "$EXTRA" "$PKG" "$I"
-printf 'image:\n\t@true\n' >"$W/ib/Makefile"
+fake_make_image >"$W/ib/Makefile"
+# the build also derives qmi.sh from the uqmi package (R12d): a stand-in apk and package file
+fake_qmi_ib "$W/ib"
+export FAKE_QMI_SH=$FIX/fake-qmi.sh
 
 PINNED=(foo-2.0-r1.apk luci-app-foo-1.5-r3.apk modemband-20260806-r1.apk libx-16-10.42-r1.apk)
 for f in "${PINNED[@]}"; do printf 'fake %s\n' "$f" >"$EXTRA/$f"; done
@@ -78,6 +81,12 @@ err=$(DEPS=$SCRATCH/deps-odd.lst build 2>&1 || true)
 grep -qF "odd.apk in deps.lst does not read as name-version.apk" <<<"$err" ||
     fail "an unreadable pinned name was accepted: $err"
 
+# R12d: a package file without the scan line stops the build before packages/ changes, with no image
+grep -v -e --network-scan "$FIX/fake-qmi.sh" >"$SCRATCH/no-scan.sh"
+FAKE_QMI_SH=$SCRATCH/no-scan.sh expect_fail_with "qmi.sh of uqmi-1.0-r1.apk has 0 lines with --network-scan" build
+[ "$(listing "$PKG")" = "$before" ] || fail "a missing scan line changed packages/"
+[ -z "$(find "$I" -name '*.bin')" ] || fail "a missing scan line left an image"
+
 # the right set: earlier versions of the pinned packages go by exact package name, the rest stays
 expect_fail_with "ImageBuilder produced no sysupgrade image" build
 for f in "${PINNED[@]}"; do
@@ -91,6 +100,12 @@ for f in "${STAY[@]}"; do
 done
 want=$((${#PINNED[@]} + ${#STAY[@]}))
 [ "$(listing "$PKG" | wc -l)" = "$want" ] || fail "packages/ holds unexpected files: $(listing "$PKG" | tr '\n' ' ')"
+
+# R12d: after make image, an image file that is not this build's package file minus the scan line
+# (the feed changed between the fetch and make image) stops the build, with no image
+sed 's/sleep 3/sleep 4/' "$FIX/fake-qmi.sh" >"$SCRATCH/other-orig.sh"
+FAKE_QMI_ORIG=$SCRATCH/other-orig.sh expect_fail_with "is not the package's file minus its scan line" build
+[ -z "$(find "$I" -name '*.bin')" ] || fail "a changed package file left an image"
 
 # the real list: every file it pins for the group is a plain name under dl/extra that reads as
 # name-version, and no package is pinned twice

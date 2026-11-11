@@ -25,6 +25,8 @@ DEPS=${LW_DEPS_LIST:-$FW/deps.lst}
 IB=$LW_WORK/ib
 # shellcheck source=pinned-packages.sh
 source "$FW/pinned-packages.sh"
+# shellcheck source=qmi-handler.sh
+source "$FW/qmi-handler.sh"
 IB_TAR=$LW_WORK/dl/openwrt-imagebuilder-25.12.6-ipq40xx-generic.Linux-x86_64.tar.zst
 
 # The "Included" table of packages.md (SPEC R2); the device profile adds the default set.
@@ -170,6 +172,9 @@ run_imagebuilder() {
         FILES="$2" \
         EXTRA_IMAGE_NAME="$1" \
         BIN_DIR="$3" >"$4" 2>&1 || rc=$?
+    # R12d: still before the scrub, which removes the final rootfs; a failure here ends the build
+    # through die, and the EXIT trap scrubs
+    if [ "$rc" -eq 0 ]; then qmi_verify "$IB"; fi
     scrub_imagebuilder "$1"
     SCRUB=
     exec 9<&-
@@ -186,13 +191,16 @@ publish() {
 }
 
 build() {
-    local name=$1 bin manifest
+    local name=$1 bin manifest qmi_pkg
     check_name "$name"
     warn_profile_mode "$name"
     mkdir -p "$IMAGE"
     TMP=$(mktemp -d "$IMAGE/.build-$name.XXXXXX")
     render "$name" "$TMP/files" "$TMP/passwords.txt"
     prepare_imagebuilder
+    # R12d, D82: the package's qmi.sh minus its network scan goes into the overlay; no image otherwise
+    qmi_pkg=$(qmi_derive "$IB" "$TMP/files" "$TMP/qmi")
+    echo "build: /$QMI_SH_REL from $qmi_pkg without its network scan (R12d)" >&2
     run_imagebuilder "$name" "$TMP/files" "$TMP/bin" "$TMP/make.log"
 
     bin=$(compgen -G "$TMP/bin/*-$name-*-squashfs-sysupgrade.bin" | head -n1) || true

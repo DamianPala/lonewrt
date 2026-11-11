@@ -6,6 +6,7 @@ Linux x86_64 with `bash`, `python3`, `openssl`, `curl`, `tar`, `zstd`, `make`, `
 Without `gawk`, `fetch-deps.sh` unpacks Ubuntu's, which needs `dpkg-deb` and glibc 2.38 or newer.
 The tests need `bubblewrap` and `squashfs-tools`; the VM bench also `qemu-system-x86_64` and `/dev/kvm`.
 `build.sh` checks for its programs before it starts and names the missing one.
+A build and the VM image also need the network: they fetch the `uqmi` package from the package feeds of the ImageBuilder to derive `qmi.sh` from it (SPEC R12d).
 
 ```sh
 ./build.sh --render-only mine tests/.out/overlay   # only the rendered rootfs overlay, no ImageBuilder
@@ -17,6 +18,7 @@ The tests need `bubblewrap` and `squashfs-tools`; the VM bench also `qemu-system
 | Path | What | Git |
 |---|---|---|
 | `build.sh`, `src/render.py` | profile checks, overlay, ImageBuilder run | yes |
+| `qmi-handler.sh` | takes `/lib/netifd/proto/qmi.sh` from the `uqmi` package of the ImageBuilder, drops its `--network-scan` line (the build stops unless the line is there exactly once) and checks the image's copy after `make image`; sourced by `build.sh` and `tests/vm/build-image.sh`. The repository holds no copy of the file (SPEC R12d, D82) | yes |
 | `pinned-packages.sh` | the checked copy of the third-party `.apk` files into an ImageBuilder, sourced by `build.sh` and `tests/vm/build-image.sh` | yes |
 | `src/files/` | the files of the image (init scripts, `wwan-recover`, `lw-notify`, `uci-defaults/zz-lw-config`, cron, ...) | yes |
 | `src/files/usr/share/lw/operators/` | operator presets, one data file per MCC-MNC (`29702`), see [operators.md](operators.md) | yes |
@@ -34,7 +36,7 @@ The tests need `bubblewrap` and `squashfs-tools`; the VM bench also `qemu-system
 | Command | What it checks |
 |---|---|
 | `tests/run-all.sh [-j N] [area]` | the scripts of the image inside the official OpenWrt x86_64 rootfs (same busybox, `uci`, `jsonfilter`) under `bwrap`, with modem and network as stubs: recovery ladder, APN, SMS, notifications, first boot, the data session watcher (stand-ins for `uqmi`, `ip`, `sleep` and the signals to `udhcpc` in `tests/linkwatch/stubs/`). Areas: `ladder modem notify firstboot smoke linkwatch` |
-| `tests/build/run.sh [--quick]` | profile validation, `sh -n` with the rootfs busybox, rendered overlays, `.gitignore`, then the first-boot tests; without `--quick` also two real ImageBuilder builds (about 3 minutes) |
+| `tests/build/run.sh [--quick]` | profile validation, `sh -n` with the rootfs busybox, rendered overlays, `.gitignore`, the `qmi.sh` derivation against a stand-in package, then the first-boot tests; without `--quick` also two real ImageBuilder builds (about 3 minutes, network needed for `uqmi`) that check the image's `qmi.sh` against the package's |
 | `tests/vm/run-all.sh` | an x86 image in QEMU/KVM with a stand-in for the modem: first boot, no modem, power cut during first boot, reset, cron, log rotation, modem mode; see `tests/vm/README.md` |
 
 All test data is made up: phone numbers, names, keys, tokens, SMS texts and device names in `tests/` belong to nobody.
@@ -58,3 +60,4 @@ This is why images are flashed only after `sysupgrade -T` passes, and why the ke
 2. Fetch the third-party `.apk` files again for that version: the feed `dl.eko.one.pl/openwrt-<release>/packages/<arch>/base/` for `modemband` and `modemdata`, the GitHub releases of 4IceG for the `luci-app-*`.
 3. Compare the default configuration with what `zz-lw-config` changes (it sets only the differences).
 4. Refresh the x86 rootfs for the tests.
+5. Read `/lib/netifd/proto/qmi.sh` of the new `uqmi` package. The build stops, naming the file, when the `--network-scan` line is not there exactly once; check that the new handler still scans only after the mode set, change `qmi-handler.sh` if it does not, and time `ifup wwan` on the router again (SPEC D82: about 15 s to the first ping, 40 s with the scan).

@@ -7,7 +7,7 @@ Compared against: `/etc/apk/world` of a clean eko.one.pl r32944 image (262 top-l
 
 | Package | Why | Source |
 |---|---|---|
-| default 25.12.6 set for the MF289F (`uqmi`, `kmod-usb-net-qmi-wwan`, `kmod-usb-serial-option`, `wpad-basic-mbedtls`, `firewall4`, `dnsmasq`, `dropbear`...) | system, LTE over QMI (`uqmi` also serves `lw-linkwatch`, R49), WiFi | official |
+| default 25.12.6 set for the MF289F (`uqmi`, `kmod-usb-net-qmi-wwan`, `kmod-usb-serial-option`, `wpad-basic-mbedtls`, `firewall4`, `dnsmasq`, `dropbear`...) | system, LTE over QMI (`uqmi` also serves `lw-linkwatch`, R49; its `qmi.sh` goes into the image without the `--network-scan` line, derived at build time, R12d), WiFi | official |
 | `luci`, `luci-proto-qmi` | web panel, LTE interface in LuCI | official |
 | `luci-ssl` | HTTPS in LuCI (pulls in `px5g-mbedtls` for the certificate); without it the router's https:// address does not work | official |
 | `wireguard-tools`, `luci-proto-wireguard` | remote access through a WireGuard server | official |

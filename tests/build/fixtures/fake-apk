@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Stand-in for the ImageBuilder's apk (tests/build/lib.bash, fake_qmi_ib): add and update do nothing,
+# fetch writes an empty uqmi-1.0-r1.apk into --output, extract puts $FAKE_QMI_SH at
+# lib/netifd/proto/qmi.sh under --destination. FAKE_APK_FAIL=update|fetch|extract makes that step
+# fail the way a lost network does. Nothing here is OpenWrt's code.
+set -euo pipefail
+cmd='' out='' dest=''
+args=("$@")
+for ((i = 0; i < ${#args[@]}; i++)); do
+    case ${args[i]} in
+    add | update | fetch | extract) [ -n "$cmd" ] || cmd=${args[i]} ;;
+    --output) out=${args[i + 1]} ;;
+    --destination) dest=${args[i + 1]} ;;
+    esac
+done
+if [ "${FAKE_APK_FAIL:-}" = "$cmd" ]; then
+    echo "ERROR: temporary error (could not resolve host)" >&2
+    exit 1
+fi
+case $cmd in
+fetch) : >"$out/uqmi-1.0-r1.apk" ;;
+extract)
+    mkdir -p "$dest/lib/netifd/proto"
+    cp "$FAKE_QMI_SH" "$dest/lib/netifd/proto/qmi.sh"
+    ;;
+esac

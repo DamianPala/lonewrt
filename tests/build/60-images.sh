@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
-# Real ImageBuilder builds (about 1,5 min each, no network): the generic image twice into a scratch
-# image/ (R33: the second build keeps the card and its passwords; the real image/ is not touched),
+# Real ImageBuilder builds (about 1,5 min each; the uqmi package for qmi.sh comes from the network,
+# R12d): the generic image twice into a scratch image/ (R33: the second build keeps the card and its
+# passwords; the real image/ is not touched),
 # its rootfs free of private and fake-profile values (R4, R4a) and its manifest against packages.md (R2);
 # then the fake full profile into another scratch image/ whose rootfs carries the profile's values
-# and SSH keys (R7, R31), the heartbeat line (R42) and the nlbwmon hotplug script (R44a).
+# and SSH keys (R7, R31), the heartbeat line (R42) and the nlbwmon hotplug script (R44a). In both
+# images qmi.sh is the uqmi package's file of that build minus its network-scan line (R12d, D82).
 # shellcheck source=tests/build/lib.bash
 source "$(dirname "$0")/lib.bash"
 scratch images
 UD=etc/uci-defaults/zz-lw-config
+die() { fail "$*"; }
+# shellcheck source=qmi-handler.sh
+source "$FW/qmi-handler.sh"
+LW_ROOTFS=${LW_ROOTFS:-$LW_WORK/dl/x86/rootfs}
 
 # packages_in TABLE: backticked package names in the first column of a packages.md table (names
 # inside parentheses are dependencies pulled in, not packages to ask for)
@@ -32,6 +38,22 @@ check_manifest() {
     done < <(packages_in 'Left out')
 }
 
+# check_qmi ROOTFS: R12d, D82. The image's qmi.sh is the file of the uqmi package that went into this
+# very build (root.orig-*, the pristine package rootfs the ImageBuilder copies from) minus exactly
+# its network-scan line, runs under sh -n, and keeps the package's mode. Call it right after the
+# build: the next build replaces root.orig-*.
+check_qmi() {
+    local img=$1/$QMI_SH_REL orig delta
+    orig=$(compgen -G "$LW_WORK/ib/build_dir/target-*/root.orig-*" | head -n1) || true
+    [ -f "$orig/$QMI_SH_REL" ] || fail "no pristine /$QMI_SH_REL under $LW_WORK/ib/build_dir (root.orig-*)"
+    [ -f "$img" ] || fail "image lacks /$QMI_SH_REL"
+    delta=$(diff "$orig/$QMI_SH_REL" "$img" || true)
+    [ "$(grep -c '^[<>]' <<<"$delta")" = 1 ] && grep -q "^< .*$QMI_SCAN_PATTERN" <<<"$delta" ||
+        fail "image /$QMI_SH_REL is not the package file minus its scan line: $delta"
+    [ "$(stat -c %a "$img")" = "$(stat -c %a "$orig/$QMI_SH_REL")" ] || fail "/$QMI_SH_REL mode differs from the package's"
+    qmi_sh_n "$img" || fail "image /$QMI_SH_REL fails sh -n"
+}
+
 # build.sh installs exactly the "Included" table minus the default-set row
 want=$(packages_in Included | grep -vxE 'uqmi|kmod-.*|wpad-basic-mbedtls|firewall4|dnsmasq|dropbear' | sort)
 have=$(sed -n '/^PACKAGES=(/,/^)/p' "$FW/build.sh" | sed '1d;$d' | tr ' ' '\n' | sed '/^$/d' | sort)
@@ -51,6 +73,7 @@ check_manifest "$DI/generic.manifest"
 mkdir -p "$SCRATCH/generic"
 unpack_image "$DI/generic-sysupgrade.bin" "$SCRATCH/generic"
 R=$SCRATCH/generic/rootfs
+check_qmi "$R"
 assert_absent "$R" "${LW_VALUES[@]}" "${FAKE_VALUES[@]}"
 [ -z "$(ls -A "$R/etc/dropbear")" ] || fail "generic image has files in /etc/dropbear"
 [ "$(stat -c %a "$R" "$R/etc" "$R/usr/sbin" | sort -u)" = 755 ] || fail "/, /etc or /usr/sbin not 0755"
@@ -91,6 +114,7 @@ check_manifest "$I/fake-full.manifest"
 mkdir -p "$SCRATCH/fake"
 unpack_image "$I/fake-full-sysupgrade.bin" "$SCRATCH/fake"
 R=$SCRATCH/fake/rootfs
+check_qmi "$R"
 assert_present "$R" "${FAKE_VALUES[@]}"
 assert_absent "$R" "${LW_VALUES[@]}"
 grep -qxF '0 10 * * 1 /usr/sbin/lw-notify balance' "$R/etc/crontabs/root" ||

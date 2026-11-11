@@ -18,6 +18,9 @@ IB=$VMWORK/ib
 DEPS=${LW_DEPS_LIST:-$FW/deps.lst}
 # shellcheck source=pinned-packages.sh
 source "$FW/pinned-packages.sh"
+# shellcheck source=qmi-handler.sh
+source "$FW/qmi-handler.sh"
+LW_ROOTFS=${LW_ROOTFS:-$LW_WORK/dl/x86/rootfs}
 # ImageBuilder wants GNU awk; the laptop only has mawk
 export PATH=$LW_WORK/tools/bin:$PATH
 
@@ -96,7 +99,7 @@ WORK=
 cleanup() { [ -z "$WORK" ] || rm -rf "$WORK"; }
 
 main() {
-    local src=${1:-} stage key img src_note
+    local src=${1:-} stage key img src_note qmi_pkg
     mkdir -p "$VMWORK/image"
     ensure_ib
     tune_ib
@@ -116,6 +119,10 @@ main() {
     cp -a "$VMDIR/overlay/." "$stage/"
     chmod 0755 "$stage"/etc/init.d/lw-vm-*
     add_markers "$stage" "$WORK/overlay"
+    # R12d, D82: the VM runs the same handler as the router image, derived from the x86 package
+    # (needs the package feeds, so a run with a cached image still reaches the network)
+    qmi_pkg=$(qmi_derive "$IB" "$stage" "$WORK/qmi")
+    log "/$QMI_SH_REL from $qmi_pkg without its network scan"
 
     # the build time in /etc/lw-build changes with every render; it alone does not need a new image
     key=$( {
@@ -131,6 +138,7 @@ main() {
         make -C "$IB" image PROFILE=generic PACKAGES="${PACKAGES[*]}" FILES="$stage" \
             BIN_DIR="$img.tmp/bin" EXTRA_IMAGE_NAME=lwvm >"$img.tmp/build.log" 2>&1 ||
             die "ImageBuilder failed, see $img.tmp/build.log"
+        qmi_verify "$IB"
         # OpenWrt appends metadata after the gzip stream, so gzip warns "trailing garbage", exit 2
         gzip -dc "$img.tmp"/bin/*-squashfs-combined.img.gz >"$img.tmp/disk.img" 2>/dev/null ||
             [ $? = 2 ]

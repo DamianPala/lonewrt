@@ -11,8 +11,9 @@ tests/vm/run-all.sh firstboot cron     # only these scenarios
 tests/vm/run-all.sh --overlay DIR      # test another rendered overlay
 ```
 
-Needs `qemu-system-x86_64`, `/dev/kvm` (user in group `kvm`), `python3`, `openssl`, `zstd`; no root, no tap or bridge, no network except the downloads of `fetch-deps.sh`.
+Needs `qemu-system-x86_64`, `/dev/kvm` (user in group `kvm`), `python3`, `openssl`, `zstd`; no root, no tap or bridge, no network except the downloads of `fetch-deps.sh` and the `uqmi` fetch of `build-image.sh` (below).
 `build-image.sh` runs `fetch-deps.sh extra gawk vm` first, so the x86 ImageBuilder, the third-party `.apk` files in `$LW_WORK/dl/extra/` and GNU awk in `$LW_WORK/tools/bin/` are there (firmware `docs/development.md`).
+`build-image.sh` also fetches the x86 `uqmi` package from the ImageBuilder's package feeds, to give the guest the same `qmi.sh` as the router image (SPEC R12d), so it needs the network even when the image is cached.
 `build.sh --render-only` also needs the x86 rootfs in `$LW_WORK/dl/x86/` (`fetch-deps.sh rootfs`).
 One guest has 256 MB and one vCPU and boots in about 13 s.
 Full output of each scenario: `$VMWORK/logs/<scenario>.log`.

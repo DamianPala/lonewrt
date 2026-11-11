@@ -3,7 +3,8 @@
 # modem attaches again by itself, the call of netifd stays dead: wwan0 keeps its old address and
 # netifd shows wwan as up, but the modem is "Out of call". This script looks every 5 s, and when the
 # session is lost with the modem registered it starts the call again on netifd's own QMI client and
-# renews the DHCP lease, about 2 s in all; a full `ifup wwan` takes 32 to 40 s. After 20 s without
+# renews the DHCP lease, about 2 s in all; a full `ifup wwan` takes 14 to 15 s (D82; 40 to 46 s while
+# qmi.sh still scanned the network, which the image no longer does, R12d). After 20 s without
 # success it runs `ifup wwan` once; watchcat (R14) and wwan-recover (R16) stay behind it.
 #
 #   lw-linkwatch run    the procd service: one pass every LW_LINKWATCH_PERIOD seconds (5)
@@ -83,6 +84,12 @@ lk_idbg() {
     lw_debug "$LK_TAG" "+${LK_EL}s $*"
 }
 
+# lk_ascii TEXT: TEXT as one printable-ASCII line of at most 300 bytes (R29b): the modem and the
+# operator can send any byte, and a log line must not carry them
+lk_ascii() {
+    printf '%s' "$1" | tr '\n' '|' | LC_ALL=C tr -c '\40-\176' '?' | cut -c1-300
+}
+
 # lk_uqmi LABEL MS ARGS...: one uqmi call; the answer in LK_OUT (empty after a timeout), the exit
 # code of uqmi as return value. LABEL names the call in the debug log: the arguments are not logged,
 # they may hold the APN login.
@@ -101,7 +108,7 @@ lk_uqmi() {
     [ "$_lk_dt" -le "$LK_SLOWEST" ] || LK_SLOWEST=$_lk_dt
     if [ "$_lk_rc" != 0 ] || [ -z "$LK_OUT" ] || [ "$_lk_dt" -ge "$LK_SLOW_CS" ]; then
         LK_BAD=$((LK_BAD + 1))
-        lk_dbg "uqmi $_lk_label: answer '$LK_OUT', exit $_lk_rc, $((_lk_dt * 10)) ms"
+        lk_dbg "uqmi $_lk_label: answer '$(lk_ascii "$LK_OUT")', exit $_lk_rc, $((_lk_dt * 10)) ms"
     fi
     return "$_lk_rc"
 }
@@ -163,7 +170,7 @@ lk_snapshot() {
             lk_dbg "AT snapshot stopped at $_lk_c: no answer within $LK_AT_LIMIT s"
             return 0
         }
-        lk_dbg "AT snapshot $_lk_c: $(printf '%s' "$_lk_r" | tr '\n' '|' | LC_ALL=C tr -c '\40-\176' '?' | cut -c1-300)"
+        lk_dbg "AT snapshot $_lk_c: $(lk_ascii "$_lk_r")"
     done
 }
 
@@ -262,7 +269,7 @@ lk_start() {
     lk_uqmi start 5000 "$@" --autoconnect
     # uqmi prints the handle as a signed number: -882662896 on the router
     case ${LK_OUT#-} in '' | *[!0-9]*)
-        lk_idbg "start-network answered '$LK_OUT'"
+        lk_idbg "start-network answered '$(lk_ascii "$LK_OUT")'"
         # qmi.sh clears this state the same way before it tries again
         [ "$LK_OUT" != '"No effect"' ] ||
             lk_uqmi clear 3000 --set-client-id "wds,$LK_CID" --stop-network 0xffffffff --autoconnect
@@ -281,7 +288,7 @@ lk_verify() {
     lk_uqmi settings 3000 --set-client-id "wds,$LK_CID" --get-current-settings
     LK_NEW=$(printf '%s\n' "$LK_OUT" | jsonfilter -e '@.ipv4.ip' 2>/dev/null)
     if [ -z "$LK_NEW" ]; then
-        lk_idbg "connected, no IPv4 address in the settings ('$LK_OUT')"
+        lk_idbg "connected, no IPv4 address in the settings ('$(lk_ascii "$LK_OUT")')"
         return 1
     fi
     _lk_cur=$(lk_dev_addr "$LK_NET")
@@ -309,7 +316,7 @@ lk_step() {
             return
             ;;
         '"disconnected"') lk_start ;;
-        *) lk_idbg "data status '$LK_OUT', waiting" ;;
+        *) lk_idbg "data status '$(lk_ascii "$LK_OUT")', waiting" ;;
     esac
     return 1
 }
@@ -388,7 +395,7 @@ lk_pass() {
             ;;
         '"disconnected"') ;;
         *)
-            lk_dbg "data status: no usable answer '$LK_OUT', no action"
+            lk_dbg "data status: no usable answer '$(lk_ascii "$LK_OUT")', no action"
             return 0
             ;;
     esac
@@ -398,7 +405,7 @@ lk_pass() {
     fi
     lk_uqmi settings 3000 --set-client-id "wds,$LK_CID" --get-current-settings
     if [ "$LK_OUT" != '"Out of call"' ]; then
-        lk_dbg "data status disconnected but settings answer '$LK_OUT', no action"
+        lk_dbg "data status disconnected but settings answer '$(lk_ascii "$LK_OUT")', no action"
         return 0
     fi
     if [ -f "$LK_RUN/escalated" ]; then

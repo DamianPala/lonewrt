@@ -25,6 +25,7 @@ fb_expect network.wwan.auth pap
 fb_expect network.wwan.username fakeuser-q7x9
 fb_expect network.wwan.password fakepass-q7x9
 fb_expect network.wwan.modes lte
+fb_expect network.wwan.timeout 30
 fb_expect lonewrt.modem.bands 1,3,8,20,28,32
 
 fb_expect network.wg0.disabled "<unset>"

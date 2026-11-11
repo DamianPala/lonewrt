@@ -73,8 +73,16 @@ gcheck "wwan from the image: QMI on /dev/cdc-wdm0, modes=lte, empty APN (R7a, R1
      grep -qx "network.wwan.proto=.qmi." "$f" &&
      grep -qx "network.wwan.device=./dev/cdc-wdm0." "$f" &&
      grep -qx "network.wwan.modes=.lte." "$f" &&
+     grep -qx "network.wwan.timeout=.30." "$f" &&
      ! grep -q "^network.wwan.apn=.[^'"'"']" "$f"'
 gcheck "network.wwan.modes=lte at runtime (R10)" '[ "$(uci get network.wwan.modes)" = lte ]'
+gcheck "network.wwan.timeout=30 at runtime (R7, D82)" '[ "$(uci get network.wwan.timeout)" = 30 ]'
+# R12d: the handler of the uqmi package without its network scan, still the mode set, still
+# executable and parsable
+gcheck "qmi.sh: no network scan, the mode set kept, executable, sh -n (R12d)" \
+    'f=/lib/netifd/proto/qmi.sh
+     [ -x "$f" ] && [ "$(grep -c -e --network-scan "$f")" = 0 ] &&
+     grep -q -e --set-network-modes "$f" && sh -n "$f"'
 
 # Firewall and tunnel
 gcheck "firewall: wwan in zone wan, wg0 in zone vpn, vpn may forward to lan, lan not to vpn" \

@@ -94,3 +94,25 @@ unpack_image() {
     tar -xf "$1" -C "$2" --wildcards '*/root'
     unsquashfs -q -n -excludes -d "$2/rootfs" "$2"/sysupgrade-*/root dev >/dev/null
 }
+
+# fake_qmi_ib IB: the parts of an ImageBuilder that qmi-handler.sh touches (apk, .config, keys,
+# repositories), with the stand-in apk of fixtures/fake-apk; FAKE_QMI_SH names the "package file"
+fake_qmi_ib() {
+    mkdir -p "$1/staging_dir/host/bin" "$1/keys"
+    cp "$FIX/fake-apk" "$1/staging_dir/host/bin/apk"
+    printf 'CONFIG_TARGET_ARCH_PACKAGES="fake_arch"\n' >"$1/.config"
+    : >"$1/repositories"
+}
+
+# fake_make_image: the Makefile of a stand-in ImageBuilder whose `image` leaves what the real one
+# does in build_dir: the package's file (0755) in root.orig-fake, the overlay's file (FILES=, copied
+# with its mode) in root-fake. FAKE_QMI_ORIG, when set, is a package file other than the one apk gave.
+# shellcheck disable=SC2016  # $(...) here are make's variables, written into the Makefile as they are
+fake_make_image() {
+    printf 'image:\n'
+    printf '\tmkdir -p build_dir/target-fake/root.orig-fake/lib/netifd/proto'
+    printf ' build_dir/target-fake/root-fake/lib/netifd/proto\n'
+    printf '\tinstall -m 0755 $(or $(FAKE_QMI_ORIG),$(FAKE_QMI_SH))'
+    printf ' build_dir/target-fake/root.orig-fake/lib/netifd/proto/qmi.sh\n'
+    printf '\tcp -p $(FILES)/lib/netifd/proto/qmi.sh build_dir/target-fake/root-fake/lib/netifd/proto/qmi.sh\n'
+}

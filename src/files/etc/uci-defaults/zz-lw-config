@@ -61,7 +61,10 @@ set_list() {
 uci -q delete network.lan.netmask
 set_list network.lan.ipaddr "$P_LAN_IP/24"
 
-# LTE over QMI; an empty APN lets the network assign one (SPEC R13a), modes=lte (SPEC R10)
+# LTE over QMI; an empty APN lets the network assign one (SPEC R13a), modes=lte (SPEC R10).
+# timeout=30 (R7, D82): qmi.sh's registration loop gives up after that many tries, about a second
+# each; the image's qmi.sh no longer scans the network after the mode set (R12d), so this wait is
+# the slack a slow registration has left. It costs nothing when the modem registers at once.
 uci set network.wwan=interface
 uci set network.wwan.proto='qmi'
 uci set network.wwan.device='/dev/cdc-wdm0'
@@ -72,6 +75,7 @@ set_or_delete network.wwan.password "$P_WWAN_PASSWORD"
 uci set network.wwan.pdptype='ipv4'
 uci set network.wwan.multipath='off'
 uci set network.wwan.modes='lte'
+uci set network.wwan.timeout='30'
 
 # WireGuard: wg0 always exists; without WG_ENABLED=1 it stays disabled (SPEC R31, R32)
 uci set network.wg0=interface
