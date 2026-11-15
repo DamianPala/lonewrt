@@ -43,7 +43,7 @@ Plain text matches itself, a space matches any white space (also none), and thes
 | Placeholder | Matches | Use |
 |---|---|---|
 | `{amount}` | digits with an optional `.` or `,` part, e.g. `0.31`, `12,5` | exactly once |
-| `{day}`, `{month}` | 1 or 2 digits | both or neither; they give "credit valid until 5 Jan" in the chat |
+| `{day}`, `{month}` | 1 or 2 digits | both or neither; they give "valid until 5 Jan" in the chat |
 | `{any}` | any text | optional, as often as needed; put a fixed word or a sign between `{any}` and a number placeholder (`Stanje {any} iznosi {amount}`, `Saldo{any}:{amount}`), otherwise the preset is rejected |
 
 Between `{any}` and `{amount}`, `{day}` or `{month}` there must be at least one character that is not a space, digit, dot or comma.
