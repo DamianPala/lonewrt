@@ -71,7 +71,7 @@ Server: Example Telecom, Springfield (7 km) · ~330 MB used" "the R41 scenario r
 # /help lists the command
 tg_push "$TG_CHAT" /help
 pass
-expect_last '/speedtest – measure the internet speed (~60 s)'
+expect_last '⚡ <b>Speed</b> – measure the speed (~60 s)'
 
 # /status: the line sits right under the balance lines
 s=$(status)
@@ -86,12 +86,12 @@ case $(line_before "$s" '📊') in
     '🚀 Speed test:'*) ;;
     *) lw_fail "status line not above the data line" ;;
 esac
-case $(line_before "$s" '⏱ On') in
+case $(line_before "$s" '⏱ Up') in
     '📊 Data this month:'*) ;;
     *) lw_fail "data line not above uptime" ;;
 esac
-# the layout has two empty lines (after the verdict, before Tech) and the line adds none
-lw_expect_eq "$(printf '%s\n' "$s" | grep -c '^$')" 2 "empty lines in /status"
+# the layout has one empty line (after the verdict and the action line) and the line adds none
+lw_expect_eq "$(printf '%s\n' "$s" | grep -c '^$')" 1 "empty lines in /status"
 
 # after midnight both lines are gone: no status line, and the next result has no "Previous today"
 wall_set '2026-11-08 00:05'

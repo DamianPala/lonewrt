@@ -18,30 +18,10 @@ NT_DEV_MAX=20
 # nt_clean TEXT: one line without control characters.
 nt_clean() { printf '%s' "$1" | tr -d '\000-\037\177'; }
 
-# nt_wifi_band RADIO: "2.4", "5" or "6" for a radio section; empty when it cannot be told.
-nt_wifi_band() {
-    case $(uci -q get "wireless.$1.band") in
-        2g) echo 2.4 ; return 0 ;;
-        5g) echo 5 ; return 0 ;;
-        6g) echo 6 ; return 0 ;;
-    esac
-    _wc=$(uci -q get "wireless.$1.channel")
-    case $_wc in
-        '' | *[!0-9]*) ;;
-        *)
-            if [ "$_wc" -le 14 ]; then echo 2.4; else echo 5; fi
-            return 0
-            ;;
-    esac
-    case $(uci -q get "wireless.$1.hwmode") in
-        11g) echo 2.4 ;;
-        11a) echo 5 ;;
-    esac
-}
-
 # nt_wifi_aps: the networks that are switched on, as lines "s:<name>", "k:<password>",
-# "e:<encryption>", "b:<band>" (the b line ends a network). Disabled networks and disabled radios,
-# and everything that is not an access point, are left out (R43).
+# "e:<encryption>" and an empty "b:" (which ends a network). Disabled networks and disabled radios,
+# and everything that is not an access point, are left out (R43). Name and password are HTML text
+# (R37g).
 nt_wifi_aps() {
     uci show wireless 2>/dev/null | sed -n 's/^wireless\.\([^.=]*\)=wifi-iface$/\1/p' |
         while read -r _ws; do
@@ -51,20 +31,18 @@ nt_wifi_aps() {
             [ "$(uci -q get "wireless.$_wd.disabled")" != 1 ] || continue
             _wk=$(uci -q get "wireless.$_ws.key") || _wk=
             [ -n "$_wk" ] || _wk=$(uci -q get "wireless.$_ws.sae_password") || _wk=
-            printf 's:%s\nk:%s\ne:%s\nb:%s\n' "$(nt_clean "$(uci -q get "wireless.$_ws.ssid")")" \
-                "$(nt_clean "$_wk")" "$(uci -q get "wireless.$_ws.encryption")" "$(nt_wifi_band "$_wd")"
+            printf 's:%s\nk:%s\ne:%s\nb:\n' \
+                "$(nt_h "$(nt_clean "$(uci -q get "wireless.$_ws.ssid")")")" \
+                "$(nt_h "$(nt_clean "$_wk")")" "$(uci -q get "wireless.$_ws.encryption")"
         done
 }
 
-# nt_wifi_text (R43): names and passwords as the guests need them. Networks with the same name and
-# password are one entry with both bands; a further network says "same password" when it is.
+# nt_wifi_text (R43): names and passwords as the guests need them, each in a <code> tag, which a tap
+# on the phone copies (D83). Networks with the same name and password are one entry (the radios
+# differ, the guest does not care); a further network is its own paragraph and says "same password"
+# when it is. No band is named: the guest picks the network by its name.
 nt_wifi_text() {
     nt_wifi_aps | awk '
-        function bands(list,    n, i, parts, out) {
-            n = split(list, parts, "|")
-            for (i = 1; i <= n; i++) if (parts[i] != "") out = out (out == "" ? "" : " + ") parts[i]
-            return out == "" ? "" : out " GHz"
-        }
         /^s:/ { ssid = substr($0, 3) }
         /^k:/ { key = substr($0, 3) }
         /^e:/ { enc = substr($0, 3) }
@@ -72,48 +50,33 @@ nt_wifi_text() {
             if (enc == "none" || enc == "owe") key = ""
             id = ssid SUBSEP key
             if (!(id in seen)) { seen[id] = ++ng; gs[ng] = ssid; gk[ng] = key }
-            gb[seen[id]] = gb[seen[id]] "|" substr($0, 3)
         }
         END {
             if (ng == 0) { print "📶 No Wi-Fi network is switched on."; exit }
-            print "📶 Wi-Fi for guests\n"
+            print "📶 <b>Wi-Fi</b>"
             for (g = 1; g <= ng; g++) {
-                b = bands(gb[g])
-                if (g == 1) {
-                    printf "Name: %s%s\nPassword: %s\n", gs[1], b == "" ? "" : " (" b ")", \
-                        gk[1] == "" ? "no password" : gk[1]
-                    continue
-                }
-                if (gk[g] == "") pw = "no password"
-                else if (gk[g] == gk[1]) pw = "same password"
-                else pw = "password: " gk[g]
-                printf "%s: %s (%s)\n", b == "" ? "Also" : b, gs[g], pw
+                if (g > 1) print ""
+                printf "Name: <code>%s</code>\n", gs[g]
+                if (gk[g] == "") print "No password"
+                else if (g > 1 && gk[g] == gk[1]) print "Password: same password"
+                else printf "Password: <code>%s</code>\n", gk[g]
             }
         }'
 }
 
 nt_wifi_cmd() { nt_send "$(nt_wifi_text)"; }
 
-# nt_wifi_stations: "<mac> <band>" for every device associated on a Wi-Fi network, the band from the
-# frequency hostapd reports.
+# nt_wifi_stations: "<mac> wifi" for every device associated on a Wi-Fi network. The list does not
+# name the band any more (R44); it only tells the devices that are connected now.
 nt_wifi_stations() {
     _wl=$(timeout 5 ubus list 'hostapd.*' 2>/dev/null) || return 0
     for _wo in $_wl; do
         _wj=$(timeout 5 ubus call "$_wo" get_clients 2>/dev/null) || continue
-        _wf=$(printf '%s\n' "$_wj" | jsonfilter -e '@.freq' 2>/dev/null)
-        case ${_wf:-0} in *[!0-9]*) _wf=0 ;; esac
-        if [ "$_wf" -lt 3000 ]; then
-            _wb='2.4 GHz'
-        elif [ "$_wf" -lt 5900 ]; then
-            _wb='5 GHz'
-        else
-            _wb='6 GHz'
-        fi
         for _wm in $(printf '%s\n' "$_wj" | grep -oiE '([0-9a-f]{2}:){5}[0-9a-f]{2}' |
             tr 'A-F' 'a-f'); do
             [ "$(printf '%s\n' "$_wj" | jsonfilter -e "@.clients['$_wm'].assoc" 2>/dev/null)" = true ] ||
                 continue
-            echo "$_wm $_wb"
+            echo "$_wm wifi"
         done
     done
 }
@@ -162,16 +125,18 @@ nt_data_read() {
     [ -z "$NT_DATA_TOTAL" ] || NT_DATA=ok
 }
 
+# nt_data_gb: "42 GB", or "&lt;0.1 GB" for less than 50 MB, after nt_data_read; HTML text (R37g).
+nt_data_gb() {
+    awk -v b="$NT_DATA_TOTAL" 'BEGIN {
+        if (b < 5e7) printf "&lt;0.1 GB"
+        else if (b < 1e10) printf "%.1f GB", b / 1e9
+        else printf "%.0f GB", b / 1e9 }'
+}
+
 # nt_data_summary: "42 GB (since 1 Nov)" after nt_data_read, or why there is no number.
 nt_data_summary() {
     case $NT_DATA in
-        ok)
-            awk -v b="$NT_DATA_TOTAL" 'BEGIN {
-                if (b < 5e7) printf "<0.1 GB"
-                else if (b < 1e10) printf "%.1f GB", b / 1e9
-                else printf "%.0f GB", b / 1e9 }'
-            printf ' (since 1 %s)' "$(date -d "@$(nt_wall)" +%b)"
-            ;;
+        ok) printf '%s (since 1 %s)' "$(nt_data_gb)" "$(date -d "@$(nt_wall)" +%b)" ;;
         noclock) printf 'unknown (the router clock is not set yet)' ;;
         *) printf unknown ;;
     esac
@@ -256,7 +221,7 @@ nt_names_poll() {
 }
 
 # nt_devices_list (R44, R44b): the lines of /devices after the heading, from $NT_RUN/stations
-# (connected now: "<mac> <band or cable>"), $NT_RUN/usage and the names. Prints "T <devices>
+# (connected now: "<mac> wifi or cable"), $NT_RUN/usage and the names. Prints "T <devices>
 # <connected now> <listed>" and then the "C " lines of the connected devices and the "O " lines of
 # the others, each group biggest first (equal sizes by name), the two groups together cut to
 # NT_DEV_MAX entries, the smallest of either group going first. Without counters (ok = 0) only the
@@ -279,7 +244,7 @@ nt_devices_list() {
             bytes[n] = (m in used) ? used[m] : 0
             if (bytes[n] > 1e15) bytes[n] = 1e15
             isconn[n] = (m in kind)
-            text[n] = "• " nm (m in kind ? " · " kind[m] : "") (ok ? " · " gb(bytes[n]) : "")
+            text[n] = "• " nm (ok ? " · " gb(bytes[n]) : "")
         }
         $1 == "N" { name[$2] = $3 }
         $1 == "U" { used[$2] = $3 }
@@ -304,8 +269,9 @@ nt_devices_list() {
         }'
 }
 
-# nt_devices_text (R44): the devices with the data of the month in two groups, then the router's
-# own traffic as a line of its own and the sum.
+# nt_devices_text (R44): the heading with the data of the month, the devices in two groups, then the
+# router's own traffic as a line of its own. Names come from DHCP, so every device line is escaped
+# (R37g); the tags are ours.
 nt_devices_text() {
     nt_data_read
     nt_names_merge "$([ "$NT_DATA" = ok ] && echo prune)"
@@ -317,34 +283,36 @@ nt_devices_text() {
     } >"$NT_RUN/stations"
     nt_devices_list >"$NT_RUN/dev_list"
     read -r _ _dn _dc _ds <"$NT_RUN/dev_list"
-    _dcon=$(sed -n 's/^C //p' "$NT_RUN/dev_list")
-    _doff=$(sed -n 's/^O //p' "$NT_RUN/dev_list")
+    _dcon=$(sed -n 's/^C //p' "$NT_RUN/dev_list" | nt_hf)
+    _doff=$(sed -n 's/^O //p' "$NT_RUN/dev_list" | nt_hf)
     if [ "$NT_DATA" = ok ]; then
-        _dtxt="📱 Devices this month: $_dn ($_dc connected now)"
+        _dtxt="📱 <b>Devices</b> · $(nt_data_gb) this month (since 1 $(date -d "@$(nt_wall)" +%b))"
         [ -z "$_dcon" ] || _dtxt="$_dtxt
 
-Connected now:
+<b>Connected now ($_dc)</b>
 $_dcon"
         [ -z "$_doff" ] || _dtxt="$_dtxt
 
-Not connected now:
+<b>Earlier this month ($((_dn - _dc)))</b>
 $_doff"
     else
-        _dtxt="📱 Devices connected now: $_dc"
-        [ -z "$_dcon" ] || _dtxt="$_dtxt
+        _dtxt="📱 <b>Devices</b> · data this month: $(nt_data_summary)
 
+<b>Connected now ($_dc)</b>"
+        [ -z "$_dcon" ] || _dtxt="$_dtxt
 $_dcon"
     fi
     [ "$_dn" -le "$_ds" ] || _dtxt="$_dtxt
 …and $((_dn - _ds)) more"
     _dr=$(sed -n "s/^$NT_SELF_MAC \\([0-9][0-9]*\\)\$/\\1/p" "$NT_RUN/usage")
-    _dtxt="$_dtxt
-"
     if [ "$NT_DATA" = ok ] && [ "${_dr:-0}" -gt 0 ]; then
+        _drg=$(awk -v b="$_dr" '
+            BEGIN { printf "%s", b < 5e7 ? "&lt;0.1 GB" : sprintf("%.1f GB", b / 1e9) }')
         _dtxt="$_dtxt
-• Router itself · $(awk -v b="$_dr" 'BEGIN { printf "%s", b < 5e7 ? "<0.1 GB" : sprintf("%.1f GB", b / 1e9) }')"
+
+• Router itself · $_drg"
     fi
-    printf '%s\nData this month: %s' "$_dtxt" "$(nt_data_summary)"
+    printf '%s' "$_dtxt"
 }
 
 nt_devices_cmd() { nt_send "$(nt_devices_text)"; }

@@ -122,7 +122,7 @@ nt_reboot_tap() {
             rm -f "$NT_RUN/reboot_req"
             nt_answer "$NT_CB"
             nt_rb_record "$_rw"
-            nt_edit "$NT_CBMSG" "🔄 Restarting now ($_rw tapped Restart)." "$NT_NOKB" || :
+            nt_edit "$NT_CBMSG" "🔄 Restarting now ($(nt_h "$_rw") tapped Restart)." "$NT_NOKB" || :
             nt_rb_go
             ;;
         no)
@@ -165,8 +165,8 @@ nt_rb_back_tick() {
     _rc=0
     _rwho=$(nt_rb_get name)
     [ "$(nt_rb_get via)" != sms ] || _rwho="SMS from $_rwho"
-    nt_send "🟢 Router back after restart (asked by $_rwho), down $_rl$(nt_rb_span "$_rd")." ||
-        _rc=$?
+    _rwho="asked by $(nt_h "$_rwho")"
+    nt_send "🟢 Router back after restart ($_rwho), down $_rl$(nt_rb_span "$_rd")." || _rc=$?
     case $_rc in
         0 | 2) rm -f "$NT_RB" ;;
         *) return 1 ;;

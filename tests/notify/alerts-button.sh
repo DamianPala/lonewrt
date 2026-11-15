@@ -13,10 +13,13 @@ flash_state() {
     find /etc /root -type f -exec ls -li {} + | sort
     find /etc /root -type f -exec md5sum {} + | sort
 }
-ON="🔔 Automatic messages
-New SMS: on · Low balance: on · Internet back: on · 2G backup: on"
-OFF="🔔 Automatic messages
-New SMS: on · Low balance: on · Internet back: on · 2G backup: off"
+# the list as R37 words it: a tick or a cross per message, the note about the switch last
+list_text() {
+    printf '🔔 <b>Automatic messages</b>\n✅ New SMS\n✅ Low balance\n✅ Internet back\n%s 2G backup\n\n' "$1"
+    printf '<i>Only the 2G message can be turned off.</i>'
+}
+ON=$(list_text ✅)
+OFF=$(list_text ❌)
 
 # the list comes with one button: turn the 2G message off
 tg_push "$TG_CHAT" /alerts
@@ -52,7 +55,7 @@ pass
 lw_expect_eq "$(flash_state)" "$before" "flash after a tap that changes nothing"
 lw_expect_eq "$(answers)" 2 "answers after the second tap"
 lw_expect_eq "$(sent)" 1 "messages after the second tap"
-# Telegram refuses an edit to the same text and buttons (400); that is no reason for the ASCII copy
+# Telegram refuses an edit to the same text and buttons (400); that is no reason for a plain copy
 lw_expect_eq "$(edits)" 1 "edits after a tap that changes nothing"
 lw_expect_eq "$(shown 1)" "$OFF" "text after a tap that changes nothing"
 
@@ -90,4 +93,6 @@ pass
 [ ! -e /etc/lw-notify/no-2g ] || lw_fail "the button under the confirmation did not turn it on"
 lw_expect_eq "$(edit_text "$(edits)")" "$ON" "text after the second turning on"
 no_orphans
+expect_all_html
+lw_expect_eq "$(edit_mode 1)" HTML "parse_mode of an edit"
 echo ok

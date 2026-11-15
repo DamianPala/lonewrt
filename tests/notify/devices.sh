@@ -1,7 +1,7 @@
 # R44, R44b, D59, D63: /devices lists every device with traffic this calendar month in two groups,
-# connected now (Wi-Fi with the band, cable) and not connected now, each biggest first, at most 20 in
-# all (the smallest drop off the list but stay in the total), the router's own traffic as a line of
-# its own, and the month's total with "since 1 <month>"; the same total is the data line of /status
+# connected now and earlier this month (no band is named), each biggest first, at most 20 in all (the
+# smallest drop off the list but stay in the total), the router's own traffic as a line of its own,
+# and the month's total with "since 1 <month>" in the heading; the same total is the data line of /status
 # (R39c). A device without a DHCP name is "Unknown device (...xx:xx)"; a name stays after the lease is
 # gone, also over a restart of the router, written to flash at most once a day. Without nlbwmon or
 # without a clock set by ntpd the numbers are "unknown", not guesses (R44a).
@@ -40,19 +40,18 @@ nlbw_set "aa:bb:cc:00:00:01 $((12 * GB)) 400000000" \
     "00:00:00:00:00:00 300000000 200000000"
 # Alice-iPhone: 12.0 + 0.4 = 12.4 GB; Galaxy-S21: 2 + 1.1 = 3.1; unnamed: 0.18 -> 0.2; PC 0.9;
 # old laptop 24.9; router 0.5; total 42.0
-EXPECT="📱 Devices this month: 5 (4 connected now)
+EXPECT="📱 <b>Devices</b> · 42 GB this month (since 1 Nov)
 
-Connected now:
-• Alice-iPhone · 5 GHz · 12.4 GB
-• Galaxy-S21 · 2.4 GHz · 3.1 GB
-• cable-pc · cable · 0.9 GB
-• Unknown device (…6e:94) · 2.4 GHz · 0.2 GB
+<b>Connected now (4)</b>
+• Alice-iPhone · 12.4 GB
+• Galaxy-S21 · 3.1 GB
+• cable-pc · 0.9 GB
+• Unknown device (…6e:94) · 0.2 GB
 
-Not connected now:
+<b>Earlier this month (1)</b>
 • old-laptop · 24.9 GB
 
-• Router itself · 0.5 GB
-Data this month: 42 GB (since 1 Nov)"
+• Router itself · 0.5 GB"
 lw_expect_eq "$(ask)" "$EXPECT" "the R44 picture"
 # no flash write, no log line for a read-only command (R34c)
 before=$(flash_state)
@@ -66,7 +65,7 @@ pass
 case $(last_text) in
     *'💶 Balance: unknown
 📊 Data this month: 42 GB (since 1 Nov)
-⏱ On '*) ;;
+⏱ Up '*) ;;
     *) lw_fail "no data line in /status: $(last_text)" ;;
 esac
 # ... and under the speed test line when there is one (tests/notify/speedtest.sh has the test)
@@ -82,40 +81,42 @@ rm -f "$T/nlbw/pretty"
 wall_set '2026-12-01 00:05'
 nlbw_set "aa:bb:cc:00:00:01 1000000000 200000000"
 case $(ask) in
-    *'Data this month: 1.2 GB (since 1 Dec)') ;;
+    '📱 <b>Devices</b> · 1.2 GB this month (since 1 Dec)'*) ;;
     *) lw_fail "December label: $(last_text)" ;;
 esac
 wall_set '2026-11-07 11:20'
 
-# small totals: one decimal under 10 GB, "<0.1 GB" under 50 MB, whole GB from 10
+# small totals: one decimal under 10 GB, "<0.1 GB" (written &lt;, R37g) under 50 MB, whole GB from 10
 nlbw_set "aa:bb:cc:00:00:01 $((4 * GB)) 200000000"
-case $(ask) in *'Data this month: 4.2 GB (since 1 Nov)') ;; *) lw_fail "4.2 GB: $(last_text)" ;; esac
+case $(ask) in '📱 <b>Devices</b> · 4.2 GB this month (since 1 Nov)'*) ;; *) lw_fail "4.2 GB: $(last_text)" ;; esac
 nlbw_set "aa:bb:cc:00:00:01 10000000 20000000"
 case $(ask) in
-    *'• Alice-iPhone · 5 GHz · <0.1 GB'*'Data this month: <0.1 GB (since 1 Nov)') ;;
+    '📱 <b>Devices</b> · &lt;0.1 GB this month (since 1 Nov)'*'• Alice-iPhone · &lt;0.1 GB'*) ;;
     *) lw_fail "<0.1 GB: $(last_text)" ;;
 esac
+tg_push "$TG_CHAT" /status
+pass
+case $(last_text) in *'📊 Data this month: &lt;0.1 GB (since 1 Nov)'*) ;; *) lw_fail "/status <0.1 GB: $(last_text)" ;; esac
 nlbw_set "aa:bb:cc:00:00:01 $((9 * GB)) 1600000000"
-case $(ask) in *'Data this month: 11 GB (since 1 Nov)') ;; *) lw_fail "11 GB: $(last_text)" ;; esac
+case $(ask) in '📱 <b>Devices</b> · 11 GB this month (since 1 Nov)'*) ;; *) lw_fail "11 GB: $(last_text)" ;; esac
 # the router itself without traffic: no line for it
 nlbw_set "aa:bb:cc:00:00:01 1000000000 0" "00:00:00:00:00:00 0 0"
 ! ask | grep -q 'Router itself' || lw_fail "a line for the router without traffic"
 
 # nlbwmon is not running: the devices stay, the numbers are unknown
 rm -f /tmp/nlbw-mem
-lw_expect_eq "$(ask)" "📱 Devices connected now: 4
+lw_expect_eq "$(ask)" "📱 <b>Devices</b> · data this month: unknown
 
-• Alice-iPhone · 5 GHz
-• Galaxy-S21 · 2.4 GHz
-• Unknown device (…6e:94) · 2.4 GHz
-• cable-pc · cable
-
-Data this month: unknown" "without nlbwmon"
+<b>Connected now (4)</b>
+• Alice-iPhone
+• Galaxy-S21
+• Unknown device (…6e:94)
+• cable-pc" "without nlbwmon"
 tg_push "$TG_CHAT" /status
 pass
 case $(last_text) in
     *'📊 Data this month: unknown
-⏱ On '*) ;;
+⏱ Up '*) ;;
     *) lw_fail "/status without nlbwmon: $(last_text)" ;;
 esac
 
@@ -123,8 +124,10 @@ esac
 nlbw_set "aa:bb:cc:00:00:01 $((9 * GB)) 1600000000"
 ntp_off
 case $(ask) in
-    *'• Alice-iPhone · 5 GHz
-'*'Data this month: unknown (the router clock is not set yet)') ;;
+    '📱 <b>Devices</b> · data this month: unknown (the router clock is not set yet)
+
+<b>Connected now (4)</b>
+• Alice-iPhone'*) ;;
     *) lw_fail "without NTP: $(last_text)" ;;
 esac
 tg_push "$TG_CHAT" /status
@@ -140,9 +143,9 @@ wifi_client hostapd.phy1-ap0 5180 aa:bb:cc:00:00:01 aa:bb:cc:00:00:03
 nlbw_set "aa:bb:cc:00:00:01 $((9 * GB)) 0" "aa:bb:cc:00:00:02 $((1 * GB)) 0" \
     "aa:bb:cc:00:00:03 500000000 0"
 s=$(ask)
-case $s in *'• Alice-iPhone · 5 GHz · 9.0 GB'*) ;; *) lw_fail "name lost with the lease: $s" ;; esac
-case $s in *'• Unknown device (…00:03) · 5 GHz · 0.5 GB'*) ;; *) lw_fail "unnamed on 5 GHz: $s" ;; esac
-case $s in *'• Galaxy · 2.4 GHz · 1.0 GB'*) ;; *) lw_fail "name with control characters: $s" ;; esac
+case $s in *'• Alice-iPhone · 9.0 GB'*) ;; *) lw_fail "name lost with the lease: $s" ;; esac
+case $s in *'• Unknown device (…00:03) · 0.5 GB'*) ;; *) lw_fail "unnamed device: $s" ;; esac
+case $s in *'• Galaxy · 1.0 GB'*) ;; *) lw_fail "name with control characters: $s" ;; esac
 
 # one device: singular count in the heading; the name outlives the lease
 wifi_set
@@ -150,20 +153,18 @@ arp_set
 lease_set
 wifi_client hostapd.phy0-ap0 2437 aa:bb:cc:00:00:02
 nlbw_set "aa:bb:cc:00:00:02 $((1 * GB)) 0"
-case $(ask) in '📱 Devices this month: 1 (1 connected now)
+case $(ask) in '📱 <b>Devices</b> · 1.0 GB this month (since 1 Nov)
+
+<b>Connected now (1)</b>
 '*) ;; *) lw_fail "one device: $(last_text)" ;; esac
 wifi_set
-lw_expect_eq "$(ask)" "📱 Devices this month: 1 (0 connected now)
+lw_expect_eq "$(ask)" "📱 <b>Devices</b> · 1.0 GB this month (since 1 Nov)
 
-Not connected now:
-• Galaxy · 1.0 GB
-
-Data this month: 1.0 GB (since 1 Nov)" "nobody connected"
+<b>Earlier this month (1)</b>
+• Galaxy · 1.0 GB" "nobody connected"
 # no traffic and nobody here: no device, and the name is forgotten (names of this month only)
 nlbw_set
-lw_expect_eq "$(ask)" "📱 Devices this month: 0 (0 connected now)
-
-Data this month: <0.1 GB (since 1 Nov)" "no devices"
+lw_expect_eq "$(ask)" "📱 <b>Devices</b> · &lt;0.1 GB this month (since 1 Nov)" "no devices"
 
 # ARP: incomplete entries, other interfaces and a Wi-Fi device are not cable devices
 nlbw_set "aa:bb:cc:00:00:02 $((1 * GB)) 0"
@@ -177,7 +178,7 @@ printf 'IP address HW type Flags HW address Mask Device\n' >"$T/arp"
 } >>"$T/arp"
 s=$(ask)
 case $s in
-    *'Devices this month: 2 (2 connected now)'*'(…00:02) · 2.4 GHz · 1.0 GB'*'(…00:32) · cable · <0.1 GB'*) ;;
+    *'<b>Connected now (2)</b>'*'(…00:02) · 1.0 GB'*'(…00:32) · &lt;0.1 GB'*) ;;
     *) lw_fail "ARP entries: $s" ;;
 esac
 case $s in *00:30* | *00:31*) lw_fail "an incomplete or foreign ARP entry is listed: $s" ;; esac
@@ -206,26 +207,30 @@ echo "00:00:00:00:00:00 100000000 0" >>/tmp/nlbw-mem
 wifi_client hostapd.phy0-ap0 2437 $macs
 s=$(ask)
 lw_expect_eq "$(printf '%s\n' "$s" | grep -c '^• ')" 21 "listed devices and the router"
-case $s in '📱 Devices this month: 25 (15 connected now)
+case $s in '📱 <b>Devices</b> · 33 GB this month (since 1 Nov)
+
+<b>Connected now (15)</b>
+'*'<b>Earlier this month (10)</b>
 '*) ;; *) lw_fail "heading of 25 devices: $s" ;; esac
-case $s in *'…and 5 more'*'• Router itself · 0.1 GB
-Data this month: 33 GB (since 1 Nov)') ;; *) lw_fail "tail of 25 devices: $s" ;; esac
+case $s in *'…and 5 more
+
+• Router itself · 0.1 GB') ;; *) lw_fail "tail of 25 devices: $s" ;; esac
 # 100 MB steps: connected 6..15 (0.6 to 1.5 GB) and not connected 16..25 (1.6 to 2.5 GB) are listed
-lw_expect_eq "$(printf '%s\n' "$s" | sed -n '/^Connected now:/,/^$/p' | grep -c '^•')" 10 "connected listed"
-lw_expect_eq "$(printf '%s\n' "$s" | sed -n '/^Not connected now:/,/^$/p' | grep -c '^•')" 10 \
+lw_expect_eq "$(printf '%s\n' "$s" | sed -n '/^<b>Connected now/,/^$/p' | grep -c '^•')" 10 "connected listed"
+lw_expect_eq "$(printf '%s\n' "$s" | sed -n '/^<b>Earlier this month/,/^$/p' | grep -c '^•')" 10 \
     "not connected listed"
-lw_expect_eq "$(printf '%s\n' "$s" | sed -n '/^Connected now:/,/^$/p' | sed -n 2p)" \
-    "• Unknown device (…00:0f) · 2.4 GHz · 1.5 GB" "biggest connected"
-lw_expect_eq "$(printf '%s\n' "$s" | sed -n '/^Connected now:/,/^$/p' | grep '^•' | tail -n 1)" \
-    "• Unknown device (…00:06) · 2.4 GHz · 0.6 GB" "smallest connected listed"
-lw_expect_eq "$(printf '%s\n' "$s" | sed -n '/^Not connected now:/,/^$/p' | sed -n 2p)" \
+lw_expect_eq "$(printf '%s\n' "$s" | sed -n '/^<b>Connected now/,/^$/p' | sed -n 2p)" \
+    "• Unknown device (…00:0f) · 1.5 GB" "biggest connected"
+lw_expect_eq "$(printf '%s\n' "$s" | sed -n '/^<b>Connected now/,/^$/p' | grep '^•' | tail -n 1)" \
+    "• Unknown device (…00:06) · 0.6 GB" "smallest connected listed"
+lw_expect_eq "$(printf '%s\n' "$s" | sed -n '/^<b>Earlier this month/,/^$/p' | sed -n 2p)" \
     "• Unknown device (…00:89) · 2.5 GB" "biggest not connected"
-lw_expect_eq "$(printf '%s\n' "$s" | sed -n '/^Not connected now:/,/^$/p' | grep '^•' | tail -n 1)" \
+lw_expect_eq "$(printf '%s\n' "$s" | sed -n '/^<b>Earlier this month/,/^$/p' | grep '^•' | tail -n 1)" \
     "• Unknown device (…00:80) · 1.6 GB" "smallest not connected listed"
 case $s in *'(…00:05)'*) lw_fail "a device under the cut is listed: $s" ;; esac
 
 # R44b, the scenario of the SPEC: the TV used 18.2 GB in the evening, is off, and its lease has run
-# out; in the morning it is listed under "Not connected now" with its name, and the sum has it. The
+# out; in the morning it is listed under "Earlier this month" with its name, and the sum has it. The
 # poll loop saw the lease while the TV was on, and the name went to flash (once, with a stamp).
 rm -rf /etc/lw-notify/names /tmp/lw-notify/names /tmp/lw-notify/names_dirty /tmp/lw-notify/leases.sum
 wifi_set
@@ -237,15 +242,13 @@ lw_expect_eq "$(tail -n +2 /etc/lw-notify/names)" "aa:bb:cc:00:00:40 Anna-iPhone
 aa:bb:cc:00:00:41 LG-TV" "names on flash after the first pass"
 lw_expect_eq "$(head -n 1 /etc/lw-notify/names)" "$(cat "$T/wall")" "stamp of the names file"
 lease_set "aa:bb:cc:00:00:40 192.168.1.60 Anna-iPhone"
-TV="📱 Devices this month: 2 (1 connected now)
+TV="📱 <b>Devices</b> · 21 GB this month (since 1 Nov)
 
-Connected now:
-• Anna-iPhone · 2.4 GHz · 3.0 GB
+<b>Connected now (1)</b>
+• Anna-iPhone · 3.0 GB
 
-Not connected now:
-• LG-TV · 18.2 GB
-
-Data this month: 21 GB (since 1 Nov)"
+<b>Earlier this month (1)</b>
+• LG-TV · 18.2 GB"
 lw_expect_eq "$(ask)" "$TV" "LG-TV after its lease ran out"
 # ... and after the router restarted: /tmp is empty, the leases are those of the new boot, nlbwmon
 # brings its counters back from its own database, and before ntpd has set the clock nothing is
@@ -337,4 +340,5 @@ tg_push "$TG_OTHER" /devices
 pass
 lw_expect_eq "$(sent)" "$n" "answer to a foreign chat"
 no_orphans
+expect_all_html
 echo ok

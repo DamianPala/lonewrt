@@ -300,13 +300,13 @@ The image does not change the server; these rules apply to the router only.
 They work only when the profile sets `TG_BOT_TOKEN` and `TG_CHAT_ID`; without them the image runs no part of this section except SMS control (R46d) (D43).
 Some operators send no SMS when data runs low and renew a package only with enough credit on the account; the balance rules cover that.
 
-- **R34:** Every new SMS in the modem store reaches the chat `TG_CHAT_ID` as a message with the sender, the modem's time and the full text, within 30 s of appearing in the store when the router has internet; the exception is balance replies, which follow the balance rule (R36) (D43, D46).
+- **R34:** Every new SMS in the modem store reaches the chat `TG_CHAT_ID` as a message with the sender in bold, the modem's time and the full text in a quote, within 30 s of appearing in the store when the router has internet; the exception is balance replies, which follow the balance rule (R36) (D43, D46).
   - **R34a:** An SMS that could not be sent waits and goes out within 30 s of the internet coming back, even after a router restart; every SMS reaches the chat at most once, even after a restart.
   - **R34b:** Checking the store every 15 s takes the AT lock (R12a) for at most one short command; with a busy lock the pass is skipped instead of waiting.
   - **R34c:** A normal pass writes nothing to syslog or flash; flash is written only for a new SMS or a sent message, and syslog gets at most one entry per change of the sending state (works or does not work), with the tag `lw-notify`.
   - **R34d:** The bot token does not appear in syslog, the signal log, the snapshot or the bot's replies.
   - **R34e:** Latin-1 characters (such as `é`, `ü`) that `sms_tool` returns as single bytes instead of UTF-8 reach the chat as the same characters; Telegram rejects such a raw byte with `HTTP error 400`.
-  - **R34f:** A message Telegram rejects (HTTP 400) does not block the queue: it goes once more with the text reduced to ASCII, and when that is rejected too, it leaves the queue with one `lw-notify` syslog entry; the following messages go on. A rejection is not reported as a lost link (R34c).
+  - **R34f:** A message Telegram rejects (HTTP 400) does not block the queue: it goes once more as plain text (R37g), then once more with the text reduced to ASCII, and when that is rejected too, it leaves the queue with one `lw-notify` syslog entry; the following messages go on. A rejection is not reported as a lost link (R34c).
   - *scenario* given an SMS with the byte `E9` in its text and a second SMS after it, when the router has internet, then the chat has both, the first with `é`, in the order they arrived
   - **R34g:** A long SMS arrives in parts, and `sms_tool` gives `reference`, `part` and `total` for each. The parts of one message (same sender and `reference`, 2 to 20 parts) go to the chat as one message, joined without a separator in the order of `part`, once all are there. When a part is still missing 10 min after the first part, what is there goes out with the note `(part <n> of <total> missing)`. `/sms` shows and counts the joined messages. SMS commands (R46) in a message of several parts are not run (D67).
   - *scenario* given an SMS in 2 parts, with part 2 before part 1 in the store, when both are in the store, then the chat has one message: the text of part 1 followed by the text of part 2
@@ -316,17 +316,17 @@ Some operators send no SMS when data runs low and renew a package only with enou
   - *scenario* given a router with internet, when an SMS arrives on the SIM, then within 30 s the chat has a message with its sender and text, and after a router restart this message does not come a second time
   - *scenario* given a router without internet, when 2 SMS arrive, then the router restarts and the internet comes back, then both reach the chat, each once
 - **R35:** Once a week, on Monday at 10:00, the router sends the preset's balance query (`RACUN` to 1466 with `29702`) (D44, D47).
-- **R36:** A balance reply (from the preset's `BALANCE_REPLY_FROM`, first line fitting `BALANCE_REPLY_PATTERN`; with `29702`: from 1466, `Imate: <amount> do <date>`) counts as one while the router waits for an answer: it sent the balance query (R35, `/balance`) less than 10 min ago. Every matching reply in that window counts and runs the rule below; an answer does not end the window. Any other message that fits is an ordinary SMS (R34): it reaches the chat as it is, without the translation of R39b and the warning, and changes neither the last known balance nor the memory below (D72). The one exception is the first scan after a flash or a reset (no list of handled SMS yet, as in R46e), which only records the store and forwards nothing: there a message fitting the pattern sets the last known balance without a query, so `/status` has a balance right after a flash (D72); after a restart a message that came meanwhile is judged like any new one. A balance reply reaches the chat only when it answers a `/balance` command from the last 10 min, or when the amount is lower than `LOW_BALANCE` and the previous amount read was not lower; an amount equal to or above the threshold only clears that memory, with no message. The low-balance message adds a note with the threshold. An empty `LOW_BALANCE` turns off the weekly query (D44).
+- **R36:** A balance reply (from the preset's `BALANCE_REPLY_FROM`, first line fitting `BALANCE_REPLY_PATTERN`; with `29702`: from 1466, `Imate: <amount> do <date>`) counts as one while the router waits for an answer: it sent the balance query (R35, `/balance`) less than 10 min ago. Every matching reply in that window counts and runs the rule below; an answer does not end the window. Any other message that fits is an ordinary SMS (R34): it reaches the chat as it is, without the translation of R39b and the warning, and changes neither the last known balance nor the memory below (D72). The one exception is the first scan after a flash or a reset (no list of handled SMS yet, as in R46e), which only records the store and forwards nothing: there a message fitting the pattern sets the last known balance without a query, so `/status` has a balance right after a flash (D72); after a restart a message that came meanwhile is judged like any new one. A balance reply reaches the chat only when it answers a `/balance` command from the last 10 min, or when the amount is lower than `LOW_BALANCE` and the previous amount read was not lower; an amount equal to or above the threshold only clears that memory, with no message. The balance message has the amount in bold with the date until which the credit is valid, the line `⚠️ Top up at least <threshold> <currency>, or the data package will not renew.` when the amount is lower than the threshold, and the operator's own text in a quote that starts with its sender and time (layout below). The answer to `/balance` takes the place of the acknowledgement: that message is edited into the balance message when the reply comes inside the window and before the notice that no answer has come (R37); a late reply, the weekly reply and the first amount below the threshold come as new messages (D86). An empty `LOW_BALANCE` turns off the weekly query (D44).
   - *scenario* given the threshold 7.50, when the weekly replies are 8.00, 0.32, 0.32, 9.00, 0.50 in turn, then only 0.32 (the first) and 0.50 reach the chat, both with the threshold note
   - *scenario* given the threshold 7.50 and no query of the router in the last 10 min, when an SMS from 1466 says `Imate: 99.00 do 01.02.;`, then the chat has it as an ordinary SMS and `/status` still shows the balance read before
   - *scenario* given the threshold 7.50, the weekly query and a forged `Imate: 99.00 do 01.02.;` at 10:00:05, when the real `Imate: 0.31 do 05.01.;` comes at 10:00:20, then the chat has the low-balance warning and `/status` shows 0.31; given the real 0.31 first and the forged 99.00 after it inside the 10 min, then the warning has been sent and `/status` shows 99.00 (accepted, D72)
   - *scenario* given `/balance` and two replies inside the 10 min, 12.40 and then 12.50, when both arrive, then the chat has the balance message for the first and nothing for the second (the answer ends the request of `/balance`), and `/status` shows 12.50
 - **R37:** The router answers commands from the chat `TG_CHAT_ID` within 30 s, in English; it ignores messages from other chats without replying, and does not run commands sent before it started (D45, D48).
   - **R37b:** `TG_CHAT_ID` may be a group: every member can use the commands, a command also works with the bot's name appended (`/status@<bot>`), and the bot ignores messages without a command; when Telegram reports that the group moved to a new ID, syslog gets one `lw-notify` entry with the new ID (D48).
-  - `/balance`: sends the preset's balance query and passes on the reply by the balance rule (R36); a second `/balance` while a query waits less than 2 min gets a "still waiting" message; when the reply does not come within 2 min, the chat is told that there is no answer yet.
+  - `/balance`: sends the preset's balance query and passes on the reply by the balance rule (R36); a second `/balance` while a query waits less than 2 min gets a "still waiting" message; when the reply does not come within 2 min, the chat is told that there is no answer yet (a message of its own; a reply after it is a new message too, R36).
   - `/status`: the router state by R39c.
   - `/sms [n]`: the n newest SMS in the store (5 by default, at most 10).
-  - `/help` and `/start`: the list of commands; every unknown command gets the same list.
+  - `/help` and `/start`: what each button does (the layout below); every unknown command gets the same list.
   - `/alerts`: shows which automatic messages are on; `/alerts 2g off` and `/alerts 2g on` turn the 2G message (R40c) off and on, and the answer confirms the new state (R37c).
   - `/speedtest`: speed test by R41.
   - `/wifi`, `/devices`, `/reboot`: by R43, R44 and R45.
@@ -343,14 +343,14 @@ Some operators send no SMS when data runs low and renew a package only with enou
   - **R47c:** The reply pattern is plain text, a space for any white space (also none), and the placeholders `{amount}` (once), `{day}` with `{month}` (both or neither) and `{any}` (any text); any other brace is an error. A pattern is also rejected when `{any}` is followed by `{amount}`, `{day}` or `{month}` with nothing between them but spaces, digits, dots and commas: `{any}` takes as much text as it can, so it would end inside the number and `12.50` would be read as `50` (D76). A rejected preset is handled as in R47. `docs/operators.md` lists the rule with examples.
     - *scenario* given a preset with the pattern `Saldo {any}.{amount}` or `Saldo {any},{amount}`, when the service loads it, then syslog has one line `operator preset <MCC-MNC> rejected (bad reply pattern), treated as no preset` and `/balance` answers as in R47a; with `Saldo{any}:{amount} EUR` the reply `Saldo racuna:112.50 EUR` gives the balance 112.50
 - **R48:** `ROUTER_NAME` from the profile (1 to 20 characters: ASCII letters and digits, space and `-`, starting with a letter or digit) starts every SMS reply: `<ROUTER_NAME>: ...` and `<ROUTER_NAME> commands: ...`. `generic.conf` has `Router`, which the layout below uses (D66).
-- **R39:** A person without technical knowledge understands the bot's messages: the first line says what the message is about or whether the internet works; times read `Today 11:11`, `Yesterday 18:40` or `5 Nov 09:12` in the router's time zone, without seconds; apart from the `Tech:` line in `/status` there are no log lines or `key=value` pairs; the text is in English, and emoji are allowed, because the ASCII rule (R29b) is about logs (D49).
+- **R39:** A person without technical knowledge understands the bot's messages: the first line says what the message is about or whether the internet works; times read `today 11:11`, `yesterday 18:40` or `5 Nov 09:12` in the router's time zone, without seconds; apart from the `Tech:` line in `/status` there are no log lines or `key=value` pairs; the text is in English, and emoji are allowed, because the ASCII rule (R29b) is about logs (D49).
   - **R39a:** A sender made of digits only, with at least 9 digits, gets a `+` in front; senders listed in the preset's short codes get the operator's name in front (`Telekom 1466` with `29702`); other senders are shown unchanged.
-  - **R39b:** A balance reply has below its text a line that translates the amount and the date until which the credit is valid (`= Balance 0.31 EUR, credit valid until 5 Jan`; without a date in the preset's pattern, only `= Balance <amount> <currency>`); other SMS go without a translation.
-  - **R39c:** `/status` has, in order: the verdict, the signal in words with the network type, the number of devices on WiFi, the last known balance with the time it was read (with a warning below the threshold), the speed test line (R41b) and the data of the month (R44) when there are any, the start time with its cause, the last outage (R40a), the action line (R39d), and last a `Tech:` line with bands, RSRP, SINR, ping and WireGuard handshake age. The verdict is `🟢 Internet works`, `🟠 Internet works, but slow (2G backup)` with a line about what works, or `🔴 Internet does not work` with a line about the repair. The start cause is `restarted by self-repair` when the last restart was made by the link repair (R16), `restarted from Telegram (<name>)` or `restarted by SMS from <number>` after a restart asked for in the chat (R45) or by SMS (R46b), and `power cut or manual restart` otherwise. A missing reading gives `unknown` in its field instead of dropping the line.
+  - **R39b:** A balance reply shown as an SMS (in `/sms`, or forwarded as an ordinary message) has below its quote a line that translates the amount and the date until which the credit is valid (`= Balance 0.31 EUR, valid until 5 Jan`; without a date in the preset's pattern, only `= Balance <amount> <currency>`); other SMS go without a translation. A balance message of R36 has the same two facts in its first line.
+  - **R39c:** `/status` has, in order: the verdict in bold, then (for the cases below) one line about what works or about the repair, the action line (R39d), an empty line, the signal in words with the network type, the number of devices on WiFi, the last known balance `💶 Balance: <amount> <currency> (checked <when>)` with `, <n> days ago` added when the reading is a day or more old by the synced clock (counted in calendar days; `, 1 day ago`), the speed test line (R41b) and the data of the month (R44) when there are any, the start line `⏱ Up <span>, since <when> (<cause>)` (without a synced clock `⏱ Up <span> (<cause>)`), the last outage (R40a), and last a quote with the `Tech:` line: bands, RSRP in dBm, SINR in dB, ping in ms and `VPN handshake <age> ago`; an unknown value is `unknown`, without a unit. The verdict is `🟢 Internet works`, `🟠 Internet works, but slow (2G backup)` with a line about what works, or `🔴 Internet does not work` with a line about the repair. The start cause is `restarted by self-repair` when the last restart was made by the link repair (R16), `restarted from Telegram (<name>)` or `restarted by SMS from <number>` after a restart asked for in the chat (R45) or by SMS (R46b), and `power cut or manual restart` otherwise. A missing reading gives `unknown` in its field instead of dropping the line.
   - **R39d:** The action line is `❗ Needs a person: unplug the router for 10 s` when the link repair reached the limit (R19), otherwise `⚠️ Top up at least <threshold> <currency>` when the last balance is below the threshold, and `✅ Nothing to do` in all other cases.
   - **R39e:** The signal is `good` with RSRP ≥ -95 dBm and SINR ≥ 10 dB, `poor` with RSRP < -105 dBm or SINR < 0 dB, and `fair` in between (assumption: typical LTE thresholds, to be tuned after a week of signal log).
-  - **R39f:** Text that comes from outside (the text and the sender of an SMS, the first name of the person who taps `Restart`, the server name of a speed test) is shown as it is: a sequence in it that looks like one of the router's time markers is not turned into `Today 11:11` (its `@@T` is shown as `@ @T`), and a sender or name that is only an option word for the shell, such as `-n`, is shown.
-  - *scenario* given a last signal log line with RSRP -86 dBm and SINR 4.6 dB, a balance of 0.31 EUR read today at 11:05, the threshold 7.50 and no outage, when `/status` comes, then the answer starts with `🟢 Internet works`, has `Signal: fair`, the balance with `today 11:05`, the line `⚠️ Top up at least 7.50 EUR`, and ends with the `Tech:` line
+  - **R39f:** Text that comes from outside (the text and the sender of an SMS, the first name of the person who taps `Restart`, the server name of a speed test) is shown as it is: a sequence in it that looks like one of the router's time markers is not turned into `today 11:11` (its `@@T` is shown as `@ @T`), and a sender or name that is only an option word for the shell, such as `-n`, is shown.
+  - *scenario* given a last signal log line with RSRP -86 dBm and SINR 4.6 dB, a balance of 0.31 EUR read today at 11:05, the threshold 7.50 and no outage, when `/status` comes, then the answer starts with `🟢 Internet works` and the line `⚠️ Top up at least 7.50 EUR, or the data package will not renew.`, has `Signal: fair`, the balance with `checked today 11:05`, and ends with the `Tech:` line in a quote
 - **R40:** When a link failure (R16) that lasted longer than one repair cycle ends, the chat gets one message `🟢 Internet back` with the start of the failure, its length and the number of router restarts it took (D50).
   - **R40a:** The last outage (start, length, how it ended) survives a router restart and shows in `/status`; flash is written at most at the start of the outage, at the 2G message (R40c) and at the end of the outage (R34c) (D51).
   - **R40b:** When the clock was not yet set from NTP at the start of the failure, the start and the length have a `~` in front; a router restart without a link failure (a power cut, for example) gives no `Internet back` message.
@@ -367,17 +367,19 @@ Some operators send no SMS when data runs low and renew a package only with enou
 
 - **R42:** When the profile sets `HC_PING_URL`, the router calls this address (healthchecks.io) every 5 min when it has internet; a normal call writes nothing to syslog or flash, and a failed call does nothing except that the signal does not arrive. An empty `HC_PING_URL` turns the calls off. This does not depend on the Telegram keys (D57).
   - **R42a:** The alarm is sent by healthchecks.io, not by the router: period 5 min, grace 25 min, only the "down" event, no repeats and no "up", by a webhook through the bot (`sendMessage` to `TG_CHAT_ID`) with a short text such as `🔴 Router offline for 30 min`. The healthchecks.io setup lives outside the image (D57).
-- **R43:** `/wifi` gives the names and passwords of the enabled WiFi networks from the router's current configuration; when the networks share a password, the second has the note `same password`; a network without a password has `no password` (D58).
-- **R44:** `/devices` lists every device with traffic in the current calendar month, in two groups: `Connected now` (WiFi with its band, or cable) and `Not connected now`, each sorted by usage, largest first, with the name from DHCP or `Unknown device` with the end of the MAC address; at most 20 entries in total, the smallest drop off the list but not out of the sum; the router's own traffic (a speed test, for example) is a separate entry `Router itself`; at the end the sum of the month `Data this month: <n> GB (since 1 <month>)`; the same sum is the `📊` line in `/status` below the balance (D59, D63).
+- **R43:** `/wifi` gives the names and passwords of the enabled WiFi networks from the router's current configuration, each name and password in a `<code>` tag so that a tap copies it (D83); the two bands with the same name and password are one entry and no band is named; a further network is a paragraph of its own, and when it shares the password it has `Password: same password`; a network without a password has `No password` (D58).
+- **R44:** `/devices` starts with the sum of the month in its heading, `📱 Devices · <n> GB this month (since 1 <month>)`, and lists every device with traffic in the current calendar month in two bold groups with their counts: `Connected now (<n>)` and `Earlier this month (<n>)`, each sorted by usage, largest first, with the name from DHCP or `Unknown device` with the end of the MAC address; the band is not shown; at most 20 entries in total, the smallest drop off the list but not out of the sum; the router's own traffic (a speed test, for example) is the last entry, `Router itself`, after an empty line; the same sum is the `📊` line in `/status` below the balance (D59, D63).
   - **R44b:** The router remembers the DHCP name of every MAC address with traffic in the current month, also after its lease expired, so a device switched off for the night keeps its name (D63).
   - **R44a:** The month's counters survive a router restart, losing at most a day on a power cut; flash is written at most once a day and at a stop; the month is taken from the NTP clock, not from the time before the sync (D59).
 - **R45:** `/reboot` answers with a question with the buttons `🔄 Restart` and `Cancel`; the restart happens only after a tap on `Restart` within 60 s by a member of the chat `TG_CHAT_ID`; after the tap, a cancel or 60 s the message changes its text and loses its buttons; a tap on an expired button gives the Telegram popup `This button expired, send /reboot again` and does nothing (D60).
   - **R45a:** After the start from such a restart the chat gets one message with the name of the person who tapped and the length of the break; a normal restart (power, link repair) gives no such message.
 - **R37d:** `/alerts` shows the 2G message switch also as a button that changes the state and the text of the same message; the command `/alerts 2g on|off` keeps working (D60).
 - **R37e:** The chat has a persistent bot keyboard with 9 buttons as in the layout below; the bot sends it with the answer to `/help` and `/start` and once after the first start of the image, and a button acts like its command (`🟢 Status` like `/status` and so on); the bot skips other text without `/`; the keyboard works with the bot's privacy mode on, because the Telegram app sends a tap as a reply to the bot's message that carries the keyboard, and typed commands work in both modes (D64).
-- **R37f:** The message of R37e that the bot sends once after the first start of the image starts with two lines, `🔄 Router was reset to its built-in settings.` and `Earlier logs and saved SMS are gone.`, then an empty line and the usual text, when the state on flash was fresh at that start: no flag of R37e and nothing else in `/etc/lw-notify` at the first pass of the service. It is the same single message, never a second one. After a Telegram outage or a restart of the router before the message went out it still carries the lines; an image flashed with its state kept (`sysupgrade -o`: files in `/etc/lw-notify`, no flag) gets the message without them, while a plain `sysupgrade` without `-n` keeps `/etc/config` but not `/etc/lw-notify` and gets the lines; a flash that cannot be written leaves the lines out (D75).
-  - *scenario* given a router after a button reset, when the service has started and Telegram answers, then the chat gets one message `🔄 Router was reset to its built-in settings.` / `Earlier logs and saved SMS are gone.` / empty line / `🤖 The router bot is ready. ...` with the keyboard, and no such lines after a later restart of the service or of the router
-- *scenario* given a TV `LG-TV` that downloaded 18 GB in the evening and is off since 23:00, with its DHCP lease expired, when `/devices` comes in the morning, then `LG-TV · 18.2 GB` is in the group `Not connected now`, and the sum includes it (R44, R44b)
+- **R37f:** After the first start of the image, when the state on flash was fresh at that start (no flag of R37e and nothing else in `/etc/lw-notify` at the first pass of the service), the chat first gets a message of its own with two lines, `🔄 Router was reset to its built-in settings.` (bold) and `Earlier logs and saved SMS are gone.`, and then the greeting of R37e with the keyboard as a second message, which has no reset lines (D75, D84). The note is not part of the greeting because a tap on the keyboard arrives as a reply to the message that carries the keyboard, and the app shows the start of that message above every tap; with the note in it, each tap would quote `Router was reset`. The note goes out once: after a Telegram outage or a restart of the router before the greeting went out only the greeting is still due when the note had already gone, and the note is still due when it had not; an image flashed with its state kept (`sysupgrade -o`: files in `/etc/lw-notify`, no flag) gets the greeting without the note, while a plain `sysupgrade` without `-n` keeps `/etc/config` but not `/etc/lw-notify` and gets the note; a flash that cannot be written leaves the note out.
+  - *scenario* given a router after a button reset, when the service has started and Telegram answers, then the chat gets the message `🔄 Router was reset to its built-in settings.` / `Earlier logs and saved SMS are gone.` and after it the message `🤖 The router bot is ready. ...` with the keyboard, and neither after a later restart of the service or of the router
+- **R37g:** Every message and every edit of the bot goes out with `parse_mode=HTML`; the tags in use are `b`, `i`, `code` and `blockquote`. Text that the code did not write itself (the text and sender of an SMS, DHCP names, the names and passwords of the WiFi networks, the first name of the person who taps `Restart`, the operator's name, the server of a speed test) has `&`, `<` and `>` written as entities, so it shows as it is and cannot change the layout or make Telegram refuse the message; a long reply is cut between messages, never inside a tag or an entity. When Telegram answers a message with HTTP 400, the same text goes once more as plain text (tags removed, entities decoded) and one `lw-notify` syslog entry says that the markup was refused (ASCII, no token and no text of the message); if that is rejected too, R34f goes on, and an edit that is rejected is not repeated as an edit (the balance message then goes as a new message, R36) (D83, D85).
+  - *scenario* given an SMS from the sender `<b>Bank&Co` with the text `a <i>b</i> && c`, when it reaches the chat, then the sender and the text show as typed, in bold and in a quote; given that Telegram rejects the HTML of a message, then the chat gets it once as plain text and syslog has one entry
+- *scenario* given a TV `LG-TV` that downloaded 18 GB in the evening and is off since 23:00, with its DHCP lease expired, when `/devices` comes in the morning, then `LG-TV · 18.2 GB` is in the group `Earlier this month`, and the sum includes it (R44, R44b)
 - *scenario* given a router restarted at 03:00 and 40 GB used since 1 Nov, when `/devices` comes, then the sum is still about 40 GB `since 1 Nov`, and a device without a DHCP name shows as `Unknown device (…6e:94)`
 - *scenario* given `/reboot` sent by one member of the group, when another member, Sam, taps `Restart` after 20 s, then the message changes to `🔄 Restarting now (Sam tapped Restart).`, the router restarts, and after the start the chat has once `🟢 Router back after restart (asked by Sam)` with the length of the break; given no tap, then after 60 s the message says `Restart not confirmed, nothing done.` and there is no restart
 
@@ -390,22 +392,20 @@ Some operators send no SMS when data runs low and renew a package only with enou
   - *scenario* given a failure from 14:20, step 3 of 6, class `hang`, when `status` comes at 14:52 from `+15550100123`, then within 60 s that number gets a reply starting with `Router: internet DOWN since 14:20 (32 min). Self-repair step 3 of 6, cause: modem not responding. 2G backup: off.`, and once the internet is back this SMS is in the chat too
   - *scenario* given 10 replies sent in the last day, when `reboot` comes from a number in the list, then the router restarts without an SMS reply
 
-Message layout (the words may differ, the layout and the information may not):
+Message layout (the words may differ, the layout and the information may not). The messages are sent as HTML (R37g): the layout shows what the chat displays; a `>` at the start of a line is a quote, and names and passwords of WiFi networks are copyable:
 
 ```
 🟢 Internet works
+⚠️ Top up at least 7.50 EUR, or the data package will not renew.
 
 📶 Signal: fair (4G+)
 📱 Wi-Fi: 3 devices connected
-💶 Balance: 0.31 EUR (today 11:05)
-   ⚠️ below 7.50 EUR needed for the next data month
+💶 Balance: 0.31 EUR (checked 9 Nov 10:00, 6 days ago)       (checked today 11:05 when the reading is from today)
 🚀 Speed test: 99 ⬇️ / 62 ⬆️ Mbit/s · ping 16 ms (today 17:52)
 📊 Data this month: 42 GB (since 1 Nov)
-⏱ On since today 11:01 (power cut or manual restart)
+⏱ Up 3 d 15 h, since 11 Nov 16:49 (power cut or manual restart)       (without a synced clock: ⏱ Up 3 d 15 h (power cut ...))
 🔧 Last outage: yesterday 14:20, 12 min, fixed by 1 restart
-⚠️ Top up at least 7.50 EUR
-
-Tech: B3+B1 · RSRP -86 · SINR 4.6 · ping 50 ms · VPN 2 min
+> Tech: B3+B1 · RSRP -86 dBm · SINR 4.6 dB · ping 50 ms · VPN handshake 2 min ago
 
 🟠 Internet works, but slow (2G backup)
 Messages and email OK, video and calls no.
@@ -442,30 +442,35 @@ Server: Example ISP, Example City (7 km) · ~330 MB used
 The internet itself works (ping 30 ms), try again later.
 
 🔔 Automatic messages
-New SMS: on · Low balance: on · Internet back: on · 2G backup: on
+✅ New SMS
+✅ Low balance
+✅ Internet back
+✅ 2G backup
+
+Only the 2G message can be turned off.
 [ 2G backup: turn off ]
 
 🔴 Router offline for 30 min        (healthchecks.io webhook, R42a)
 
-📶 Wi-Fi for guests
-
+📶 Wi-Fi
 Name: OpenWrt-LTE
 Password: xxxxxxxx
-5 GHz: OpenWrt-LTE-5G (same password)
 
-📱 Devices this month: 5 (3 connected now)
+Name: OpenWrt-LTE-5G
+Password: same password
 
-Connected now:
-• iPhone · 5 GHz · 12.4 GB
-• Galaxy-S21 · 2.4 GHz · 3.1 GB
-• Unknown device (…6e:94) · 2.4 GHz · 0.2 GB
+📱 Devices · 42 GB this month (since 1 Nov)
 
-Not connected now:
+Connected now (3)
+• iPhone · 12.4 GB
+• Galaxy-S21 · 3.1 GB
+• Unknown device (…6e:94) · 0.2 GB
+
+Earlier this month (2)
 • LG-TV · 18.2 GB
 • Laptop · 7.6 GB
 
 • Router itself · 0.5 GB
-Data this month: 42 GB (since 1 Nov)
 
 ⚠️ Restart the router?
 Internet and Wi-Fi go down for about 2 min.
@@ -486,17 +491,18 @@ Router: reboot not done, the SMS is older than 10 min or has no time. Send it ag
 Router: reboot not done, 5 restarts by SMS in the last day. Try again later.
 Router commands: status, reboot
 
-✉️ +15550100123 · Today 11:11
+✉️ +15550100123 · today 11:11
+> This is a test SMS.
 
-This is a test SMS.
+✉️ Telekom 1466 · today 11:05
+> Imate: 0.31 do 05.01.;
+= Balance 0.31 EUR, valid until 5 Jan
 
-✉️ Telekom 1466 · Today 11:05
-
-Imate: 0.31 do 05.01.;
-= Balance 0.31 EUR, credit valid until 5 Jan
-
-⚠️ Low balance: 0.31 EUR (today 10:00)
-Top up at least 7.50 EUR, or the data package will not renew.
+💶 Asked Telekom for the balance (SMS to 1466). The answer comes here, usually within a minute.
+ -> 💶 Balance: 0.31 EUR, valid until 5 Jan       (the same message, edited when the reply comes, R36)
+    ⚠️ Top up at least 7.50 EUR, or the data package will not renew.
+    > Telekom 1466, today 10:00:
+    > Imate: 0.31 do 05.01.;
 
 When one SMS in the modem cannot be read (R34h):
 ⚠️ One SMS in the modem cannot be read.
@@ -504,19 +510,21 @@ New SMS are not posted here and SMS commands do not work until it is deleted.
 Delete it in LuCI: Modem, SMS.
 
 📥 Newest 3 of 27 SMS
-(each SMS as above, separated by a line)
+(each SMS as above, separated by an empty line)
 
-/status – is the internet OK
-/wifi – Wi-Fi name and password for guests
-/devices – who is connected, data this month
-/speedtest – measure the internet speed (~60 s)
-/balance – ask Telekom for the balance (~1 min)          (operator name from the preset, R47)
-/sms – newest SMS (/sms 10 for more)
-/alerts – automatic messages, on or off
-/reboot – restart the router (asks to confirm)
-The bot also posts every new SMS and a low-balance warning by itself.
+❓ What the buttons do
+🟢 Status – is the internet OK
+📶 Wi-Fi – name and password for guests
+📱 Devices – who is connected, data this month
+⚡ Speed – measure the speed (~60 s)
+💶 Balance – ask Telekom (~1 min)          (operator name from the preset, R47; "not available for this SIM" without one, R47a)
+✉️ SMS – newest SMS (/sms 10 for more)
+🔔 Alerts – automatic messages, on or off
+🔄 Reboot – restart the router (asks first)
 
-Once after the first start of the image, with the keyboard (R37e); after a reset or a flash it starts with the two lines of R37f:
+The bot also posts by itself: new SMS, low balance, internet back, 2G backup.       (low balance only with a preset and `LOW_BALANCE`)
+
+Once after the first start of the image: after a reset or a flash first a message of its own (R37f), then the greeting with the keyboard (R37e):
 🔄 Router was reset to its built-in settings.
 Earlier logs and saved SMS are gone.
 
@@ -607,7 +615,7 @@ The "Enough for" line of a speed test result by verdict: `fast` ✅ 4K video on 
 | D72 | A message of the operator's sender is a balance only within 10 min of a query of the router; every matching reply in that window counts (R36) | the sender of an SMS can be forged, and a forged balance would change `/status`, and with an amount above the threshold stay out of the chat; an answer after 10 min is shown as an ordinary SMS, so the owner sees what arrives; "once" was rejected: a forged `Imate: 99.00` between the weekly query and the real low reply would take the slot and hide the low-balance warning, which worked before; accepted leftover: a forged reply after the real one, inside the window, changes what `/status` shows until the next real reply (the warning has already gone out); the first scan after a flash or a reset keeps the old way, because it forwards nothing, there is no stored balance yet, and a forged value there is replaced by the next real reply |
 | D73 | The root password may be given in clear text as `ROOT_PASSWORD`, next to `ROOT_PASSWORD_HASH` (R33b) | owners should not need to know how to make a crypt hash; the profile already holds the WiFi key in clear text and should be 0600 (R3a), and only the hash goes into the image |
 | D74 | WiFi encryption `psk2` (WPA2 only) instead of `psk-mixed` (R7) | the owner's decision of 2026-11-09: WPA1/TKIP is off, and every device of the guests supports WPA2; accepted cost: a very old device that knows only WPA1 does not connect |
-| D75 | The first greeting of the bot says the router was reset, in the same message (R37f) | a button reset wipes the logs, the SMS archive and the SMS limit counters, and the owner abroad would learn of it only indirectly; the router cannot tell a reset from a flash, both start with empty state, so the lines stand for "fresh state", decided at the first pass from an empty `/etc/lw-notify`, because the keyboard flag alone is also missing after an update with the state kept (`sysupgrade -o`) from an image without the keyboard; a plain `sysupgrade` keeps `/etc/config` but not `/etc/lw-notify`, so it gets the lines too; one message, because the owner wants no extra notification |
+| D75 | The first greeting of the bot says the router was reset (R37f; since D84 as a message before the greeting) | a button reset wipes the logs, the SMS archive and the SMS limit counters, and the owner abroad would learn of it only indirectly; the router cannot tell a reset from a flash, both start with empty state, so the lines stand for "fresh state", decided at the first pass from an empty `/etc/lw-notify`, because the keyboard flag alone is also missing after an update with the state kept (`sysupgrade -o`) from an image without the keyboard; a plain `sysupgrade` keeps `/etc/config` but not `/etc/lw-notify`, so it gets the lines too; the lines were first in the greeting itself, because the owner wanted no extra notification, which D84 changed |
 | D76 | A reply pattern with only number characters between `{any}` and a number placeholder is rejected, not repaired (R47c) | the preset is a hand-written data file and the fault would show only as a wrong balance when the first reply comes; a rejection says so in syslog at once, while changing the pattern silently would change what the file says; the rule is on the characters (spaces, digits, dot, comma) and not on the two forms seen, because every such gap lets `{any}` end inside the number |
 | D77 | The third-party `.apk` files are checked against `deps.lst` when `build.sh` copies them, only the pinned set is copied, and old versions are removed by exact package name (R2a) | a file in `dl/extra` that was swapped or left over after the download check would otherwise go into an image that carries the profile's secrets |
 | D78 | A profile, or a private key file of its folder, readable by others with a secret in it is a warning, not an error (R3a) | the build is correct either way and a shared machine is the owner's call; the warning costs one `chmod` |
@@ -615,6 +623,10 @@ The "Enough for" line of a speed test result by verdict: `fast` ✅ 4K video on 
 | D80 | In-place restore of the data session by polling, in `lw-linkwatch`, with `ifup wwan` only after 20 s (R49 to R49g, R12c) | measured on the MF289F (OpenWrt 25.12, qmi, uqmi 2025.07.30) on 2026-11-10: three times the network detached the modem with a re-attach request (`AT+CEER`: "Nas detach with reattach, LTE network detach") and within about 5 s the modem was registered again with a new address in context 1, but for the host the call stayed dead: the data status was `disconnected`, the settings on netifd's client `Out of call`, `registration` still `registered`, while `wwan0` kept the old address and its carrier, netifd showed `wwan` up, and the modem did not start the call by itself in 20 s although netifd started it with `--autoconnect`. The same state comes from `AT+CGATT=0` then `AT+CGATT=1`. A `start-network` on netifd's client answers in 0.2 s with the same handle as `pdh_4`, a release then a renew of `udhcpc` gives the new lease in the same second (a renew alone 13 s: it asks the old server first; the renew must wait for the release, because two pending signals arrive USR1 first, see R49c), and ping works about 2 s after the call; a full `ifup wwan` takes 32 to 40 s here (qmi.sh scans the network for 26 s because `network.wwan.modes` is set; on 2026-11-11 the same `ifup` to the first good ping took 40,5 to 46,5 s, and 14,2 to 14,8 s with the scan line removed, D82) and watchcat comes after 120 s at the earliest, so the outage was about 6 min before D79. No event listener: uqmi has no event mode and drops indications, the kernel does not signal the end of a call (`wwan0` keeps its carrier), and a second reader on `/dev/cdc-wdm0` would steal the answers netifd waits for. Polling every 5 s found no false alarm in 9 h; a restore needs the two answers together and anything else, a hang included, does nothing. The exception to D5 is limited to what qmi.sh also does: calls only while netifd shows `wwan` up, `-t` and a timeout on every call, the client of netifd. The new handle is not written back with `ubus call network.interface.wwan set_data`: netifd has that method (it merges the keys it is given, and fires an `ifupdate` event that makes the firewall reload once more on top of the one the new lease causes), but qmi.sh clears the client with `0xffffffff` at setup and at teardown, so the old `pdh_4` does no harm; the difference is logged instead. 3 restores in 10 min stop it for 10 min because an exhausted plan may look like a session that keeps dropping |
 | D81 | A profile key `LOG_LEVEL`, `info` or `debug`, in the image as uci `lonewrt.log.level` (R3, R29c) | the owner wants to run an image with detailed, persistent logs of the modem link for a test period and read from them how the watcher behaves on the live router, while the usual image stays light on flash (Risks). A build key gives the same result after a flash and after a reset (D2), and one level for all scripts keeps one place to look; the `debug` level has its own syslog priority so the lines can be told apart and filtered. The debug log is 2 MB because the extra lines (signal samples, steps, heartbeat) would otherwise push the `.old` history out in a few days. Only the signal sample and the watcher use it: a longer log is for the new code, and the logs of the older scripts, which the tests and the owner know, stay as they are |
 | D82 | The image's `qmi.sh` is the `uqmi` package's file without its `--network-scan` line, the mode set stays (`network.wwan.modes=lte`), and `network.wwan.timeout` is 30 (R12d, R7, R10) | measured on the router on 2026-11-11: `ifup wwan` to the first good ping took 40,5 to 46,5 s with the stock file (5 runs), 14,2 to 14,8 s with only the scan line removed (5 runs) and 10,2 s with `modes` unset; the scan costs 26 s with the data paused at every start of the interface (every watchcat restart, every `lw-fallback`, every APN change). `modes` stays because the mode set is the only thing that holds LTE-only at a start: `uqmi --set-network-modes lte` and `AT+ZSNT=6,0,0` write the same stored setting, but `uqmi --network-register`, which `qmi.sh` calls at every start before the mode set, moves the modem to LTE within 2 s even when GSM-only is stored (set over AT or QMI), and `AT+ZSNT?` keeps reading the stored value; the earlier option to unset `modes` was rejected for that reason. After `--set-network-modes all` (the EDGE fallback), `AT+ZSNT?` answers `NV item value incompatible with +ZSNT parameters`, so the `zsnt` field of the signal log reads `?` there (R28). Radio changes without the scan, measured the same day with LTE available: an AT switch to GSM-only takes effect in 4 s, `ifup` with `modes=lte` from GSM gives LTE data in 14,2 s, `lw-fallback edge` and `lw-fallback lte` take 14,8 and 14,7 s. `timeout` is an option of `qmi.sh`'s registration loop (default 10, a try about a second); the loop gives up with `NETWORK_REGISTRATION_FAILED` and no `proto_block_restart`, so netifd starts the interface again by itself (seen on 2026-11-11). 30 keeps the slack the scan gave, 35 s before a start is given up against 15 s, and costs nothing when the modem registers at once. The same `timeout` bounds the two SIM waits before the registration (`UIM uninitialized`, and the power cycles of a SIM whose state is illegal or unreadable, about 10 s each, which end with `proto_block_restart`), so a start with such a SIM gives up after about 5 min instead of about 2. Measured later the same day with the handler without the scan and `timeout` 30: after a `reboot`, 19 s from the handler's first line ("Waiting for SIM initialization"; the modem resets its SIM on this boot) to "Interface 'wwan' is now up", registered at the first attempt, against 59 s with the stock handler on the first boot after that day's flash. A power cut of about 10 s on the flashed image gave the same: 19 s for that span, registered at the first attempt. With LTE made unavailable by a band mask of B32 alone (a downlink-only band the modem cannot camp on; one run each), `lw-fallback edge` gave the first good ping after 76 s with the stock handler (one failed start, "Unable to connect IPv4", then data on EDGE); without the scan the interface came up after 84 s and the WireGuard tunnel after 100 s, after six failed starts 15 s apart. In that run the measuring ping (5 s limit) did not get through within 240 s while the laptop's own traffic filled the EDGE link, so the evidence of working data is the DHCP lease and the WireGuard handshake, not a ping. The about 80 s are the modem's GPRS attach, which the scan does not shorten: without it the same wait passes in failed starts that netifd repeats. Back with `lw-fallback lte` after the bands were restored, without the scan: 16,7 s to a ping. A build-time derivation instead of a copy or a first-boot edit: a copy of the file in `src/files/` would put 300 lines of GPL-2.0 code into an MIT repository, break the check of R12c, and silently shadow a newer handler after an OpenWrt bump (nothing pins `qmi.sh`, only the third-party packages are pinned, R2a); an edit by `uci-defaults` on the router fails unseen, and `sysupgrade -o` would keep a stale edited copy over the new file. The derivation stops the build when the line is not there once, which is the moment someone is at the bench (`docs/development.md`, "New OpenWrt version"); the file comes from the same `apk` and feeds as the image's own `uqmi`, and the build compares the image's file with the package's file of that build. A second `make image` per build was not needed. |
+| D83 | The bot sends HTML (`parse_mode=HTML`) with the tags `b`, `i`, `code` and `blockquote` (R37g, R43) | a guest can copy the Wi-Fi password with one tap on a `<code>` span instead of selecting it, and a quote sets the operator's or sender's own words apart from the router's, so a message reads at a glance; MarkdownV2 was rejected because it needs far more characters escaped (`.`, `-`, `(`, `!` and others), and text from an SMS holds all of them; HTML needs only `&`, `<` and `>`, which one function covers |
+| D84 | The reset note is a message of its own before the greeting, not lines in it (R37f) | a tap on the keyboard of a group arrives as a reply to the message that carries the keyboard, and the app quotes the start of that message above every tap: with the note in the greeting, every tap in the chat read `Router was reset`; the greeting with the keyboard now starts with its own words. It costs one more message once, at the first start. This replaces the "one message" of D75 |
+| D85 | A message Telegram rejects as HTML goes once more as plain text and is logged (R37g, R34f) | the markup is ours, and a mistake in it, for example a text that escaping missed, must not cost a message that carries an SMS or a warning; the plain copy has the same words without the tags, and the log line says that a markup fault exists, with no text in it, so it gets fixed (an edit has no such copy: a 400 also answers an edit that changes nothing, a double tap, and a plain copy would replace the formatted text) |
+| D86 | The answer to `/balance` edits the acknowledgement into the balance message (R36, R37) | the owner asks and waits: one message that turns from "asked" into the result is shorter than two, and the chat shows no stale "asked" line; the edit makes no sound, which is why a late reply, the weekly reply and the first amount below the threshold come as new messages |
 
 ## Risks
 

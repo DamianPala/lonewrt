@@ -13,20 +13,23 @@ passes 3
 
 queue_n() { find /etc/lw-notify/queue -type f 2>/dev/null | wc -l | tr -d ' '; }
 syslog_n() { grep -c "$1" "$T/syslog" || :; }
-DROPPED='lw-notify: Telegram rejected a message (HTTP 400) twice, dropped it'
+DROPPED='lw-notify: Telegram rejected a message (HTTP 400) as HTML and as plain text, dropped it'
+FELL_BACK='lw-notify: Telegram rejected a message as HTML (HTTP 400), it went out as plain text'
 
-# first try rejected, ASCII retry accepted: one message, o-acute and symbols as ?, nothing logged
+# first try rejected as HTML and as plain text, ASCII retry accepted: one message, o-acute and symbols
+# as ?, one log line (R37g)
 echo nonascii >"$G/reject400"
 sms_in 0 +38200000001 '11/07/26 12:00:00' "$(printf 'm\303\263j')"
 passes 2
 expect_sent 1
-lw_expect_eq "$(sent_text 1)" "?? +38200000001 ? Today 12:00
-
+lw_expect_eq "$(sent_text 1)" "?? +38200000001 ? today 12:00
 m?j" "ASCII retry text"
-lw_expect_eq "$(rejected_n)" 1 "rejections"
-lw_expect_eq "$(sendcalls)" 2 "sendMessage calls (rejected + ASCII retry)"
+lw_expect_eq "$(rejected_n)" 2 "rejections"
+lw_expect_eq "$(sendcalls)" 3 "sendMessage calls (HTML, plain, ASCII)"
 lw_expect_eq "$(queue_n)" 0 "queue"
-lw_expect_eq "$(cat "$T/syslog")" "" "syslog after a message that needed the ASCII retry"
+lw_expect_eq "$(wc -l <"$T/syslog" | tr -d ' ')" 1 "syslog lines after the ASCII retry"
+lw_expect_grep "$T/syslog" "$FELL_BACK"
+: >"$T/syslog"
 [ ! -e /tmp/lw-notify/down ] && [ ! -e /tmp/lw-notify/fail_since ] ||
     lw_fail "a 400 changed the link state"
 
@@ -36,8 +39,8 @@ sms_in 1 +38200000002 '11/07/26 12:01:00' 'POISON pill'
 sms_in 2 +38200000003 '11/07/26 12:01:05' 'fine after'
 passes 2
 expect_sent 2
-lw_expect_eq "$(sent_text 2 | tail -n 1)" 'fine after' "message after the dropped one"
-lw_expect_eq "$(rejected_n)" 3 "rejections"
+lw_expect_eq "$(sent_text 2 | tail -n 1)" '<blockquote>fine after</blockquote>' "message after the dropped one"
+lw_expect_eq "$(rejected_n)" 5 "rejections"
 lw_expect_eq "$(queue_n)" 0 "queue"
 lw_expect_eq "$(wc -l <"$T/syslog" | tr -d ' ')" 1 "syslog lines"
 lw_expect_grep "$T/syslog" "$DROPPED, 1 SMS still queued"
@@ -51,8 +54,8 @@ sms_in 4 +38200000005 '11/07/26 12:02:05' 'POISON again'
 sms_in 5 +38200000006 '11/07/26 12:02:10' 'after'
 passes 2
 expect_sent 4
-lw_expect_eq "$(sent_text 3 | tail -n 1)" before "third sent"
-lw_expect_eq "$(sent_text 4 | tail -n 1)" after "fourth sent"
+lw_expect_eq "$(sent_text 3 | tail -n 1)" '<blockquote>before</blockquote>' "third sent"
+lw_expect_eq "$(sent_text 4 | tail -n 1)" '<blockquote>after</blockquote>' "fourth sent"
 lw_expect_eq "$(syslog_n "$DROPPED")" 2 "drop lines"
 lw_expect_eq "$(syslog_n unreachable)" 0 "unreachable lines"
 

@@ -31,35 +31,43 @@ assert [len(r) for r in data["keyboard"]] == [3, 3, 3], data["keyboard"]
 
 users = [m for m in data["messages"] if m["from"] == "user"]
 assert len(users) == 8, len(users)
-first = data["messages"][0]
-assert first["from"] == "bot" and first["id"] == 1
-assert all(m["reply_to"] == first["id"] for m in users), "a tap without reply_to"
+# the reset note is a message of its own, the greeting (id 2) carries the keyboard, and a tap is a
+# reply to the greeting, so no tap quotes "Router was reset"
+note, greeting = data["messages"][0], data["messages"][1]
+assert note["from"] == "bot" and note["id"] == 1 and "was reset" in note["text"]
+assert greeting["from"] == "bot" and greeting["id"] == 2 and "bot is ready" in greeting["text"]
+assert all(m["reply_to"] == greeting["id"] for m in users), "a tap without reply_to"
+bots = [m for m in data["messages"] if m["from"] == "bot"]
+assert all(m.get("parse_mode") == "HTML" for m in bots), "a bot message without parse_mode HTML"
 assert users[0]["text"] == "\U0001f7e2 Status" and users[0]["time"] == "07:58", users[0]
 assert users[-1]["time"] == "08:00", users[-1]
 
 for needle in [
-    "\U0001f504 Router was reset to its built-in settings.\nEarlier logs and saved SMS are gone.",
+    "\U0001f504 <b>Router was reset to its built-in settings.</b>\nEarlier logs and saved SMS are gone.",
     "\U0001f916 The router bot is ready. Tap a button below, or send /help",
-    "\U0001f7e2 Internet works",
-    "Tech: B3+B1 · RSRP -94 · SINR -2.2 · ping 41 ms · VPN 40 s",
+    "\U0001f7e2 <b>Internet works</b>",
+    "<blockquote>Tech: B3+B1 · RSRP -94 dBm · SINR -2.2 dB · ping 41 ms · VPN handshake 40 s ago</blockquote>",
     "Unknown device (…",
-    "\U0001f4f6 Wi-Fi for guests",
-    "\U0001f4b6 Asked Telekom for the balance (SMS to 1466).",
-    "= Balance 0.31 EUR, credit valid until 5 Jan",
-    "⚠️ Low balance: 0.31 EUR (today ",
-    "\U0001f4e5 Newest 5 of 25 SMS",
-    "\U0001f514 Automatic messages",
+    "\U0001f4f6 <b>Wi-Fi</b>\nName: <code>Home-Guest</code>\nPassword: <code>blue-lamp-4521</code>",
+    "\U0001f4b6 <b>Balance: 0.31 EUR</b>, valid until 5 Jan\n⚠️ Top up at least 7.50 EUR",
+    "<blockquote>Telekom 1466, today ",
+    "= Balance 0.31 EUR, valid until 5 Jan",
+    "\U0001f4e5 <b>Newest 5 of 25 SMS</b>",
+    "\U0001f514 <b>Automatic messages</b>",
     "Restart cancelled.",
-    "/status – is the internet OK",
+    "\U0001f7e2 <b>Status</b> – is the internet OK",
 ]:
     assert needle in texts, "missing in the bot's texts: " + needle
 
-alerts = next(m for m in data["messages"] if m["text"].startswith("\U0001f514 Automatic"))
+# the acknowledgement of /balance is edited into the answer: no message of its own is left
+assert "Asked Telekom" not in texts, "the acknowledgement of /balance stayed in the chat"
+balance = next(m for m in data["messages"] if m["text"].startswith("\U0001f4b6 <b>Balance:"))
+assert next(s for s in data["screens"] if s["name"] == "balance")["last"] == balance["id"]
+alerts = next(m for m in data["messages"] if m["text"].startswith("\U0001f514 <b>Automatic"))
 assert alerts["inline_keyboard"] == [["2G backup: turn off"]], alerts
 cancelled = next(m for m in data["messages"] if m["text"] == "Restart cancelled.")
 assert "inline_keyboard" not in cancelled, "the cancelled question kept its buttons"
-last_bot = [m for m in data["messages"] if m["from"] == "bot"][-1]
-assert last_bot["text"].startswith("/status"), "the chat does not end with the help text"
+assert bots[-1]["text"].startswith("\u2753 <b>What the buttons do</b>"), "the chat does not end with help"
 PYEOF
 grep -q 'Router was reset to its built-in settings' "$FW/src/files/usr/lib/lw/notify.sh" ||
     fail "the reset note moved in the bot's code: update this test"
@@ -107,7 +115,17 @@ python3 "$HERE/render.py" "$HERE/example.json" "$work/out5" >/dev/null || fail "
 # ---- a plain transcript renders byte for byte as the renderer of the first version did
 old=$work/render-first.py
 if git -C "$FW" show 97e3f8a:tools/tg-preview/render.py >"$old" 2>/dev/null; then
-    for t in "$work/t.json" "$work/mini.json" "$HERE/example.json"; do
+    # the scenario transcript is HTML now; without parse_mode it is a plain one again
+    python3 -I - "$work/t.json" "$work/t-plain.json" <<'PYEOF'
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+for m in data["messages"]:
+    m.pop("parse_mode", None)
+json.dump(data, open(sys.argv[2], "w", encoding="utf-8"), ensure_ascii=False)
+PYEOF
+    for t in "$work/t-plain.json" "$work/mini.json" "$HERE/example.json"; do
         rm -rf "$work/cmp-old" "$work/cmp-new"
         python3 "$old" "$t" "$work/cmp-old" >/dev/null
         python3 "$HERE/render.py" "$t" "$work/cmp-new" >/dev/null

@@ -123,6 +123,24 @@ nt_bal_low() {
     [ -n "$_ba" ] && [ -n "$NT_LOW" ] && nt_below "$_ba" "$NT_LOW"
 }
 
+# nt_days_ago "YYYY-MM-DD hh:mm" (R39c): ", 6 days ago" when that time is a day or more before
+# now by the synced clock, counted in calendar days as the date beside it reads; nothing for a
+# younger or an unreadable time, or without a synced clock.
+nt_days_ago() {
+    nt_clock_ok || return 0
+    case $1 in
+        [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]\ [0-9][0-9]:[0-9][0-9]) ;;
+        *) return 0 ;;
+    esac
+    _dat=$(date -d "$1:00" +%s 2>/dev/null) || return 0
+    [ $(($(nt_wall) - _dat)) -ge 86400 ] || return 0
+    # noon to noon: the change of a clock does not shift a whole day
+    _dan=$(date -d "@$(nt_wall)" +%Y-%m-%d)
+    _dan=$(date -d "$_dan 12:00:00" +%s)
+    _dad=$(((_dan - $(date -d "${1% *} 12:00:00" +%s) + 43200) / 86400))
+    if [ "$_dad" = 1 ]; then printf ', 1 day ago'; else printf ', %s days ago' "$_dad"; fi
+}
+
 nt_balance_lines() {
     if ! nt_preset_ok; then
         nt_na_line
@@ -133,17 +151,20 @@ nt_balance_lines() {
         echo '💶 Balance: unknown'
         return 0
     fi
-    echo "💶 Balance: $_ba $NT_P_CUR ($(nt_when L "$(nt_bal_time)"))"
-    ! nt_bal_low || echo "   ⚠️ below $NT_LOW $NT_P_CUR needed for the next data month"
+    _bt=$(nt_bal_time)
+    echo "💶 Balance: $(nt_h "$_ba") $(nt_h "$NT_P_CUR")" \
+        "(checked $(nt_when "$_bt")$(nt_days_ago "$_bt"))"
 }
 
+# nt_since_line (R39c): how long the router has been up, since when and why it started.
 nt_since_line() {
     _why=$(head -n 1 "$NT_RUN/boot_reason" 2>/dev/null)
-    _why=${_why:-power cut or manual restart}
+    _why=$(nt_h "${_why:-power cut or manual restart}")
+    _up=$(nt_span "$(lw_uptime)")
     if nt_clock_ok; then
-        echo "⏱ On since $(nt_when L "$(nt_local $(($(nt_wall) - $(lw_uptime))))") ($_why)"
+        echo "⏱ Up $_up, since $(nt_when "$(nt_local $(($(nt_wall) - $(lw_uptime))))") ($_why)"
     else
-        echo "⏱ On for $(nt_span "$(lw_uptime)") ($_why)"
+        echo "⏱ Up $_up ($_why)"
     fi
 }
 
@@ -156,12 +177,12 @@ nt_outage_line() {
             return 0
             ;;
     esac
-    _ot=$(nt_when L "$(nt_local "$_os")")
+    _ot=$(nt_when "$(nt_local "$_os")")
     if [ "$(nt_rec_get state)" = open ]; then
         if [ "$(nt_rec_get ntp)" != 1 ]; then
             # start before NTP: counted back from the cycles once the clock is right, as the 2G one
             ! nt_clock_ok ||
-                _ot=$(nt_when L "$(nt_local $(($(nt_wall) - NT_RC_CYCLES * NT_CYCLE)))")
+                _ot=$(nt_when "$(nt_local $(($(nt_wall) - NT_RC_CYCLES * NT_CYCLE)))")
             _ot="~$_ot"
         fi
         _or="$NT_RC_REBOOTS restarts"
@@ -175,28 +196,35 @@ nt_outage_line() {
     echo "🔧 Last outage: $_ot, $_od, $(nt_restarts_text "$(nt_rec_get restarts)")"
 }
 
-# nt_action_line (R39d)
+# nt_action_line (R39d): what the person has to do, if anything; the line under the verdict.
 nt_action_line() {
     if [ "$NT_RC_PASSIVE" = 1 ]; then
         echo '❗ Needs a person: unplug the router for 10 s'
     elif nt_bal_low; then
-        echo "⚠️ Top up at least $NT_LOW $NT_P_CUR"
+        nt_low_text
+        echo
     else
         echo '✅ Nothing to do'
     fi
 }
 
-# nt_ping_text MS / nt_age_text SECONDS: the readings of the Tech line in words.
+# nt_unit VALUE UNIT / nt_ping_text MS / nt_age_text SECONDS: the readings of the Tech line with
+# their units; a missing reading is "unknown" without one (R39c).
+nt_unit() {
+    if [ -n "$1" ]; then echo "$1 $2"; else echo unknown; fi
+}
+
 nt_ping_text() {
     [ -n "$1" ] || { echo unknown; return 0; }
     awk -v r="$1" 'BEGIN { printf "%.0f ms\n", r }'
 }
 
+# nt_age_text SECONDS: "40 s ago", "5 min ago", "2 h ago"; the span is not "ago" for no reading.
 nt_age_text() {
     [ -n "$1" ] || { echo unknown; return 0; }
-    awk -v a="$1" 'BEGIN { if (a < 60) printf "%d s\n", a
-        else if (a < 3600) printf "%.0f min\n", a / 60
-        else printf "%.0f h\n", a / 3600 }'
+    awk -v a="$1" 'BEGIN { if (a < 60) printf "%d s ago\n", a
+        else if (a < 3600) printf "%.0f min ago\n", a / 60
+        else printf "%.0f h ago\n", a / 3600 }'
 }
 
 # nt_tech_line: the one line of numbers, from the newest signal log line.
@@ -207,22 +235,25 @@ nt_tech_line() {
     [ -z "$_b1" ] || [ -z "$_b2" ] || _bands="$_b1+$_b2"
     _rsrp=$(nt_num "$(nt_sig rsrp)")
     _sinr=$(nt_num "$(nt_sig sinr)")
-    printf 'Tech: %s · RSRP %s · SINR %s · ping %s · VPN %s' "$_bands" "${_rsrp:-unknown}" \
-        "${_sinr:-unknown}" "$(nt_ping_text "$(nt_num "$(nt_sig rtt)")")" \
+    printf 'Tech: %s · RSRP %s · SINR %s · ping %s · VPN handshake %s' "$(nt_h "$_bands")" \
+        "$(nt_unit "$_rsrp" dBm)" "$(nt_unit "$_sinr" dB)" \
+        "$(nt_ping_text "$(nt_num "$(nt_sig rtt)")")" \
         "$(nt_age_text "$(nt_num "$(nt_sig wg_age)")")"
 }
 
-# nt_verdict (R39c): the first lines of /status. Ping decides online; the EDGE marker the 2G backup.
+# nt_verdict (R39c): the first line of /status in bold, and under it the words that belong to it.
+# Ping decides online; the EDGE marker the 2G backup.
 nt_verdict() {
     if nt_online; then
         if [ -e "$NT_EDGE" ]; then
-            printf '🟠 Internet works, but slow (2G backup)\nMessages and email OK, video and calls no.'
+            printf '🟠 <b>Internet works, but slow (2G backup)</b>\n'
+            printf 'Messages and email OK, video and calls no.'
         else
-            printf '🟢 Internet works'
+            printf '🟢 <b>Internet works</b>'
         fi
         return 0
     fi
-    printf '🔴 Internet does not work\n'
+    printf '🔴 <b>Internet does not work</b>\n'
     if [ "$NT_RC_PASSIVE" = 1 ]; then
         printf 'The router has used up its self-repair restarts.'
     elif [ "$NT_RC_CYCLES" -gt 0 ]; then
@@ -232,20 +263,20 @@ nt_verdict() {
     fi
 }
 
+# nt_status (R39c): the verdict, what to do about it, then the details, the numbers last in a quote.
 nt_status() {
     nt_recover_read || :
     nt_boot_reason
     _sig=$(tail -n 1 "$NT_SIGLOG" 2>/dev/null)
     nt_send "$(nt_verdict)
+$(nt_action_line)
 
 $(nt_signal_line)
 $(nt_wifi_line)
 $(nt_balance_lines)$(nt_st_status_line)$(nt_data_status_line)
 $(nt_since_line)
 $(nt_outage_line)
-$(nt_action_line)
-
-$(nt_tech_line)"
+<blockquote>$(nt_tech_line)</blockquote>"
 }
 
 # nt_balance_cmd: the balance query of the preset unless a request already waits for its reply
@@ -256,18 +287,22 @@ nt_balance_cmd() {
         return
     fi
     _req=$(nt_get "$NT_RUN/balance_req")
+    _bn=$(nt_h "$NT_P_NAME")
     if [ -n "$_req" ] && [ $(($(nt_now) - _req)) -lt "$NT_BALANCE_WAIT" ]; then
-        nt_send "⏳ Still waiting for $NT_P_NAME's answer (asked $(($(nt_now) - _req)) s ago)."
+        nt_send "⏳ Still waiting for $_bn's answer (asked $(($(nt_now) - _req)) s ago)."
         return
     fi
     if nt_balance_query; then
         nt_now >"$NT_RUN/balance_req"
         nt_now >"$NT_RUN/balance_asked"
         rm -f "$NT_RUN/balance_late"
-        nt_send "💶 Asked $NT_P_NAME for the balance (SMS to $NT_P_QTO). The answer comes here, usually
-within a minute."
+        # the id of this message is the second line of the request: the answer edits it (nt_balance)
+        _bt="💶 Asked $_bn for the balance (SMS to $(nt_h "$NT_P_QTO")). "
+        if nt_send "${_bt}The answer comes here, usually within a minute."; then
+            case $NT_MSGID in '' | *[!0-9]*) ;; *) echo "$NT_MSGID" >>"$NT_RUN/balance_req" ;; esac
+        fi
     else
-        nt_send "⚠️ Could not ask $NT_P_NAME for the balance (the modem is busy or not answering).
+        nt_send "⚠️ Could not ask $_bn for the balance (the modem is busy or not answering).
 Try again in a minute."
     fi
 }
@@ -337,7 +372,7 @@ Try again in a minute."
     fi
     [ "$_n" -le "$_total" ] || _n=$_total
     _order=$(sort -r "$NT_RUN/sms.order" | head -n "$_n" | cut -d' ' -f3)
-    _buf="📥 Newest $_n of $_total SMS
+    _buf="📥 <b>Newest $_n of $_total SMS</b>
 "
     _sep='
 '
@@ -353,9 +388,9 @@ Try again in a minute."
         else
             _buf="$_buf$_sep$_item"
         fi
-        _sep="
-$NT_SEP
-"
+        _sep='
+
+'
     done
     rm -rf "$NT_RUN/sms.order" "$NT_MP_SMS"
     nt_send "$_buf"

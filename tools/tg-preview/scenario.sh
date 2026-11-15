@@ -29,7 +29,7 @@ new_bot() {
 }
 # press ROW COL: a tap on a key of the reply keyboard; the client sends the label as a message
 press() {
-    _pl=$(markup_of 1 | jsonfilter -e "@.keyboard[$1][$2].text")
+    _pl=$(markup_of "$GREETING" | jsonfilter -e "@.keyboard[$1][$2].text")
     _pn=$(sent)
     tg_push "$TG_CHAT" "$_pl"
     printf 'u|%s|%s\n' "$(hhmm)" "$_pl" >>"$EV"
@@ -113,12 +113,14 @@ old_sms 38267000222 '11/06/26 21:14:00' 'Good night!'
 [ "$sms_n" = 24 ] || lw_fail "scenario: $sms_n old SMS instead of 24"
 
 # ---- the chat
-# first start after a reset: the greeting with the reset note and the reply keyboard
+# first start after a reset: the reset note (message 1), then the greeting with the reply keyboard
+# (message 2); a press of a key is a reply to the greeting, so it does not quote the reset note
+GREETING=2
 kb_first_start
 pass
 new_bot 0
 passes 3
-lw_expect_eq "$(sent)" 1 "messages before the first tap"
+lw_expect_eq "$(sent)" 2 "messages before the first tap"
 tick 58
 
 press 0 0 # Status
@@ -161,6 +163,16 @@ screen help
 jstr() {
     printf '"%s"' "$(sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/\t/\\t/g' | sed ':a;N;$!ba;s/\n/\\n/g')"
 }
+# msg_mode N: the parse_mode message N has now, the one of its last edit if it was edited
+msg_mode() {
+    _mm=$(mode_of "$1")
+    _mk=1
+    while [ "$_mk" -le "$(edits)" ]; do
+        [ "$(edit_msgid "$_mk")" != "$1" ] || _mm=$(edit_mode "$_mk")
+        _mk=$((_mk + 1))
+    done
+    printf '%s' "$_mm"
+}
 # jrows MARKUP KEY: the labels of an inline or reply keyboard as JSON rows
 jrows() {
     _jr=0
@@ -186,7 +198,7 @@ EOF
 
 {
     printf '{\n"title":"Home Router","members":2,\n'
-    printf '"keyboard":%s,\n' "$(jrows "$(markup_of 1)" keyboard)"
+    printf '"keyboard":%s,\n' "$(jrows "$(markup_of "$GREETING")" keyboard)"
     printf '"messages":[\n'
     id=0
     sep=
@@ -196,8 +208,8 @@ EOF
             s) printf '%s %s\n' "$id" "$a" >>"$T/tgp-screens" ;;
             u)
                 id=$((id + 1))
-                printf '%s{"id":%s,"from":"user","time":"%s","reply_to":1,"text":%s}' "$sep" "$id" "$a" \
-                    "$(printf '%s' "$b" | jstr)"
+                printf '%s{"id":%s,"from":"user","time":"%s","reply_to":%s,"text":%s}' "$sep" "$id" "$a" \
+                    "$GREETING" "$(printf '%s' "$b" | jstr)"
                 sep=',
 '
                 ;;
@@ -205,6 +217,7 @@ EOF
                 id=$((id + 1))
                 printf '%s{"id":%s,"from":"bot","time":"%s","text":%s' "$sep" "$id" "$a" \
                     "$(shown "$b" | jstr)"
+                [ "$(msg_mode "$b")" != HTML ] || printf ',"parse_mode":"HTML"'
                 _ik=$(jrows "$(markup_of "$b")" inline_keyboard)
                 [ "$_ik" = '[]' ] || printf ',"inline_keyboard":%s' "$_ik"
                 printf '}'

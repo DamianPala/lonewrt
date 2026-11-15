@@ -5,7 +5,7 @@ It runs on the laptop only; nothing here goes to a router or into the image.
 
 Two modes, one renderer:
 
-- **From the real code.** `scenario.sh` runs the bot inside the rootfs test harness with the fake Bot API, "taps" the keyboard buttons and prints the chat as a transcript. The texts are what the bot sent.
+- **From the real code.** `scenario.sh` runs the bot inside the rootfs test harness with the fake Bot API, "taps" the keyboard buttons and prints the chat as a transcript. The texts are what the bot sent, and `parse_mode` is what the fake API recorded for each message or edit (the bot sends HTML, SPEC R37g), so the pictures show the real markup. The first message is the reset note and the second the greeting with the keyboard (R37f); a tap is a reply to the greeting.
 - **Mockup.** A hand-written transcript in the same format, for message changes that have no code yet.
 
 ```sh

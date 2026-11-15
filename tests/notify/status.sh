@@ -1,6 +1,7 @@
 # R39, R39c, R39d, R39e: the /status layout. The R39c scenario word for word; no signal reading,
 # unreadable fields, the repair limit (R19), EDGE, offline, the signal thresholds, the Wi-Fi count,
-# the restart reason, the router's time zone, and a clock that ntpd has not synced.
+# the restart reason, the router's time zone, a clock that ntpd has not synced, the format of the
+# span in the Up line and of the age of the balance reading at their boundaries.
 # shellcheck source=tests/lib.sh
 . /fw/tests/lib.sh
 # shellcheck source=tests/notify/helpers.inc
@@ -20,6 +21,8 @@ status() {
 }
 # line_of TEXT PREFIX: the first line of TEXT that starts with PREFIX
 line_of() { printf '%s\n' "$1" | grep -m 1 -- "^$2" || :; }
+# tech_of TEXT: the Tech line without the quote tags around it (R39c)
+tech_of() { line_of "$1" '<blockquote>Tech:' | sed 's/^<blockquote>//; s/<\/blockquote>$//'; }
 # rating RSRP SINR: the word after "Signal: "
 rating() {
     sig_line "$1" "$2"
@@ -33,34 +36,34 @@ passes 2
 expect_sent 1
 
 # R39c scenario: -86 dBm, 4.6 dB, 0.31 EUR from today 11:05, threshold 7.50, no outage
-lw_expect_eq "$(status)" "🟢 Internet works
+lw_expect_eq "$(status)" "🟢 <b>Internet works</b>
+⚠️ Top up at least 7.50 EUR, or the data package will not renew.
 
 📶 Signal: fair (4G+)
 📱 Wi-Fi: 3 devices connected
-💶 Balance: 0.31 EUR (today 11:05)
-   ⚠️ below 7.50 EUR needed for the next data month
+💶 Balance: 0.31 EUR (checked today 11:05)
 📊 Data this month: unknown
-⏱ On since today 11:01 (power cut or manual restart)
+⏱ Up 19 min, since today 11:01 (power cut or manual restart)
 🔧 Last outage: none recorded
-⚠️ Top up at least 7.50 EUR
-
-Tech: B3+B1 · RSRP -86 · SINR 4.6 · ping 50 ms · VPN 2 min" "the R39c scenario"
+<blockquote>Tech: B3+B1 · RSRP -86 dBm · SINR 4.6 dB · ping 50 ms · VPN handshake 2 min ago</blockquote>" "the R39c scenario"
 case $(last_text) in
-    '🟢 Internet works'*'Tech: '*) ;;
+    '🟢 <b>Internet works</b>'*'Tech: '*'</blockquote>') ;;
     *) lw_fail "scenario: starts and ends wrong" ;;
 esac
-lw_expect_eq "$(last_text | tail -n 1 | cut -c1-5)" "Tech:" "last line"
+lw_expect_eq "$(last_text | tail -n 1 | cut -c1-17)" "<blockquote>Tech:" "last line"
+# the verdict is the one bold line, and the action line is line 2 (R39c, R39d)
+lw_expect_eq "$(last_text | grep -c '<b>')" 1 "bold lines"
 # no technical key=value pairs outside the Tech line (R39)
-if last_text | grep -v '^Tech:' | grep -q '[a-z_]=[^ ]'; then lw_fail "key=value in the answer"; fi
+if last_text | grep -v 'Tech:' | grep -q '[a-z_]=[^ ]'; then lw_fail "key=value in the answer"; fi
 
 # the balance is above the threshold: no warning, nothing to do
 balance_asked
 sms_in 1 1466 '11/07/26 11:30:00' 'Imate: 12.40 do 05.01.; '
 passes 2
 s=$(status)
-lw_expect_eq "$(line_of "$s" '💶')" "💶 Balance: 12.40 EUR (today 11:30)" "balance line"
-case $s in *'below 7.50'*) lw_fail "warning above the threshold" ;; esac
-lw_expect_eq "$(line_of "$s" '✅')" "✅ Nothing to do" "action line"
+lw_expect_eq "$(line_of "$s" '💶')" "💶 Balance: 12.40 EUR (checked today 11:30)" "balance line"
+case $s in *'Top up'*) lw_fail "warning above the threshold" ;; esac
+lw_expect_eq "$(printf '%s\n' "$s" | sed -n 2p)" "✅ Nothing to do" "action line"
 # an older reading that arrives later does not replace the newest
 balance_asked
 sms_in 2 1466 '11/06/26 18:40:00' 'Imate: 12.40 do 05.01.; '
@@ -76,11 +79,11 @@ wifi_set
 s=$(status)
 lw_expect_eq "$(line_of "$s" '📶')" "📶 Signal: unknown" "signal without a reading"
 lw_expect_eq "$(line_of "$s" '📱')" "📱 Wi-Fi: unknown" "Wi-Fi without networks"
-lw_expect_eq "$(line_of "$s" 'Tech:')" \
-    "Tech: unknown · RSRP unknown · SINR unknown · ping unknown · VPN unknown" "Tech without reading"
+lw_expect_eq "$(tech_of "$s")" \
+    "Tech: unknown · RSRP unknown · SINR unknown · ping unknown · VPN handshake unknown" "Tech without reading"
 sig_line '?' '?' '?' '?' '?'
-lw_expect_eq "$(line_of "$(status)" 'Tech:')" \
-    "Tech: unknown · RSRP unknown · SINR unknown · ping 50 ms · VPN 2 min" "Tech with ? fields"
+lw_expect_eq "$(tech_of "$(status)")" \
+    "Tech: unknown · RSRP unknown · SINR unknown · ping 50 ms · VPN handshake 2 min ago" "Tech with ? fields"
 
 # R39e thresholds, exactly: good at >= -95 and >= 10; poor below -105 or below 0; else fair
 lw_expect_eq "$(rating -95dBm 10dB)" good "-95 / 10"
@@ -101,8 +104,8 @@ sig_line -86dBm 4.6dB '?'
 lw_expect_eq "$(line_of "$(status)" '📶')" "📶 Signal: fair" "network unknown"
 # one band only
 sig_line -86dBm 4.6dB LTE-A_B3 'B3(1800MHz)' '?'
-lw_expect_eq "$(line_of "$(status)" 'Tech:')" \
-    "Tech: B3 · RSRP -86 · SINR 4.6 · ping 50 ms · VPN 2 min" "one band"
+lw_expect_eq "$(tech_of "$(status)")" \
+    "Tech: B3 · RSRP -86 dBm · SINR 4.6 dB · ping 50 ms · VPN handshake 2 min ago" "one band"
 
 # the Wi-Fi count: 1 device, none, and a ubus that does not answer
 sig_line -86dBm 4.6dB
@@ -126,7 +129,7 @@ case $s in *'Top up at least'*) lw_fail "top-up line at the limit" ;; esac
 # the limit and no internet: red, and the answer says why
 lw_net down down
 s=$(status)
-lw_expect_eq "$(line_of "$s" '🔴')" "🔴 Internet does not work" "offline verdict"
+lw_expect_eq "$(line_of "$s" '🔴')" "🔴 <b>Internet does not work</b>" "offline verdict"
 lw_expect_eq "$(printf '%s\n' "$s" | sed -n 2p)" \
     "The router has used up its self-repair restarts." "offline at the limit"
 # offline while repairing, and offline with no state yet
@@ -134,7 +137,8 @@ printf 'cycles=3\nreboots=0\nclass=hang\npassive=0\nuptime=900\n' >/etc/wwan-rec
 lw_expect_eq "$(status | sed -n 2p)" "The router is trying to repair it by itself." "repairing"
 rm -f /etc/wwan-recover.state
 lw_expect_eq "$(status | sed -n 2p)" "The router checks the connection every 5 minutes." "no state"
-lw_expect_eq "$(line_of "$(status)" '⚠️ Top')" "⚠️ Top up at least 7.50 EUR" "top-up line"
+lw_expect_eq "$(status | sed -n 3p)" "⚠️ Top up at least 7.50 EUR, or the data package will not renew." \
+    "top-up line under the verdict"
 
 # EDGE (R22): online on 2G is orange, with what works; the signal has no rating there
 : >/tmp/lw-edge
@@ -142,12 +146,12 @@ echo 0,0,0 >"$T/modem/zsnt"
 lw_net down up
 sig_line '?' '?' EDGE '?' '?'
 s=$(status)
-lw_expect_eq "$(printf '%s\n' "$s" | sed -n 1,2p)" "🟠 Internet works, but slow (2G backup)
+lw_expect_eq "$(printf '%s\n' "$s" | sed -n 1,2p)" "🟠 <b>Internet works, but slow (2G backup)</b>
 Messages and email OK, video and calls no." "EDGE verdict"
 lw_expect_eq "$(line_of "$s" '📶')" "📶 Signal: unknown (2G)" "EDGE signal"
 # EDGE and no internet is red
 lw_net down down
-lw_expect_eq "$(status | sed -n 1p)" "🔴 Internet does not work" "EDGE offline"
+lw_expect_eq "$(status | sed -n 1p)" "🔴 <b>Internet does not work</b>" "EDGE offline"
 rm -f /tmp/lw-edge
 echo 6,0,0 >"$T/modem/zsnt"
 lw_net up down
@@ -162,16 +166,16 @@ ntp_on
 # the first pass after a start only confirms what waits on the bot (R37)
 pass
 s=$(status)
-lw_expect_eq "$(line_of "$s" '⏱')" "⏱ On since today 11:20 (restarted by self-repair)" "self-repair"
+lw_expect_eq "$(line_of "$s" '⏱')" "⏱ Up 2 min, since today 11:20 (restarted by self-repair)" "self-repair"
 rm -f /etc/wwan-recover.state
 lw_expect_grep /tmp/lw-notify/boot_reason "restarted by self-repair"
-lw_expect_eq "$(line_of "$(status)" '⏱')" "⏱ On since today 11:20 (restarted by self-repair)" "kept"
+lw_expect_eq "$(line_of "$(status)" '⏱')" "⏱ Up 2 min, since today 11:20 (restarted by self-repair)" "kept"
 lw_reboot_sim 120
 wall_set '2026-11-07 11:22'
 printf 'cycles=50\nreboots=6\nclass=hang\npassive=1\nuptime=900\n' >/etc/wwan-recover.state
 ntp_on
 pass
-lw_expect_eq "$(line_of "$(status)" '⏱')" "⏱ On since today 11:20 (power cut or manual restart)" "passive"
+lw_expect_eq "$(line_of "$(status)" '⏱')" "⏱ Up 2 min, since today 11:20 (power cut or manual restart)" "passive"
 rm -f /etc/wwan-recover.state
 
 # a clock that ntpd has not synced: no today or yesterday, the uptime instead of a start time, and
@@ -179,17 +183,56 @@ rm -f /etc/wwan-recover.state
 ntp_off
 s=$(status)
 case $(line_of "$s" '⏱') in
-    '⏱ On for 2 min (power cut or manual restart)') ;;
+    '⏱ Up 2 min (power cut or manual restart)') ;;
     *) lw_fail "unsynced clock: $(line_of "$s" '⏱')" ;;
 esac
-lw_expect_eq "$(line_of "$s" '💶')" "💶 Balance: 0.31 EUR (7 Nov 11:40)" "balance with an unsynced clock"
+lw_expect_eq "$(line_of "$s" '💶')" "💶 Balance: 0.31 EUR (checked 7 Nov 11:40)" "balance with an unsynced clock"
 ntp_on
 
 # the router's zone (uci system zone, /tmp/TZ): 11:20 UTC is 12:20 in a CET zone in November
 echo 'CET-1CEST,M3.5.0,M10.5.0/3' >/tmp/TZ
 s=$(status)
-lw_expect_eq "$(line_of "$s" '⏱')" "⏱ On since today 12:20 (power cut or manual restart)" "zone"
+lw_expect_eq "$(line_of "$s" '⏱')" "⏱ Up 2 min, since today 12:20 (power cut or manual restart)" "zone"
 # after midnight local time the 11:40 UTC reading is yesterday's
 wall_set '2026-11-07 23:30'
-lw_expect_eq "$(line_of "$(status)" '💶')" "💶 Balance: 0.31 EUR (yesterday 11:40)" "yesterday"
+lw_expect_eq "$(line_of "$(status)" '💶')" "💶 Balance: 0.31 EUR (checked yesterday 11:40)" "yesterday"
+rm -f /tmp/TZ
+
+# R39c: the span of the Up line at its boundaries: under 1 h "25 min", under 1 day "5 h 12 min", from
+# 1 day "3 d 15 h"; the minutes are rounded, the start time is the exact one
+up_of() { line_of "$(status)" '⏱' | sed -n 's/^⏱ Up \(.*\), since .*/\1/p'; }
+wall_set '2026-11-07 11:20'
+for pair in 1500:'25 min' 3480:'58 min' 3600:'1 h 00 min' 18720:'5 h 12 min' 86100:'23 h 55 min' \
+    313200:'3 d 15 h' 90000:'1 d 1 h'; do
+    # the status call is one second later than the uptime set here, which the rounding absorbs
+    lw_uptime_set "${pair%%:*}"
+    lw_expect_eq "$(up_of)" "${pair#*:}" "span of ${pair%%:*} s"
+done
+# the start time is the wall clock minus the uptime
+wall_set '2026-11-15 07:58'
+lw_uptime_set 313200
+lw_expect_eq "$(line_of "$(status)" '⏱')" "⏱ Up 3 d 15 h, since 11 Nov 16:58 (power cut or manual restart)" \
+    "start time of a long uptime"
+
+# R39c: the age of the balance reading, from a day old on, in calendar days as the date beside it
+# reads; a younger reading, and an unsynced clock, have no age
+bal_line() { line_of "$(status)" '💶'; }
+wall_set '2026-11-15 07:58'
+lw_uptime_set 1500
+printf '0.31|2026-11-14 07:59\n' >/etc/lw-notify/lastbal
+lw_expect_eq "$(bal_line)" "💶 Balance: 0.31 EUR (checked yesterday 07:59)" "23 h 59 min old"
+printf '0.31|2026-11-14 07:57\n' >/etc/lw-notify/lastbal
+lw_expect_eq "$(bal_line)" "💶 Balance: 0.31 EUR (checked yesterday 07:57, 1 day ago)" "just over a day old"
+printf '0.31|2026-11-13 20:00\n' >/etc/lw-notify/lastbal
+lw_expect_eq "$(bal_line)" "💶 Balance: 0.31 EUR (checked 13 Nov 20:00, 2 days ago)" "over a day, the day before yesterday"
+printf '0.31|2026-11-09 10:00\n' >/etc/lw-notify/lastbal
+lw_expect_eq "$(bal_line)" "💶 Balance: 0.31 EUR (checked 9 Nov 10:00, 6 days ago)" "six dates back"
+printf '0.31|2026-10-25 10:00\n' >/etc/lw-notify/lastbal
+lw_expect_eq "$(bal_line)" "💶 Balance: 0.31 EUR (checked 25 Oct 10:00, 21 days ago)" "across a month"
+ntp_off
+lw_expect_eq "$(bal_line)" "💶 Balance: 0.31 EUR (checked 25 Oct 10:00)" "old reading, unsynced clock"
+ntp_on
+printf '0.31|\n' >/etc/lw-notify/lastbal
+lw_expect_eq "$(bal_line)" "💶 Balance: 0.31 EUR (checked unknown)" "reading without a time"
+expect_all_html
 echo ok

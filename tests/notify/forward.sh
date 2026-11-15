@@ -21,9 +21,8 @@ lw_expect_grep "$T/at-calls" 'AT+CPMS?'
 lw_expect_no_grep "$T/at-calls" 'recv'
 pass
 expect_sent 1
-lw_expect_eq "$(sent_text 1)" "✉️ +38200000001 · Today 10:24
-
-Vas racun je dopunjen sa 10 Eur. Stanje 10 Eur." "forwarded text"
+lw_expect_eq "$(sent_text 1)" "✉️ <b>+38200000001</b> · today 10:24
+<blockquote>Vas racun je dopunjen sa 10 Eur. Stanje 10 Eur.</blockquote>" "forwarded text"
 [ -z "$(find /etc/lw-notify/queue -type f 2>/dev/null)" ] ||
     lw_fail "sent message left in the queue"
 
@@ -43,10 +42,11 @@ sms_in 2 1477 '11/07/26 11:00:00' 'Internet 500MB: 0.00MB, važi do 01.01.2222'
 sms_in 3 +38200000002 '11/07/26 11:00:05' 'second & third = 100%'
 passes 2
 expect_sent 3
-expect_last 'second & third = 100%'
+expect_last '<blockquote>second &amp; third = 100%</blockquote>'
 case $(sent_text 2) in
     *'važi do 01.01.2222'*) ;;
     *) lw_fail "UTF-8 text changed: $(sent_text 2)" ;;
 esac
 lw_expect_eq "$(cat "$T/syslog")" "" "syslog after normal forwarding"
+expect_all_html
 echo ok

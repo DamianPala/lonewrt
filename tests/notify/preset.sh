@@ -19,6 +19,7 @@ reset_preset() {
 }
 cimi_calls() { grep -c 'AT+CIMI' "$T/at-calls" || :; }
 # ask_balance: /balance arrives and is answered
+answer() { shown "$(edit_msgid "$(edits)")"; }
 ask_balance() {
     tg_push "$TG_CHAT" /balance
     pass
@@ -34,13 +35,13 @@ sms_in 2 +38267123456 '11/07/26 11:01:00' 'plain number'
 sms_in 3 1466 '11/07/26 11:02:00' 'Neka poruka'
 sms_in 4 3030 '11/07/26 11:03:00' 'another short code'
 passes 2
-lw_expect_eq "$(sent_text 1 | head -n 1)" "✉️ Telekom 1477 · Today 11:00" "label of 1477"
-lw_expect_eq "$(sent_text 2 | head -n 1)" "✉️ +38267123456 · Today 11:01" "plus on a long number"
-lw_expect_eq "$(sent_text 3 | head -n 1)" "✉️ Telekom 1466 · Today 11:02" "label of 1466"
-lw_expect_eq "$(sent_text 4 | head -n 1)" "✉️ 3030 · Today 11:03" "other short codes stay"
+lw_expect_eq "$(sent_text 1 | head -n 1)" "✉️ <b>Telekom 1477</b> · today 11:00" "label of 1477"
+lw_expect_eq "$(sent_text 2 | head -n 1)" "✉️ <b>+38267123456</b> · today 11:01" "plus on a long number"
+lw_expect_eq "$(sent_text 3 | head -n 1)" "✉️ <b>Telekom 1466</b> · today 11:02" "label of 1466"
+lw_expect_eq "$(sent_text 4 | head -n 1)" "✉️ <b>3030</b> · today 11:03" "other short codes stay"
 tg_push "$TG_CHAT" /help
 pass
-expect_last '/balance – ask Telekom for the balance (~1 min)'
+expect_last '💶 <b>Balance</b> – ask Telekom (~1 min)'
 ask_balance
 lw_expect_eq "$(sms_out)" 1 "SMS for /balance"
 lw_expect_eq "$(sms_to 1) $(sms_body 1)" "1466 RACUN" "the query"
@@ -48,28 +49,23 @@ expect_last '💶 Asked Telekom for the balance (SMS to 1466)'
 lw_expect_eq "$(cimi_calls)" 1 "IMSI reads in all passes so far"
 sms_in 5 1466 '11/07/26 11:05:00' 'Imate: 0.31 do 05.01.; Hvala'
 passes 2
-lw_expect_eq "$(last_text)" "✉️ Telekom 1466 · Today 11:05
-
-Imate: 0.31 do 05.01.; Hvala
-= Balance 0.31 EUR, credit valid until 5 Jan
-
-⚠️ Low balance: 0.31 EUR (today 11:05)
-Top up at least 7.50 EUR, or the data package will not renew." "balance answer"
+lw_expect_eq "$(answer)" "💶 <b>Balance: 0.31 EUR</b>, valid until 5 Jan
+⚠️ Top up at least 7.50 EUR, or the data package will not renew.
+<blockquote>Telekom 1466, today 11:05:
+Imate: 0.31 do 05.01.; Hvala</blockquote>" "balance answer"
 # the answer of a number that is not the preset's sender is no balance
 sms_in 6 +38200000007 '11/07/26 11:06:00' 'Imate: 0.01 do 05.01.; Hvala'
 passes 2
-lw_expect_eq "$(last_text)" "✉️ +38200000007 · Today 11:06
-
-Imate: 0.01 do 05.01.; Hvala" "an answer from the wrong sender"
+lw_expect_eq "$(last_text)" "✉️ <b>+38200000007</b> · today 11:06
+<blockquote>Imate: 0.01 do 05.01.; Hvala</blockquote>" "an answer from the wrong sender"
 lw_expect_eq "$(cat /etc/lw-notify/lastbal)" "0.31|2026-11-07 11:05" "the wrong sender changed the balance"
 tg_push "$TG_CHAT" /status
 pass
-expect_last '💶 Balance: 0.31 EUR (today 11:05)'
-expect_last '   ⚠️ below 7.50 EUR needed for the next data month'
+expect_last '💶 Balance: 0.31 EUR (checked today 11:05)'
 expect_last '⚠️ Top up at least 7.50 EUR'
 tg_push "$TG_CHAT" /alerts
 pass
-expect_last 'Low balance: on'
+expect_last '✅ Low balance'
 lw-notify balance
 lw_expect_eq "$(sms_out)" 2 "SMS of the weekly job"
 lw_expect_eq "$(sms_to 2) $(sms_body 2)" "1466 RACUN" "the weekly query"
@@ -91,19 +87,18 @@ case $(last_text) in *'Top up'* | *'below'*) lw_fail "balance advice without a p
 case $(last_text) in *'✅ Nothing to do'*) ;; *) lw_fail "action line: $(last_text)" ;; esac
 tg_push "$TG_CHAT" /help
 pass
-expect_last '/balance – the balance check is not available for this SIM'
+expect_last '💶 <b>Balance</b> – not available for this SIM'
 tg_push "$TG_CHAT" /alerts
 pass
-expect_last 'Low balance: off'
+expect_last '❌ Low balance'
 sms_in 10 1466 '11/07/26 11:30:00' 'Imate: 0.20 do 05.01.; Hvala'
 sms_in 11 1477 '11/07/26 11:31:00' 'info'
 sms_in 12 +38200000007 '11/07/26 11:32:00' 'long number'
 passes 2
-lw_expect_eq "$(sent_text $(($(sent) - 2)))" "✉️ 1466 · Today 11:30
-
-Imate: 0.20 do 05.01.; Hvala" "1466 without a preset: plain, no translation, no warning"
-lw_expect_eq "$(sent_text $(($(sent) - 1)) | head -n 1)" "✉️ 1477 · Today 11:31" "1477 without a preset"
-lw_expect_eq "$(sent_text "$(sent)" | head -n 1)" "✉️ +38200000007 · Today 11:32" "long number"
+lw_expect_eq "$(sent_text $(($(sent) - 2)))" "✉️ <b>1466</b> · today 11:30
+<blockquote>Imate: 0.20 do 05.01.; Hvala</blockquote>" "1466 without a preset: plain, no translation, no warning"
+lw_expect_eq "$(sent_text $(($(sent) - 1)) | head -n 1)" "✉️ <b>1477</b> · today 11:31" "1477 without a preset"
+lw_expect_eq "$(sent_text "$(sent)" | head -n 1)" "✉️ <b>+38200000007</b> · today 11:32" "long number"
 [ ! -e /etc/lw-notify/lastbal ] || lw_fail "a balance was kept without a preset"
 lw-notify balance
 lw_expect_eq "$(sms_out)" "$n" "SMS of the weekly job without a preset"
@@ -300,7 +295,7 @@ printf '%s\n' "$GOOD" | grep -v '^SHORT_CODES' >"$OPS/29702"
 reset_preset
 sms_in 40 1477 '11/07/26 11:40:00' 'info'
 passes 3
-lw_expect_eq "$(last_text | head -n 1)" "✉️ 1477 · Today 11:40" "a preset without SHORT_CODES"
+lw_expect_eq "$(last_text | head -n 1)" "✉️ <b>1477</b> · today 11:40" "a preset without SHORT_CODES"
 
 # --- another operator: currency, labels, query, pattern with the date as month/day
 printf '%s\n' "OPERATOR_NAME='Acme Mobile'" "CURRENCY='USD'" "BALANCE_QUERY_NUMBER='4040'" \
@@ -313,7 +308,7 @@ rm -f /etc/lw-notify/lastbal /etc/lw-notify/balance
 n=$(sms_out)
 tg_push "$TG_CHAT" /help
 pass
-expect_last '/balance – ask Acme Mobile for the balance (~1 min)'
+expect_last '💶 <b>Balance</b> – ask Acme Mobile (~1 min)'
 ask_balance
 lw_expect_eq "$(sms_out)" $((n + 1)) "SMS for /balance with another preset"
 lw_expect_eq "$(sms_to $((n + 1))) $(sms_body $((n + 1)))" "4040 BAL" "the query of the other preset"
@@ -321,26 +316,21 @@ expect_last '💶 Asked Acme Mobile for the balance (SMS to 4040)'
 sms_in 20 4040 '11/07/26 12:00:00' 'hello from the short code'
 sms_in 21 1466 '11/07/26 12:01:00' 'not a Telekom code here'
 passes 2
-lw_expect_eq "$(sent_text $(($(sent) - 1)) | head -n 1)" "✉️ Acme Mobile 4040 · Today 12:00" "label of 4040"
-lw_expect_eq "$(sent_text "$(sent)" | head -n 1)" "✉️ 1466 · Today 12:01" "1466 has no label here"
+lw_expect_eq "$(sent_text $(($(sent) - 1)) | head -n 1)" "✉️ <b>Acme Mobile 4040</b> · today 12:00" "label of 4040"
+lw_expect_eq "$(sent_text "$(sent)" | head -n 1)" "✉️ <b>1466</b> · today 12:01" "1466 has no label here"
 sms_in 22 ACME '11/07/26 12:02:00' 'Your balance is 3,20 USD, valid till 3/27'
 passes 2
-lw_expect_eq "$(last_text)" "✉️ ACME · Today 12:02
-
-Your balance is 3,20 USD, valid till 3/27
-= Balance 3.20 USD, credit valid until 27 Mar
-
-⚠️ Low balance: 3.20 USD (today 12:02)
-Top up at least 7.50 USD, or the data package will not renew." "balance answer, USD"
+lw_expect_eq "$(answer)" "💶 <b>Balance: 3.20 USD</b>, valid until 27 Mar
+⚠️ Top up at least 7.50 USD, or the data package will not renew.
+<blockquote>ACME, today 12:02:
+Your balance is 3,20 USD, valid till 3/27</blockquote>" "balance answer, USD"
 sms_in 23 4040 '11/07/26 12:03:00' 'Your balance is 1.00 USD, valid till 3/27'
 passes 2
-lw_expect_eq "$(last_text)" "✉️ Acme Mobile 4040 · Today 12:03
-
-Your balance is 1.00 USD, valid till 3/27" "the pattern from the wrong sender"
+lw_expect_eq "$(last_text)" "✉️ <b>Acme Mobile 4040</b> · today 12:03
+<blockquote>Your balance is 1.00 USD, valid till 3/27</blockquote>" "the pattern from the wrong sender"
 tg_push "$TG_CHAT" /status
 pass
-expect_last '💶 Balance: 3.20 USD (today 12:02)'
-expect_last '   ⚠️ below 7.50 USD needed for the next data month'
+expect_last '💶 Balance: 3.20 USD (checked today 12:02)'
 expect_last '⚠️ Top up at least 7.50 USD'
 case $(last_text) in *EUR*) lw_fail "EUR in /status of a USD preset: $(last_text)" ;; esac
 lw-notify balance
@@ -356,10 +346,9 @@ lw_expect_eq "$(cat /etc/lw-notify/lastbal)" "12.00|2026-11-07 12:10" "balance k
 ask_balance
 sms_in 25 ACME '11/07/26 12:11:00' 'Your balance is 11.50 USD, valid till 4/01'
 passes 2
-lw_expect_eq "$(last_text)" "✉️ ACME · Today 12:11
-
-Your balance is 11.50 USD, valid till 4/01
-= Balance 11.50 USD, credit valid until 1 Apr" "an asked answer above the threshold"
+lw_expect_eq "$(answer)" "💶 <b>Balance: 11.50 USD</b>, valid until 1 Apr
+<blockquote>ACME, today 12:11:
+Your balance is 11.50 USD, valid till 4/01</blockquote>" "an asked answer above the threshold"
 # a pattern without a date and with {any}
 printf '%s\n' "OPERATOR_NAME='Acme Mobile'" "CURRENCY='EUR'" "BALANCE_QUERY_NUMBER='+15550100'" \
     "BALANCE_QUERY_TEXT='STATE'" "BALANCE_REPLY_FROM='+15550100'" \
@@ -371,10 +360,9 @@ ask_balance
 lw_expect_eq "$(sms_to $((n + 1))) $(sms_body $((n + 1)))" "15550100 STATE" "query to a number written with a plus"
 sms_in 30 +15550100 '11/07/26 12:20:00' 'Saldo: 9.99 EUR, hvala'
 passes 2
-lw_expect_eq "$(last_text)" "✉️ +15550100 · Today 12:20
-
-Saldo: 9.99 EUR, hvala
-= Balance 9.99 EUR" "pattern without a date"
+lw_expect_eq "$(answer)" "💶 <b>Balance: 9.99 EUR</b>
+<blockquote>+15550100, today 12:20:
+Saldo: 9.99 EUR, hvala</blockquote>" "pattern without a date"
 # {any} followed by fixed text and then the number reads the whole number (not its last digit)
 printf '%s\n' "OPERATOR_NAME='Acme Mobile'" "CURRENCY='EUR'" "BALANCE_QUERY_NUMBER='4040'" \
     "BALANCE_QUERY_TEXT='STATE'" "BALANCE_REPLY_FROM='ACME'" \
@@ -385,10 +373,9 @@ imsi 99997
 ask_balance
 sms_in 31 ACME '11/07/26 12:30:00' 'Stanje na racunu iznosi 12.40 EUR, vazi do 5 dana 15.03.'
 passes 2
-lw_expect_eq "$(last_text)" "✉️ ACME · Today 12:30
-
-Stanje na racunu iznosi 12.40 EUR, vazi do 5 dana 15.03.
-= Balance 12.40 EUR, credit valid until 15 Mar" "any before fixed text"
+lw_expect_eq "$(answer)" "💶 <b>Balance: 12.40 EUR</b>, valid until 15 Mar
+<blockquote>ACME, today 12:30:
+Stanje na racunu iznosi 12.40 EUR, vazi do 5 dana 15.03.</blockquote>" "any before fixed text"
 # R47c: any other character between {any} and the number is enough (a colon, a letter), and a
 # pattern that ends in {any} or has {any} before a name still passes: the whole number is read
 printf '%s\n' "OPERATOR_NAME='Acme Mobile'" "CURRENCY='EUR'" "BALANCE_QUERY_NUMBER='4040'" \
@@ -399,9 +386,8 @@ imsi 99996
 ask_balance
 sms_in 32 ACME '11/07/26 12:40:00' 'Saldo racuna:112.50 EUR'
 passes 2
-lw_expect_eq "$(last_text)" "✉️ ACME · Today 12:40
-
-Saldo racuna:112.50 EUR
-= Balance 112.50 EUR" "any, colon, amount"
+lw_expect_eq "$(answer)" "💶 <b>Balance: 112.50 EUR</b>
+<blockquote>ACME, today 12:40:
+Saldo racuna:112.50 EUR</blockquote>" "any, colon, amount"
 no_orphans
 echo ok

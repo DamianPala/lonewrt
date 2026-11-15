@@ -24,6 +24,11 @@ restart() {
     ntp_on
     passes 2
 }
+# list_text LOW 2G: the /alerts text with one tick or cross for the low-balance and the 2G message (R37)
+list_text() {
+    printf '🔔 <b>Automatic messages</b>\n✅ New SMS\n%s Low balance\n✅ Internet back\n%s 2G backup\n\n' "$1" "$2"
+    printf '<i>Only the 2G message can be turned off.</i>'
+}
 TWOG="🟠 Internet slow: switched to 2G backup
 Messages and email OK, video and calls no.
 4G down since today 14:20, the router keeps trying to bring it back.
@@ -32,11 +37,10 @@ Messages and email OK, video and calls no.
 # the list, on by default; "Low balance" follows the threshold in the profile
 tg_push "$TG_CHAT" /alerts
 pass
-lw_expect_eq "$(last_text)" "🔔 Automatic messages
-New SMS: on · Low balance: on · Internet back: on · 2G backup: on" "/alerts"
+lw_expect_eq "$(last_text)" "$(list_text ✅ ✅)" "/alerts"
 tg_push "$TG_CHAT" /help
 pass
-expect_last '/alerts – automatic messages, on or off'
+expect_last '🔔 <b>Alerts</b> – automatic messages, on or off'
 
 # the R40c scenario: on, EDGE entered twice in one outage -> one 2G message, one Internet back
 wall_set '2026-11-07 14:20'
@@ -78,8 +82,7 @@ Down since today 14:20, fixed by 2 restarts." "Internet back"
 tg_push "$TG_CHAT" '/alerts 2g off'
 pass
 lw_expect_eq "$(last_text)" "🔔 2G backup message is now off.
-🔔 Automatic messages
-New SMS: on · Low balance: on · Internet back: on · 2G backup: off" "off confirmation"
+$(list_text ✅ ❌)" "off confirmation"
 [ -e /etc/lw-notify/no-2g ] || lw_fail "the off switch left no file"
 before=$(flash_state)
 tg_push "$TG_CHAT" '/alerts@TestBot 2G OFF'
@@ -87,14 +90,13 @@ tg_push "$TG_CHAT" '/alerts 2g'
 tg_push "$TG_CHAT" '/alerts everything'
 pass
 lw_expect_eq "$(flash_state)" "$before" "flash for an unchanged switch"
-lw_expect_eq "$(sent_text "$(sent)" | sed -n 2p)" "New SMS: on · Low balance: on · Internet back: on · 2G backup: off" \
-    "list with the switch off"
+lw_expect_eq "$(sent_text "$(sent)" | sed -n 5p)" "❌ 2G backup" "list with the switch off"
 
 # survives a reboot; the 2G message stays away, Internet back does not
 restart
 tg_push "$TG_CHAT" /alerts
 pass
-expect_last '2G backup: off'
+expect_last '❌ 2G backup'
 wall_set '2026-11-08 14:20'
 rec_state 1 0
 pass
@@ -130,7 +132,7 @@ uci -q delete lonewrt.notify.low_balance
 uci -q commit lonewrt
 tg_push "$TG_CHAT" /alerts
 pass
-expect_last 'Low balance: off'
+expect_last '❌ Low balance'
 
 # a new flash restores "on" (the overlay is empty)
 tg_push "$TG_CHAT" '/alerts 2g off'
@@ -140,8 +142,9 @@ rm -r -f /etc/lw-notify
 restart
 tg_push "$TG_CHAT" /alerts
 pass
-expect_last '2G backup: on'
+expect_last '✅ 2G backup'
 
 # R37a: the switch is the only state the commands change; no uci write, no AT setting
 lw_expect_no_grep "$T/at-calls" 'AT+[A-Z]*='
+expect_all_html
 echo ok

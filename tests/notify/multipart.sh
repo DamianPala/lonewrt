@@ -16,7 +16,7 @@ expect_sent 0
 
 hex_of() { hexdump -v -e '/1 "%02X"' "$1"; }
 # body N: the text of message N without its two header lines
-body() { sent_text "$1" | tail -n +3; }
+body() { sent_text "$1" | tail -n +2 | sed -e 's|^<blockquote>||' -e 's|</blockquote>$||'; }
 # later SECONDS: the clocks of the service move on
 later() { lw_uptime_add "$1"; wall_add "$1"; }
 # restart: the router restarts and ntpd syncs the clock again
@@ -30,9 +30,8 @@ expect_sent 0
 sms_part 20 $S '11/07/26 11:29:58' 160 1 2 'This is the first half'
 passes 2
 expect_sent 1
-lw_expect_eq "$(sent_text 1)" "✉️ +38200000001 · Today 11:29
-
-This is the first half and the second half." "two parts joined, no separator"
+lw_expect_eq "$(sent_text 1)" "✉️ <b>+38200000001</b> · today 11:29
+<blockquote>This is the first half and the second half.</blockquote>" "two parts joined, no separator"
 passes 3
 expect_sent 1
 
@@ -61,10 +60,9 @@ lw_expect_no_grep "$T/at-calls" recv
 later 20
 passes 4
 expect_sent 2
-lw_expect_eq "$(sent_text 2)" "✉️ +38200000001 · Today 11:40
-
-Part one. Part three.
-(part 2 of 3 missing)" "a group forwarded with a part missing"
+lw_expect_eq "$(sent_text 2)" "✉️ <b>+38200000001</b> · today 11:40
+<blockquote>Part one. Part three.
+(part 2 of 3 missing)</blockquote>" "a group forwarded with a part missing"
 passes 4
 expect_sent 2
 restart
@@ -112,7 +110,7 @@ lw_expect_eq "$(body 6)" "Beta one, beta two." "reference 171"
 sms_part 55 +38200000002 '11/07/26 12:20:02' 170 2 2 'gamma two.'
 passes 2
 expect_sent 7
-lw_expect_eq "$(sent_text 7 | head -n 1)" "✉️ +38200000002 · Today 12:20" "the other sender"
+lw_expect_eq "$(sent_text 7 | head -n 1)" "✉️ <b>+38200000002</b> · today 12:20" "the other sender"
 lw_expect_eq "$(body 7)" "Gamma one, gamma two." "same reference, other sender"
 
 # --- a Latin-1 byte: repaired in its part before the join. Part 1 ends with the byte C3 and part 2
@@ -123,7 +121,7 @@ sms_part 61 $S '11/07/26 12:30:00' 180 2 2 "$(printf '\251') m$(printf '\363')j"
 passes 2
 expect_sent 8
 case $(hex_of "$G/sent/8.text") in
-    *636166C383C2A9206DC3B36A) ;;
+    *636166C383C2A9206DC3B36A3C2F626C6F636B71756F74653E) ;;
     *) lw_fail "Latin-1 parts: $(hex_of "$G/sent/8.text")" ;;
 esac
 lw_expect_eq "$(rejected_n)" 0 "rejections after Latin-1 parts"
@@ -133,7 +131,7 @@ sms_part 63 $S '11/07/26 12:31:00' 181 2 2 "n$(printf '\351')"
 passes 2
 expect_sent 9
 case $(hex_of "$G/sent/9.text") in
-    *6DC3B36A206EC3A9) ;;
+    *6DC3B36A206EC3A93C2F626C6F636B71756F74653E) ;;
     *) lw_fail "mixed parts: $(hex_of "$G/sent/9.text")" ;;
 esac
 lw_expect_eq "$(rejected_n)" 0 "rejections after mixed parts"
@@ -151,30 +149,27 @@ tg_push "$TG_CHAT" /sms
 pass
 lw_expect_eq "$(sent)" $((n + 1)) "replies to /sms"
 case $(last_text) in
-    '📥 Newest 3 of 3 SMS
+    '📥 <b>Newest 3 of 3 SMS</b>
 '*) ;;
     *) lw_fail "/sms count: $(last_text)" ;;
 esac
-lw_expect_eq "$(last_text)" "📥 Newest 3 of 3 SMS
+lw_expect_eq "$(last_text)" "📥 <b>Newest 3 of 3 SMS</b>
 
-✉️ +38200000001 · Today 12:45
+✉️ <b>+38200000001</b> · today 12:45
+<blockquote>x1 x2
+(part 3 of 3 missing)</blockquote>
 
-x1 x2
-(part 3 of 3 missing)
-────────────
-✉️ +38200000001 · Today 12:40
+✉️ <b>+38200000001</b> · today 12:40
+<blockquote>one of two, two of two</blockquote>
 
-one of two, two of two
-────────────
-✉️ +38200000009 · Today 12:35
-
-a plain one" "/sms with joined messages"
+✉️ <b>+38200000009</b> · today 12:35
+<blockquote>a plain one</blockquote>" "/sms with joined messages"
 tg_push "$TG_CHAT" '/sms 2'
 pass
 case $(last_text) in
-    '📥 Newest 2 of 3 SMS
+    '📥 <b>Newest 2 of 3 SMS</b>
 '*'x1 x2
-(part 3 of 3 missing)'*'one of two, two of two') ;;
+(part 3 of 3 missing)'*'one of two, two of two</blockquote>') ;;
     *) lw_fail "/sms 2: $(last_text)" ;;
 esac
 # an empty store
@@ -192,7 +187,7 @@ sms_part 80 $ADMIN_DIGITS '11/07/26 13:00:00' 200 1 2 'STA'
 sms_part 81 $ADMIN_DIGITS '11/07/26 13:00:00' 200 2 2 'TUS'
 passes 2
 lw_expect_eq "$(sms_out)" "$n" "SMS sent for a command in parts"
-lw_expect_eq "$(last_text | tail -n 1)" "STATUS" "the parts still reach the chat"
+lw_expect_eq "$(last_text | tail -n 1)" "<blockquote>STATUS</blockquote>" "the parts still reach the chat"
 sms_part 82 $ADMIN_DIGITS '11/07/26 13:01:00' 201 1 2 'REBOO'
 sms_part 83 $ADMIN_DIGITS '11/07/26 13:01:00' 201 2 2 'T'
 passes 4

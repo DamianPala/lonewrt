@@ -13,8 +13,15 @@
 #                      STRING, "all" every text. Each rejection adds a line to tg/rejected; with
 #                      tg/down_after_reject present it also sets tg/net to down (the network drops
 #                      between a message and its retry).
+#                      Two more rules, for HTML (R37g): "html" rejects a sendMessage or editMessageText
+#                      with parse_mode=HTML, "edit" every editMessageText.
 #   tg/status          an HTTP status (e.g. 500, 429) every call answers with: "HTTP error N" on
 #                      stderr, exit 8
+# parse_mode: the field is recorded per message in tg/sent/N.mode and per edit in tg/edits/K.mode
+# (empty for plain text). With parse_mode=HTML the text must be markup Telegram takes: only the tags
+# b, i, u, s, code, pre, blockquote, properly nested and closed, a "<", ">" or "&" that is not part of
+# a tag or of one of the entities &amp; &lt; &gt; &quot; is a 400, as is an empty text. The check is
+# written here apart from the code under test, so every test of the bot also tests its markup.
 # Like the real one, it prints "Downloading '<URL with the token>'" and "Connecting to ..." on
 # stderr unless called with -q, so a test sees whether the caller keeps that stderr out of logs.
 #   hc/mode           for addresses outside the Bot API (the healthchecks.io ping): up (default),
@@ -92,11 +99,55 @@ utf8_valid() {
         { ok = ($0 ~ r) } END { exit !ok }'
 }
 
-# rejected: the sendMessage text in $body breaks a rule of tg/reject400
+# html_valid: stdin is HTML as Telegram's parse_mode=HTML takes it (see the header)
+html_valid() {
+    awk '
+        { buf = buf (NR > 1 ? "\n" : "") $0 }
+        END {
+            if (buf == "") exit 1
+            n = 0
+            i = 1
+            len = length(buf)
+            while (i <= len) {
+                c = substr(buf, i, 1)
+                if (c == "<") {
+                    j = index(substr(buf, i), ">")
+                    if (j == 0) exit 1
+                    tag = substr(buf, i + 1, j - 2)
+                    i += j
+                    closing = (substr(tag, 1, 1) == "/")
+                    if (closing) tag = substr(tag, 2)
+                    if (tag !~ /^(b|i|u|s|code|pre|blockquote)$/) exit 1
+                    if (closing) {
+                        if (n == 0 || st[n] != tag) exit 1
+                        n--
+                    } else st[++n] = tag
+                    continue
+                }
+                if (c == ">") exit 1
+                if (c == "&") {
+                    rest = substr(buf, i, 6)
+                    if (rest ~ /^&(amp|lt|gt);/) { i += (substr(rest, 2, 1) == "a" ? 5 : 4); continue }
+                    if (rest ~ /^&quot;/) { i += 6; continue }
+                    exit 1
+                }
+                i++
+            }
+            exit (n != 0)
+        }'
+}
+
+# rejected METHOD: the text in $body breaks a rule of tg/reject400 (only the rules "html" and "edit"
+# look at editMessageText)
 rejected() {
     [ -f "$G/reject400" ] || return 1
     enc=$(tr '&' '\n' <"$body" | sed -n 's/^text=//p')
     while read -r rule arg; do
+        case $rule in
+            html) [ "$(param parse_mode)" != HTML ] || return 0 ;;
+            edit) [ "$1" != editMessageText ] || return 0 ;;
+        esac
+        [ "$1" = sendMessage ] || continue
         case $rule in
             all) return 0 ;;
             byte) ! printf '%s' "$enc" | grep -qi "%$arg" || return 0 ;;
@@ -155,22 +206,41 @@ case $method in
         printf ']}\n'
         ;;
     sendMessage)
-        if rejected; then
+        if rejected sendMessage; then
             echo x >>"$G/rejected"
             ! [ -f "$G/down_after_reject" ] || echo down >"$G/net"
             echo "HTTP error 400" >&2
             exit 8
         fi
         markup_ok || { echo "HTTP error 400" >&2; exit 8; }
+        mode=$(param parse_mode)
+        # a text that Telegram would refuse is a 400 and is counted like a rule rejection
+        if [ "$mode" = HTML ] && ! param text | html_valid; then
+            echo x >>"$G/rejected"
+            echo "HTTP error 400" >&2
+            exit 8
+        fi
         n=$(($(find "$G/sent" -name '*.text' | wc -l) + 1))
         param chat_id >"$G/sent/$n.chat"
         param text >"$G/sent/$n.text"
         param text >"$G/sent/$n.shown"
         param reply_markup >"$G/sent/$n.markup"
+        printf '%s' "$mode" >"$G/sent/$n.mode"
         printf '{"ok":true,"result":{"message_id":%s}}\n' "$n"
         ;;
     editMessageText)
         id=$(param message_id)
+        if rejected editMessageText; then
+            echo x >>"$G/rejected"
+            echo "HTTP error 400" >&2
+            exit 8
+        fi
+        mode=$(param parse_mode)
+        if [ "$mode" = HTML ] && ! param text | html_valid; then
+            echo x >>"$G/rejected"
+            echo "HTTP error 400" >&2
+            exit 8
+        fi
         markup_ok || { echo "HTTP error 400" >&2; exit 8; }
         [ -f "$G/sent/$id.text" ] && [ "$(param chat_id)" = "$(cat "$G/sent/$id.chat")" ] ||
             { echo "HTTP error 400" >&2; exit 8; }
@@ -185,6 +255,7 @@ case $method in
         echo "$id" >"$G/edits/$k.msgid"
         param text >"$G/edits/$k.text"
         param reply_markup >"$G/edits/$k.markup"
+        printf '%s' "$mode" >"$G/edits/$k.mode"
         param text >"$G/sent/$id.shown"
         [ -z "$(param reply_markup)" ] || param reply_markup >"$G/sent/$id.markup"
         printf '{"ok":true,"result":{"message_id":%s}}\n' "$id"

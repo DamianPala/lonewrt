@@ -94,11 +94,11 @@ nt_st_num() {
     esac
 }
 
-# nt_st_txt VALUE: a name from the tool, as one short line without control characters.
+# nt_st_txt VALUE: a name from the tool, as one short line without control characters, as HTML text
+# (R37g).
 nt_st_txt() {
     _stt=$(printf '%s' "$1" | tr -d '\000-\037\177' | cut -c1-60)
-    nt_defuse "$_stt"
-    printf '%s' "$NT_DEF"
+    nt_hd "$_stt"
 }
 
 # nt_st_int VALUE: whole number, rounded half up; nothing for a missing or non-numeric value.
@@ -331,5 +331,5 @@ nt_st_status_line() {
     _spg="$NT_ST_PG ms"
     [ "$NT_ST_PG" != '?' ] || _spg=unknown
     printf '\n🚀 Speed test: %s ⬇️ / %s ⬆️ Mbit/s · ping %s (%s)' "$NT_ST_DL" "$NT_ST_UL" "$_spg" \
-        "$(nt_when L "$NT_ST_AT")"
+        "$(nt_when "$NT_ST_AT")"
 }

@@ -5,9 +5,10 @@
 # the label (with or without U+FE0F, with white space around) runs its command; other text without
 # a slash is ignored without an answer and without a log line; typed commands, also with the bot's
 # name, keep working, and a command for another bot ("/help@OtherBot") is ignored.
-# R37f, D75: the same message starts with two lines that say the router was reset, but only when the
-# state on flash was empty at the start (no flag, nothing else in /etc/lw-notify), and it stays one
-# message.
+# R37f, D75, D84: before the greeting the chat gets a message of its own with two lines that say the
+# router was reset, but only when the state on flash was empty at the start (no flag, nothing else in
+# /etc/lw-notify). It is apart from the greeting because a press of a button is a reply to the
+# message that carries the keyboard, and every press would quote "Router was reset".
 # shellcheck source=tests/lib.sh
 . /fw/tests/lib.sh
 # shellcheck source=tests/notify/helpers.inc
@@ -21,16 +22,18 @@ echo HomeRouterBot >"$G/username"
 FE=$(printf '\357\270\217')
 ENVELOPE=$(printf '\342\234\211')
 HELLO='🤖 The router bot is ready. Tap a button below, or send /help to see what each one does.'
-RESET='🔄 Router was reset to its built-in settings.
+RESET='🔄 <b>Router was reset to its built-in settings.</b>
 Earlier logs and saved SMS are gone.'
 LABELS='🟢 Status|📶 Wi-Fi|📱 Devices|⚡ Speed|💶 Balance|✉'"$FE"' SMS|🔔 Alerts|🔄 Reboot|❓ Help|'
 
-# ---- first start: nothing sent before the first pass, then one message with the keyboard
+# ---- first start: nothing sent before the first pass, then the reset note and, as the second
+# message, the greeting with the keyboard (the note has none)
 kb_first_start
 [ ! -e /etc/lw-notify/keyboard ] || lw_fail "flag present before the first start"
 pass
-expect_sent 1
-KB=$(markup_of 1)
+expect_sent 2
+lw_expect_eq "$(markup_of 1)" "" "keyboard on the reset note"
+KB=$(markup_of 2)
 lw_expect_eq "$(printf '%s\n' "$KB" | jsonfilter -e '@.keyboard[*][*].text' | tr '\n' '|')" "$LABELS" \
     "button labels in order"
 lw_expect_eq "$(printf '%s\n' "$KB" | jsonfilter -e '@.keyboard[*]' | wc -l | tr -d ' ')" 3 "rows"
@@ -42,18 +45,18 @@ lw_expect_eq "$(printf '%s\n' "$KB" | jsonfilter -e '@.is_persistent')" true "is
 lw_expect_eq "$(printf '%s\n' "$KB" | jsonfilter -e '@.resize_keyboard')" true "resize_keyboard"
 case $KB in *"$ENVELOPE$FE SMS"*) ;; *) lw_fail "the envelope button lacks U+FE0F: $KB" ;; esac
 [ -e /etc/lw-notify/keyboard ] || lw_fail "no flag after the first start"
-lw_expect_eq "$(sent_text 1)" "$RESET
-
-$HELLO" "greeting of the first start"
+lw_expect_eq "$(sent_text 1)" "$RESET" "reset note of the first start"
+lw_expect_eq "$(sent_text 2)" "$HELLO" "greeting of the first start"
 [ ! -e /etc/lw-notify/reset-note ] || lw_fail "reset note left after the greeting went out"
 lw_expect_eq "$(cat "$T/syslog")" "" "syslog after the first start"
+expect_all_html
 passes 3
-expect_sent 1
+expect_sent 2
 
 # ---- not again: after a restart of the router (RAM empty, flash kept) and of the service
 reboot_sim 60
 passes 2
-expect_sent 1
+expect_sent 2
 LW_NOTIFY_CLOCK=/proc/uptime LW_NOTIFY_POLL=2 LW_NOTIFY_LONGPOLL=1 lw-notify run </dev/null \
     >/dev/null 2>&1 &
 svc=$!
@@ -66,7 +69,7 @@ svc=$!
 sleep 3
 kill -TERM "$svc"
 wait "$svc" || :
-expect_sent 1
+expect_sent 2
 
 # ---- again after a reset (it removes /etc/lw-notify); while Telegram is down it is retried, and
 # written down only once it went out
@@ -77,33 +80,35 @@ passes 3
 [ ! -e /etc/lw-notify/keyboard ] || lw_fail "flag written though nothing was sent"
 echo up >"$G/net"
 pass
-expect_sent 2
-lw_expect_eq "$(markup_of 2)" "$KB" "keyboard after a reset"
-lw_expect_eq "$(sent_text 2)" "$RESET
-
-$HELLO" "greeting after a reset"
+expect_sent 4
+lw_expect_eq "$(markup_of 4)" "$KB" "keyboard after a reset"
+lw_expect_eq "$(markup_of 3)" "" "no keyboard on the reset note after a reset"
+lw_expect_eq "$(sent_text 3)" "$RESET" "reset note after a reset"
+lw_expect_eq "$(sent_text 4)" "$HELLO" "greeting after a reset"
 [ -e /etc/lw-notify/keyboard ] || lw_fail "no flag after the second first start"
 passes 3
-expect_sent 2
+expect_sent 4
 
 # a flash that cannot be written: one send, not one per pass
 rm -rf /etc/lw-notify /tmp/lw-notify
 mkdir -p /tmp/lw-notify
 mv_fail /lw-notify/keyboard
 passes 3
-expect_sent 3
+expect_sent 6
 mv_ok
 
-# ---- Telegram rejects the message (HTTP 400, also as ASCII): dropped, one log line, no retry
+# ---- Telegram rejects the messages (HTTP 400, also as plain text and ASCII): each dropped with one
+# log line, no retry
 rm -rf /etc/lw-notify /tmp/lw-notify
 mkdir -p /tmp/lw-notify
 echo all >"$G/reject400"
 : >"$T/syslog"
 passes 3
-lw_expect_eq "$(rejected_n)" 2 "rejected tries"
-expect_sent 3
+lw_expect_eq "$(rejected_n)" 6 "rejected tries (HTML, plain, ASCII for each of the two messages)"
+expect_sent 6
 [ -e /etc/lw-notify/keyboard ] || lw_fail "no flag after a rejected message"
-lw_expect_eq "$(wc -l <"$T/syslog" | tr -d ' ')" 1 "syslog lines for a rejected keyboard message"
+lw_expect_eq "$(wc -l <"$T/syslog" | tr -d ' ')" 2 "syslog lines for the rejected messages"
+lw_expect_grep "$T/syslog" "lw-notify: Telegram rejected the reset note"
 lw_expect_grep "$T/syslog" "lw-notify: Telegram rejected the keyboard message"
 rm -f "$G/reject400"
 
@@ -120,25 +125,36 @@ passes 2
 expect_sent "$n"
 echo up >"$G/net"
 pass
-expect_sent $((n + 1))
-lw_expect_eq "$(sent_text $((n + 1)))" "$RESET
-
-$HELLO" "greeting after a reset and a restart before it went out"
+expect_sent $((n + 2))
+lw_expect_eq "$(sent_text $((n + 1)))" "$RESET" "reset note after a reset and a restart before it went out"
+lw_expect_eq "$(sent_text $((n + 2)))" "$HELLO" "greeting after a reset and a restart before it went out"
 passes 2
+expect_sent $((n + 2))
+
+# ---- the note went out, the greeting did not (Telegram dropped, the router restarted): the state
+# says so ("sent"), so only the greeting comes, and the note is not repeated
+n=$(sent)
+rm -rf /etc/lw-notify /tmp/lw-notify
+mkdir -p /etc/lw-notify /tmp/lw-notify
+echo sent >/etc/lw-notify/reset-note
+pass
 expect_sent $((n + 1))
+lw_expect_eq "$(sent_text $((n + 1)))" "$HELLO" "greeting alone after the note went out"
+[ ! -e /etc/lw-notify/reset-note ] || lw_fail "reset note left after the greeting"
 
 # ---- not a reset: an image flashed with its state kept (sysupgrade -o) has state on flash but no
 # flag (an earlier image had no keyboard): the greeting alone, without the reset lines
+n=$(sent)
 rm -rf /etc/lw-notify /tmp/lw-notify
 mkdir -p /etc/lw-notify /tmp/lw-notify
 : >/etc/lw-notify/seen
 pass
-expect_sent $((n + 2))
-lw_expect_eq "$(sent_text $((n + 2)))" "$HELLO" "greeting on an image that kept its state"
+expect_sent $((n + 1))
+lw_expect_eq "$(sent_text $((n + 1)))" "$HELLO" "greeting on an image that kept its state"
 [ -e /etc/lw-notify/keyboard ] || lw_fail "no flag on an image that kept its state"
 [ ! -e /etc/lw-notify/reset-note ] || lw_fail "reset note on an image that kept its state"
 passes 2
-expect_sent $((n + 2))
+expect_sent $((n + 1))
 
 # ---- /help and /start carry the keyboard, also with the bot's name; an unknown command does not
 n=$(sent)
@@ -147,27 +163,27 @@ for c in /help /start '/HELP@HomeRouterBot' '/start@HomeRouterBot'; do
     pass
     n=$((n + 1))
     expect_sent "$n"
-    expect_last '/status – is the internet OK'
+    expect_last '🟢 <b>Status</b> – is the internet OK'
     lw_expect_eq "$(markup_of "$n")" "$KB" "keyboard with $c"
 done
 tg_push "$TG_CHAT" /restart
 pass
 n=$((n + 1))
 expect_sent "$n"
-expect_last '/status – is the internet OK'
+expect_last '🟢 <b>Status</b> – is the internet OK'
 lw_expect_eq "$(markup_of "$n")" "" "keyboard with an unknown command"
 
 # ---- every button, as the client may send it: exact, with U+FE0F toggled, with white space around
 cat >"$T/buttons" <<'BTNEOF'
 🟢 Status|Tech:
 📶 Wi-Fi|📶
-📱 Devices|📱 Devices
+📱 Devices|Devices</b>
 ⚡ Speed|Speed test
 💶 Balance|Telekom
 ✉️ SMS|📥
-🔔 Alerts|🔔 Automatic messages
+🔔 Alerts|Automatic messages
 🔄 Reboot|Restart the router?
-❓ Help|/status – is the internet OK
+❓ Help|🟢 <b>Status</b> – is the internet OK
 BTNEOF
 : >"$T/variants"
 while IFS='|' read -r label want; do
@@ -267,7 +283,7 @@ pass
 expect_last 'Tech:'
 tg_push "$TG_CHAT" '/help@homerouterbot'
 pass
-expect_last '/status – is the internet OK'
+expect_last '🟢 <b>Status</b> – is the internet OK'
 lw_expect_eq "$(grep -c '^getMe$' "$G/calls")" 1 "getMe calls"
 no_orphans
 echo ok

@@ -22,11 +22,10 @@ expect_sent 0
 echo up >"$G/net"
 pass
 expect_sent 2
-lw_expect_eq "$(sent_text 1)" "✉️ +38200000001 · 7 Nov 12:00
-
-first while offline" "first queued message (no ntpd after the reboot: the plain date)"
+lw_expect_eq "$(sent_text 1)" "✉️ <b>+38200000001</b> · 7 Nov 12:00
+<blockquote>first while offline</blockquote>" "first queued message (no ntpd after the reboot: the plain date)"
 case $(sent_text 2) in
-    *'second while offline') ;;
+    *'second while offline</blockquote>') ;;
     *) lw_fail "second message: $(sent_text 2)" ;;
 esac
 lw_expect_eq "$(grep -c 'lw-notify: Telegram reachable again' "$T/syslog")" 1 "reachable entries"

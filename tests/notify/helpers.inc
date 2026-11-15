@@ -270,6 +270,23 @@ button_data() {
     markup_of "$1" | jsonfilter -e '@.inline_keyboard[*][*].callback_data' | sed -n "${2}p"
 }
 
+# mode_of N / edit_mode K: the parse_mode the Nth message was sent with, the Kth edit (R37g).
+mode_of() { cat "$G/sent/$1.mode"; }
+edit_mode() { cat "$G/edits/$1.mode"; }
+# expect_all_html: every message and edit so far went out with parse_mode HTML (the fake Bot API
+# also refused any markup Telegram would, so a text that got here parsed).
+expect_all_html() {
+    for _m in "$G"/sent/*.mode "$G"/edits/*.mode; do
+        [ -f "$_m" ] || continue
+        lw_expect_eq "$(cat "$_m")" HTML "parse_mode of ${_m#"$G"/}"
+    done
+}
+# plain_of TEXT: what a Telegram client shows for HTML TEXT: tags gone, entities decoded. Written
+# apart from the code's own fallback, so the two check each other.
+plain_of() {
+    printf '%s\n' "$1" | sed 's/<[^>]*>//g; s/&lt;/</g; s/&gt;/>/g; s/&quot;/"/g; s/&amp;/\&/g'
+}
+
 # expect_sent N: exactly N messages so far, all to the configured chat.
 expect_sent() {
     lw_expect_eq "$(sent)" "$1" "messages sent"

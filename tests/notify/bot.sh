@@ -25,11 +25,17 @@ expect_sent 0
 tg_push "$TG_CHAT" /help
 pass
 expect_sent 1
-expect_last '/status – is the internet OK'
-expect_last '/sms – newest SMS (/sms 10 for more)'
-expect_last '/wifi – Wi-Fi name and password for guests'
-expect_last '/devices – who is connected, data this month'
-expect_last '/reboot – restart the router (asks to confirm)'
+lw_expect_eq "$(last_text)" '❓ <b>What the buttons do</b>
+🟢 <b>Status</b> – is the internet OK
+📶 <b>Wi-Fi</b> – name and password for guests
+📱 <b>Devices</b> – who is connected, data this month
+⚡ <b>Speed</b> – measure the speed (~60 s)
+💶 <b>Balance</b> – ask Telekom (~1 min)
+✉️ <b>SMS</b> – newest SMS (/sms 10 for more)
+🔔 <b>Alerts</b> – automatic messages, on or off
+🔄 <b>Reboot</b> – restart the router (asks first)
+
+The bot also posts by itself: new SMS, internet back, 2G backup.' "help text (no threshold: no low-balance message)"
 tg_push "$TG_CHAT" /start
 tg_push "$TG_CHAT" /restart
 tg_push "$TG_CHAT" '/HELP@TestBot'
@@ -51,13 +57,13 @@ sig_line -86dBm 4.6dB
 tg_push "$TG_CHAT" '/Status@TestBot'
 pass
 expect_sent 5
-expect_last '🟢 Internet works'
-expect_last 'Tech: B3+B1 · RSRP -86 · SINR 4.6 · ping 50 ms · VPN 2 min'
+expect_last '🟢 <b>Internet works</b>'
+expect_last 'Tech: B3+B1 · RSRP -86 dBm · SINR 4.6 dB · ping 50 ms · VPN handshake 2 min ago'
 rm -f /tmp/lw-signal.log
 lw_net down down
 tg_push "$TG_CHAT" /status
 pass
-expect_last '🔴 Internet does not work'
+expect_last '🔴 <b>Internet does not work</b>'
 expect_last 'Signal: unknown'
 
 # /sms: newest first by modem time, default 5, at most 10, at least 1
@@ -74,21 +80,19 @@ done
 pass
 expect_sent $((n + 5))
 case $(sent_text $((n + 1))) in
-    '📥 Newest 5 of 13 SMS
+    '📥 <b>Newest 5 of 13 SMS</b>
 
-✉️ +38200000001 · 12 Oct 09:00
+✉️ <b>+38200000001</b> · 12 Oct 09:00
+<blockquote>message 11</blockquote>
 
-message 11
-────────────
-✉️ +38200000000 · 11 Oct 09:00
-
-message 10'*'message 7') ;;
+✉️ <b>+38200000000</b> · 11 Oct 09:00
+<blockquote>message 10</blockquote>'*'<blockquote>message 7</blockquote>') ;;
     *) lw_fail "/sms: $(sent_text $((n + 1)))" ;;
 esac
-lw_expect_eq "$(sent_text $((n + 2)) | grep -c '^message ')" 3 "/sms 3"
-lw_expect_eq "$(sent_text $((n + 3)) | grep -c '^message ')" 10 "/sms 20"
-lw_expect_eq "$(sent_text $((n + 4)) | grep -c '^message ')" 1 "/sms 0"
-lw_expect_eq "$(sent_text $((n + 5)) | grep -c '^message ')" 5 "/sms abc"
+lw_expect_eq "$(sent_text $((n + 2)) | grep -c '^<blockquote>message ')" 3 "/sms 3"
+lw_expect_eq "$(sent_text $((n + 3)) | grep -c '^<blockquote>message ')" 10 "/sms 20"
+lw_expect_eq "$(sent_text $((n + 4)) | grep -c '^<blockquote>message ')" 1 "/sms 0"
+lw_expect_eq "$(sent_text $((n + 5)) | grep -c '^<blockquote>message ')" 5 "/sms abc"
 # 13 asked, 10 given; a message without a time counts as the oldest
 tg_push "$TG_CHAT" '/sms@TestBot 13'
 pass
@@ -101,11 +105,10 @@ while [ "$i" -lt 11 ]; do
 done
 tg_push "$TG_CHAT" /sms
 pass
-expect_last 'message 11
-────────────
-✉️ +38200999999 · unknown
+expect_last '<blockquote>message 11</blockquote>
 
-no timestamp'
+✉️ <b>+38200999999</b> · unknown
+<blockquote>no timestamp</blockquote>'
 rm -f "$T"/modem/sms/*.json
 tg_push "$TG_CHAT" /sms
 pass
@@ -132,4 +135,5 @@ lw_expect_grep "$T/syslog" \
 # R37a: the commands sent no SMS (no /balance here) and changed no modem setting
 lw_expect_eq "$(cat "$T/sms-sent" 2>/dev/null)" "" "SMS sent by the commands"
 lw_expect_no_grep "$T/at-calls" 'AT+[A-Z]*='
+expect_all_html
 echo ok

@@ -21,16 +21,12 @@ for amount in 8.00 0.32 0.32 9.00 0.50; do
     [ "$i" != 3 ] || lw_reboot_sim
 done
 expect_sent 2
-lw_expect_eq "$(sent_text 1)" "✉️ Telekom 1466 · 2 Nov 10:00
-
-Imate: 0.32 do 05.01.; 
-= Balance 0.32 EUR, credit valid until 5 Jan
-
-⚠️ Low balance: 0.32 EUR (2 Nov 10:00)
-Top up at least 7.50 EUR, or the data package will not renew." "first low-balance alert"
+lw_expect_eq "$(sent_text 1)" "💶 <b>Balance: 0.32 EUR</b>, valid until 5 Jan
+⚠️ Top up at least 7.50 EUR, or the data package will not renew.
+<blockquote>Telekom 1466, 2 Nov 10:00:
+Imate: 0.32 do 05.01.; </blockquote>" "first low-balance alert"
 case $(sent_text 2) in
-    *'Imate: 0.50 do'*'⚠️ Low balance: 0.50 EUR (5 Nov 10:00)
-Top up at least 7.50 EUR'*) ;;
+    *'<b>Balance: 0.50 EUR</b>'*'Top up at least 7.50 EUR'*'Imate: 0.50 do'*) ;;
     *) lw_fail "second alert: $(sent_text 2)" ;;
 esac
 # the last known balance (amount, time of the reply) is on flash for /status (R39c)
@@ -69,15 +65,14 @@ lw_uptime_add 601
 sms_in 8 1466 '11/08/26 11:00:00' 'Imate: 99.00 do 01.02.;'
 passes 2
 lw_expect_eq "$(sent)" $((n + 1)) "messages for an unrequested high amount"
-lw_expect_eq "$(last_text)" "✉️ Telekom 1466 · 8 Nov 11:00
-
-Imate: 99.00 do 01.02.;" "unrequested high amount: plain, no translation"
+lw_expect_eq "$(last_text)" "✉️ <b>Telekom 1466</b> · 8 Nov 11:00
+<blockquote>Imate: 99.00 do 01.02.;</blockquote>" "unrequested high amount: plain, no translation"
 lw_expect_eq "$(bal_state)" "$before" "state after an unrequested high amount"
 rm -f /etc/lw-notify/balance
 sms_in 9 1466 '11/08/26 11:05:00' 'Imate: 0.10 do 01.02.;'
 passes 2
 lw_expect_eq "$(sent)" $((n + 2)) "messages for an unrequested low amount"
-case $(last_text) in *'= Balance'* | *'Low balance'*) lw_fail "unrequested low amount: $(last_text)" ;; esac
+case $(last_text) in *'= Balance'* | *'Top up'*) lw_fail "unrequested low amount: $(last_text)" ;; esac
 [ ! -e /etc/lw-notify/balance ] || lw_fail "an unrequested low amount wrote the memory"
 lw_expect_eq "$(cat /etc/lw-notify/lastbal)" "7.49|2026-11-07 10:00" "stored balance after an unrequested low amount"
 printf '1\n' >/etc/lw-notify/balance
@@ -91,7 +86,7 @@ sms_in 11 1466 '11/08/26 11:11:00' 'Imate: 0.20 do 01.02.;'
 passes 2
 lw_expect_eq "$(sent)" $((n + 3)) "messages for a second answer to one query (new low)"
 case $(last_text) in
-    *'= Balance 0.20 EUR'*'⚠️ Low balance: 0.20 EUR'*) ;;
+    *'<b>Balance: 0.20 EUR</b>'*'⚠️ Top up at least 7.50 EUR'*) ;;
     *) lw_fail "second answer inside the window runs the rule: $(last_text)" ;;
 esac
 lw_expect_eq "$(cat /etc/lw-notify/lastbal)" "0.20|2026-11-08 11:11" "stored balance after the second answer"
@@ -101,12 +96,12 @@ lw_uptime_add 601
 sms_in 12 1466 '11/08/26 11:30:00' 'Imate: 0.30 do 01.02.;'
 passes 2
 lw_expect_eq "$(sent)" $((n + 4)) "messages for an answer after the window"
-case $(last_text) in *'= Balance'* | *'Low balance'*) lw_fail "late answer: $(last_text)" ;; esac
+case $(last_text) in *'= Balance'* | *'Top up'*) lw_fail "late answer: $(last_text)" ;; esac
 lw_expect_eq "$(cat /etc/lw-notify/lastbal)" "0.20|2026-11-08 11:11" "stored balance after a late answer"
 # /status shows the balance that was read in the window, not the one that came after it
 tg_push "$TG_CHAT" /status
 pass
-case $(last_text) in *'Balance: 0.20 EUR'*) ;; *) lw_fail "status: $(last_text)" ;; esac
+case $(last_text) in *'Balance: 0.20 EUR (checked'*) ;; *) lw_fail "status: $(last_text)" ;; esac
 # only the first scan after a flash or a reset takes a balance without a query: one that came in
 # during a restart is an ordinary SMS at the first scan after it
 sms_in 14 1466 '11/08/26 11:40:00' 'Imate: 98.00 do 01.02.;'
@@ -129,7 +124,7 @@ sms_in 16 1466 '11/09/26 10:00:20' 'Imate: 0.31 do 05.01.;'
 passes 2
 lw_expect_eq "$(sent)" $((n + 1)) "messages for the real low reply after a forged one"
 case $(last_text) in
-    *'= Balance 0.31 EUR'*'⚠️ Low balance: 0.31 EUR'*) ;;
+    *'<b>Balance: 0.31 EUR</b>'*'⚠️ Top up at least 7.50 EUR'*) ;;
     *) lw_fail "low-balance warning after a forged reply: $(last_text)" ;;
 esac
 lw_expect_eq "$(cat /etc/lw-notify/lastbal)" "0.31|2026-11-09 10:00" "stored balance after the race"
@@ -142,24 +137,31 @@ n=$(sent)
 sms_in 17 1466 '11/10/26 10:00:05' 'Imate: 0.40 do 05.01.;'
 passes 2
 lw_expect_eq "$(sent)" $((n + 1)) "messages for the real low reply"
-case $(last_text) in *'⚠️ Low balance: 0.40 EUR'*) ;; *) lw_fail "warning: $(last_text)" ;; esac
+case $(last_text) in *'<b>Balance: 0.40 EUR</b>'*'⚠️ Top up at least'*) ;; *) lw_fail "warning: $(last_text)" ;; esac
 sms_in 18 1466 '11/10/26 10:00:20' 'Imate: 99.00 do 01.02.;'
 passes 2
 lw_expect_eq "$(sent)" $((n + 1)) "messages for a forged high reply after the real one (silent)"
 lw_expect_eq "$(cat /etc/lw-notify/lastbal)" "99.00|2026-11-10 10:00" "stored balance: the forged one (accepted leftover)"
 # /balance from the chat with two replies inside the window: the first is the answer to the
-# command, the second is checked by the rule only (silent unless it crosses the threshold)
+# command and takes the place of its acknowledgement (an edit, no new message), the second is
+# checked by the rule only (silent unless it crosses the threshold)
 printf '0\n' >/etc/lw-notify/balance
 tg_push "$TG_CHAT" /balance
 pass
 n=$(sent)
+e=$(edits)
 sms_in 19 1466 '11/11/26 10:00:05' 'Imate: 12.40 do 05.01.;'
 passes 2
-lw_expect_eq "$(sent)" $((n + 1)) "messages for the first reply to /balance"
-expect_last '= Balance 12.40 EUR'
+lw_expect_eq "$(sent)" "$n" "messages for the first reply to /balance (an edit)"
+lw_expect_eq "$(edits)" $((e + 1)) "edits for the first reply to /balance"
+lw_expect_eq "$(edit_msgid $((e + 1)))" "$n" "the edited message is the acknowledgement"
+lw_expect_eq "$(shown "$n")" "💶 <b>Balance: 12.40 EUR</b>, valid until 5 Jan
+<blockquote>Telekom 1466, 11 Nov 10:00:
+Imate: 12.40 do 05.01.;</blockquote>" "the acknowledgement after the answer"
 sms_in 20 1466 '11/11/26 10:00:20' 'Imate: 12.50 do 05.01.;'
 passes 2
-lw_expect_eq "$(sent)" $((n + 1)) "messages for a second reply to /balance (silent)"
+lw_expect_eq "$(sent)" "$n" "messages for a second reply to /balance (silent)"
+lw_expect_eq "$(edits)" $((e + 1)) "edits for a second reply to /balance (silent)"
 lw_expect_eq "$(cat /etc/lw-notify/lastbal)" "12.50|2026-11-11 10:00" "stored balance after two replies to /balance"
 
 # a failed send is logged; without a threshold there is no weekly RACUN at all (R36)
@@ -181,4 +183,5 @@ sms_in 13 1466 '11/09/26 10:00:20' 'Imate: 0.10 do 05.01.; '
 passes 2
 expect_sent $((n + 1))
 case $(last_text) in *'= Balance'*) lw_fail "reply without a query: $(last_text)" ;; esac
+expect_all_html
 echo ok

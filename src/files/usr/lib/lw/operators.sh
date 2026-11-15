@@ -242,5 +242,5 @@ nt_op_label() { printf '%s' "$NT_P_NAME"; }
 
 # nt_na_line: the "no balance for this SIM" line of /status and /balance (R47a).
 nt_na_line() {
-    printf '💶 Balance: not available for this operator (%s)' "${NT_MCC:-unknown}"
+    printf '💶 Balance: not available for this operator (%s)' "$(nt_h "${NT_MCC:-unknown}")"
 }

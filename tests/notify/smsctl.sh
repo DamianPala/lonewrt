@@ -28,7 +28,7 @@ lw_expect_eq "$(sms_body 1)" "Home router: internet OK (4G+), signal fair. On si
 # R46: the command is on the chat as an ordinary SMS
 expect_sent 1
 expect_last 'status'
-expect_last '✉️ +48000000001'
+expect_last '✉️ <b>+48000000001</b>'
 
 # --- case, spaces around the word, the other spelling of the number
 sms_cmd +48000000001 '  StAtUs  '

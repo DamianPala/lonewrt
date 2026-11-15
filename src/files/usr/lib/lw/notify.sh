@@ -61,24 +61,29 @@ NT_RB_WAIT=${LW_NOTIFY_REBOOT_WAIT:-120}
 NT_RB_GAP=40
 # Bytes per bot reply; Telegram takes up to 4096 characters per message
 NT_CHUNK=3500
-NT_SEP='────────────'
-# nt_help: the list of commands. The /balance line names the operator of the preset (R47); without
-# a preset the check does not exist for this SIM (R47a).
+# nt_help (R37): what each button does, in the order and with the emoji of the keyboard. The
+# Balance line names the operator of the preset (R47); without a preset the check does not exist
+# for this SIM (R47a), and the footer leaves the low-balance message out, as it does when the
+# profile has no threshold (the message is off then, as /alerts says).
 nt_help() {
     if nt_preset_ok; then
-        _hb="/balance – ask $NT_P_NAME for the balance (~1 min)"
+        _hb="💶 <b>Balance</b> – ask $(nt_h "$NT_P_NAME") (~1 min)"
     else
-        _hb='/balance – the balance check is not available for this SIM'
+        _hb='💶 <b>Balance</b> – not available for this SIM'
     fi
-    printf '%s\n' '/status – is the internet OK' \
-        '/wifi – Wi-Fi name and password for guests' \
-        '/devices – who is connected, data this month' \
-        '/speedtest – measure the internet speed (~60 s)' \
+    _hf='new SMS, low balance, internet back, 2G backup'
+    if [ -z "$NT_LOW" ] || ! nt_preset_ok; then _hf='new SMS, internet back, 2G backup'; fi
+    printf '%s\n' '❓ <b>What the buttons do</b>' \
+        '🟢 <b>Status</b> – is the internet OK' \
+        '📶 <b>Wi-Fi</b> – name and password for guests' \
+        '📱 <b>Devices</b> – who is connected, data this month' \
+        '⚡ <b>Speed</b> – measure the speed (~60 s)' \
         "$_hb" \
-        '/sms – newest SMS (/sms 10 for more)' \
-        '/alerts – automatic messages, on or off' \
-        '/reboot – restart the router (asks to confirm)' \
-        'The bot also posts every new SMS and a low-balance warning by itself.'
+        '✉️ <b>SMS</b> – newest SMS (/sms 10 for more)' \
+        '🔔 <b>Alerts</b> – automatic messages, on or off' \
+        '🔄 <b>Reboot</b> – restart the router (asks first)' \
+        '' \
+        "The bot also posts by itself: $_hf."
 }
 # An inline keyboard with no buttons: sent with an edited text, it removes the old buttons
 NT_NOKB='&reply_markup=%7B%22inline_keyboard%22%3A%5B%5D%7D'
@@ -175,13 +180,13 @@ nt_wallstr() {
         printf "20%s-%s-%s %s:%s\n", d[3], d[1], d[2], t[1], t[2] }'
 }
 
-# nt_when U|L "YYYY-MM-DD hh:mm": a time marker the sender turns into "Today 11:11" (U, capital)
-# or "today 11:11" (L) at the moment of sending, so a message that waited in the queue past
-# midnight still says the right day. No time gives "unknown".
+# nt_when "YYYY-MM-DD hh:mm": a time marker the sender turns into "today 11:11" at the moment of
+# sending, so a message that waited in the queue past midnight still says the right day. No time
+# gives "unknown".
 nt_when() {
-    case $2 in
+    case $1 in
         [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]\ [0-9][0-9]:[0-9][0-9])
-            printf '@@T%s:%s@@' "$1" "$2"
+            printf '@@TL:%s@@' "$1"
             ;;
         *) printf unknown ;;
     esac
@@ -206,6 +211,29 @@ nt_defuse() {
     NT_DEF=$_dfo$_dfr
 }
 
+# nt_h TEXT (R37g): TEXT as Telegram's HTML takes it, & < > written as entities. Every piece of text
+# the bot's code did not write itself goes through here before it is put into a message: SMS texts
+# and senders, DHCP names, network names and keys, names of people, operator names, whatever uci or
+# a file holds. The tags of the messages are written by the code and stand only around such text.
+nt_h() { printf '%s' "$1" | nt_hf; }
+
+# nt_hf: nt_h for a stream of lines (the device list).
+nt_hf() { sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g'; }
+
+# nt_hd TEXT: nt_h for the texts that also must not carry a time marker (R39f).
+nt_hd() {
+    nt_defuse "$1"
+    nt_h "$NT_DEF"
+}
+
+# nt_plain HTML (R37g): the text of a message as plain text, for the message Telegram refused as
+# HTML: a quote ends its line, tags are gone, entities are the characters (& last, so that a written
+# "&lt;" stays what it says).
+nt_plain() {
+    printf '%s\n' "$1" |
+        sed 's|</blockquote>\(.\)|\n\1|g; s/<[^>]*>//g; s/&lt;/</g; s/&gt;/>/g; s/&amp;/\&/g'
+}
+
 # nt_resolve TEXT: the time markers as words. Today and yesterday only when the clock is right
 # (ntpd synced it); otherwise the plain date, which is the modem's time and still true.
 nt_resolve() {
@@ -224,8 +252,7 @@ nt_resolve() {
         BEGIN { split("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec", mon, " ") }
         {
             out = ""; rest = $0
-            while (match(rest, /@@T[UL]:[0-9-]+ [0-9:]+@@/)) {
-                kind = substr(rest, RSTART + 3, 1)
+            while (match(rest, /@@TL:[0-9-]+ [0-9:]+@@/)) {
                 d = substr(rest, RSTART + 5, 10)
                 hm = substr(rest, RSTART + 16, 5)
                 if (rel && d == today) w = "today " hm
@@ -236,7 +263,6 @@ nt_resolve() {
                     if (rel && p[1] != substr(today, 1, 4)) w = w p[1] " "
                     w = w hm
                 }
-                if (kind == "U") w = toupper(substr(w, 1, 1)) substr(w, 2)
                 out = out substr(rest, 1, RSTART - 1) w
                 rest = substr(rest, RSTART + RLENGTH)
             }
@@ -379,16 +405,28 @@ nt_api() {
     return 1
 }
 
-# nt_call METHOD TEXT [EXTRA]: sendMessage or editMessageText to the configured chat; EXTRA is more
-# form fields, each starting with "&" (reply_markup, message_id). Returns 0 when it went out, 1 when
-# it did not and should be tried again later, 2 when Telegram rejected it with a 400 also as plain
-# ASCII, so a retry would never help (R34f). The EXTRA fields are ASCII, so they stay as they are.
+# nt_call METHOD TEXT [EXTRA]: sendMessage or editMessageText to the configured chat; TEXT is HTML
+# (R37g, parse_mode=HTML); EXTRA is more form fields, each starting with "&" (reply_markup,
+# message_id). Returns 0 when it went out, 1 when it did not and should be tried again later, 2 when
+# Telegram rejected it with a 400 also as plain text and as plain ASCII, so a retry would never help
+# (R34f). A 400 for the HTML message is the safety net of R37g: a fault in our own markup must not
+# cost an outage or an SMS, so the message goes once more as the plain text it says, tags removed,
+# and the fault is logged (no text, no token). The EXTRA fields are ASCII, so they stay as they are.
 nt_call() {
     _stx=$(nt_resolve "$2")
-    nt_api "$1" "chat_id=$(nt_urlencode "$NT_CHAT")&text=$(nt_urlencode "$_stx")${3-}" && return 0
+    _sch="chat_id=$(nt_urlencode "$NT_CHAT")"
+    nt_api "$1" "$_sch&parse_mode=HTML&text=$(nt_urlencode "$_stx")${3-}" && return 0
     [ -n "$NT_REJECT" ] || return 1
-    nt_api "$1" "chat_id=$(nt_urlencode "$NT_CHAT")&text=$(nt_urlencode "$_stx" ascii)${3-}" &&
+    _stx=$(nt_plain "$_stx")
+    _scr=0
+    nt_api "$1" "$_sch&text=$(nt_urlencode "$_stx")${3-}" || _scr=$?
+    if [ "$_scr" != 0 ] && [ -n "$NT_REJECT" ]; then
+        nt_api "$1" "$_sch&text=$(nt_urlencode "$_stx" ascii)${3-}" && _scr=0
+    fi
+    if [ "$_scr" = 0 ]; then
+        lw_log "$NT_TAG" "Telegram rejected a message as HTML (HTTP 400), it went out as plain text"
         return 0
+    fi
     [ -n "$NT_REJECT" ] || return 1
     return 2
 }
@@ -401,14 +439,16 @@ nt_send() {
         NT_MSGID=
 }
 
-# nt_edit MESSAGE_ID TEXT [EXTRA]: new text for a message of the bot; the buttons stay only when
-# EXTRA brings them. A failure is not retried: the state the text describes has changed already.
-# No ASCII copy on a 400 either: Telegram answers 400 to an edit that changes nothing (a double
-# tap), and the copy would differ and replace the text with question marks.
+# nt_edit MESSAGE_ID TEXT [EXTRA]: new HTML text for a message of the bot; the buttons stay only
+# when EXTRA brings them. A failure is not retried: the state the text describes has changed.
+# No plain or ASCII copy on a 400 either: Telegram answers 400 to an edit that changes nothing (a
+# double tap), and the copy would differ and replace the text with a plain one. After a 400
+# NT_REJECT is 1, so a caller that cannot lose the text (the balance, nt_send_item) sends a new
+# message.
 nt_edit() {
     _etx=$(nt_resolve "$2")
-    nt_api editMessageText \
-        "chat_id=$(nt_urlencode "$NT_CHAT")&text=$(nt_urlencode "$_etx")&message_id=$1${3-}"
+    _eid="chat_id=$(nt_urlencode "$NT_CHAT")&parse_mode=HTML&text=$(nt_urlencode "$_etx")"
+    nt_api editMessageText "$_eid&message_id=$1${3-}"
 }
 
 # nt_markup JSON: the reply_markup field for nt_send and nt_edit.
@@ -466,8 +506,10 @@ nt_bot_name() {
 # there, and lives until the greeting went out, so a Telegram outage or a restart of the router in
 # between does not lose it.
 NT_KB_RESET=$NT_DIR/reset-note
-NT_RESET_TEXT='🔄 Router was reset to its built-in settings.
+NT_RESET_TEXT='🔄 <b>Router was reset to its built-in settings.</b>
 Earlier logs and saved SMS are gone.'
+NT_GREETING='🤖 The router bot is ready. Tap a button below, or send /help'
+NT_GREETING="$NT_GREETING to see what each one does."
 
 # nt_reset_mark (R37f): at the first pass of a fresh state, the note that the greeting must carry the
 # reset lines. A flash that cannot be written leaves no note, so the lines are never claimed falsely.
@@ -478,18 +520,35 @@ nt_reset_mark() {
     : | lw_write_atomic "$NT_KB_RESET" || :
 }
 
-# nt_kb_tick (R37e, R37f): the keyboard goes to the chat once after the first start of the image, in
-# one message with the reset lines when the state was fresh. Returns 1 when Telegram could not be
-# reached, so the next pass tries again. The flag on flash is written after the send; a RAM copy
-# keeps a full flash from turning one send into one per pass.
+# nt_reset_note_due: the state was fresh and the note has not gone out yet (R37f). The file holds
+# "sent" from the moment the note was out until the greeting is done, so a Telegram outage or a
+# restart between the two messages does not send the note twice; the RAM copy covers a flash that
+# cannot be written.
+nt_reset_note_due() {
+    [ -e "$NT_KB_RESET" ] && [ ! -e "$NT_RUN/reset_sent" ] &&
+        [ "$(head -n 1 "$NT_KB_RESET" 2>/dev/null)" != sent ]
+}
+
+# nt_kb_tick (R37e, R37f): after the first start of the image the chat gets the reset note when
+# the state was fresh, as a message of its own, and then the greeting that carries the keyboard.
+# The note is its own message because a keyboard press goes out as a reply to the message that
+# carried the keyboard: with the note in it, every press would quote "Router was reset" (D84).
+# Returns 1 when Telegram could not be reached, so the next pass tries again. The flag on flash is
+# written after the greeting; a RAM copy keeps a full flash from turning one send into one per
+# pass.
 nt_kb_tick() {
     [ ! -e "$NT_KB_FLAG" ] && [ ! -e "$NT_RUN/keyboard" ] || return 0
-    _kt="🤖 The router bot is ready. Tap a button below, or send /help to see what each one does."
-    [ ! -e "$NT_KB_RESET" ] || _kt="$NT_RESET_TEXT
-
-$_kt"
+    if nt_reset_note_due; then
+        _kr=0
+        nt_send "$NT_RESET_TEXT" || _kr=$?
+        [ "$_kr" != 1 ] || return 1
+        : >"$NT_RUN/reset_sent"
+        [ "$_kr" = 0 ] ||
+            lw_log "$NT_TAG" "Telegram rejected the reset note (HTTP 400), not sent again"
+        echo sent | lw_write_atomic "$NT_KB_RESET" || :
+    fi
     _kr=0
-    nt_send "$_kt" "$(nt_kb_markup)" || _kr=$?
+    nt_send "$NT_GREETING" "$(nt_kb_markup)" || _kr=$?
     [ "$_kr" != 1 ] || return 1
     : >"$NT_RUN/keyboard"
     [ "$_kr" = 0 ] ||
@@ -549,6 +608,33 @@ nt_enqueue() {
     printf '%s\n' "$2" | lw_write_atomic "$NT_DIR/queue/$(printf %06d $((${_last:-0} + 1)))-$1"
 }
 
+# nt_send_item FILE: one queue file to the chat, with nt_send's return codes. A file that starts
+# with the line @@E<id>@@ (nt_balance) is the answer to /balance and edits message <id>, the
+# acknowledgement of the command, into the answer. Telegram refusing the edit (the message is
+# gone, or the markup was wrong) sends the answer as a new message, which has the fallbacks of
+# nt_call; a failure of the network keeps it queued like any other. Only the first line is read as
+# a marker, and the first line of a file is always written by the code (R37g).
+nt_send_item() {
+    _qm=$(head -n 1 "$1")
+    case $_qm in
+        @@E*@@)
+            _qi=${_qm#@@E}
+            _qi=${_qi%@@}
+            case $_qi in
+                '' | *[!0-9]*) ;;
+                *)
+                    _qt=$(tail -n +2 "$1")
+                    nt_edit "$_qi" "$_qt" && return 0
+                    [ -n "$NT_REJECT" ] || return 1
+                    nt_send "$_qt"
+                    return
+                    ;;
+            esac
+            ;;
+    esac
+    nt_send "$(cat "$1")"
+}
+
 # nt_flush: send the queue in order and stop at the first failure. One flusher at a time (the
 # service and the wwan hotplug), so no message goes out twice; a busy lock means another
 # flusher is at it. A message leaves the queue only after Telegram confirmed it (R34a) or rejected
@@ -560,15 +646,15 @@ nt_flush() {
         for _f in "$NT_DIR"/queue/[0-9]*; do
             [ -f "$_f" ] || continue
             case $_f in *.tmp.*) continue ;; esac
-            nt_send "$(cat "$_f")"
+            nt_send_item "$_f"
             case $? in
                 0) rm -f "$_f" ;;
                 2)
                     # rejected as text and as ASCII: it would block the queue forever (R34f); no
                     # SMS text and nothing of the request goes into the log (R34d)
                     rm -f "$_f"
-                    lw_log "$NT_TAG" "Telegram rejected a message (HTTP 400) twice, dropped it," \
-                        "$(nt_queued) SMS still queued"
+                    lw_log "$NT_TAG" "Telegram rejected a message (HTTP 400) as HTML and as plain" \
+                        "text, dropped it, $(nt_queued) SMS still queued"
                     ;;
                 *) exit 1 ;;
             esac
@@ -586,20 +672,21 @@ nt_fields() {
 }
 
 # nt_sender SENDER (R39a): 9 or more digits get a "+", the short codes of the preset their operator
-# (R47); without a preset there are no labels (R47a).
+# (R47); without a preset there are no labels (R47a). The result is HTML text (R37g).
 nt_sender() {
     [ -n "$1" ] || { echo unknown; return 0; }
     case " $NT_P_CODES " in
         *" $1 "*)
-            printf '%s\n' "$NT_P_NAME $1"
+            nt_h "$NT_P_NAME $1"
+            echo
             return 0
             ;;
     esac
     # printf, not echo: a sender "-n" or "-e" is text, not an option (R39f)
     case $1 in
         *[!0-9]*)
-            nt_defuse "$1"
-            printf '%s\n' "$NT_DEF"
+            nt_hd "$1"
+            echo
             ;;
         *)
             if [ "${#1}" -ge 9 ]; then printf '%s\n' "+$1"; else printf '%s\n' "$1"; fi
@@ -627,29 +714,39 @@ nt_amount() {
     printf '%s\n' "$2" | sed -n "1s#^[[:space:]]*$NT_P_RE.*#\\$NT_P_AREF#p" | tr , .
 }
 
-# nt_translate TEXT AMOUNT (R39b): "= Balance 0.31 EUR, credit valid until 5 Jan" for the answer to
-# the balance query, in the currency of the preset; a pattern without a date gives no "until" part.
-nt_translate() {
-    if [ -z "$NT_P_DREF" ]; then
-        printf '= Balance %s %s' "$2" "$NT_P_CUR"
-        return 0
-    fi
-    _until=$(printf '%s\n' "$1" |
+# nt_until TEXT: "5 Jan", the date until which the credit of a balance answer is valid, empty when
+# the preset's pattern has no date or the answer's date is not one.
+nt_until() {
+    [ -n "$NT_P_DREF" ] || return 0
+    printf '%s\n' "$1" |
         sed -n "1s#^[[:space:]]*$NT_P_RE.*#\\$NT_P_DREF \\$NT_P_MREF#p" |
         awk 'NR == 1 { split("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec", m, " ")
-            if ($2 >= 1 && $2 <= 12 && $1 >= 1 && $1 <= 31) printf "%d %s", $1, m[$2 + 0] }')
-    printf '= Balance %s %s, credit valid until %s' "$2" "$NT_P_CUR" "${_until:-unknown}"
+            if ($2 >= 1 && $2 <= 12 && $1 >= 1 && $1 <= 31) printf "%d %s", $1, m[$2 + 0] }'
 }
 
-# nt_format: the message in NT_FROM, NT_TS, NT_TEXT as the chat shows it (R39, R39a, R39b).
+# nt_translate TEXT AMOUNT (R39b): "= Balance 0.31 EUR, valid until 5 Jan" for the answer to the
+# balance query, in the currency of the preset; a pattern without a date gives no "until" part.
+nt_translate() {
+    printf '= Balance %s %s' "$(nt_h "$2")" "$(nt_h "$NT_P_CUR")"
+    [ -n "$NT_P_DREF" ] || return 0
+    _until=$(nt_until "$1")
+    printf ', valid until %s' "${_until:-unknown}"
+}
+
+# nt_body TEXT: the text of an SMS as the inside of a quote (R34, R37g): escaped, no time marker in
+# it (R39f), and a word for a message with no text, because Telegram refuses an empty quote.
+nt_body() {
+    _nbt=$(nt_hd "$1")
+    printf '%s' "${_nbt:-(no text)}"
+}
+
+# nt_format: the message in NT_FROM, NT_TS, NT_TEXT as the chat shows it (R34, R39, R39a, R39b): the
+# sender in bold, the time, the text in a quote and, for a balance answer, the translation below it.
 nt_format() {
-    nt_defuse "$NT_TEXT"
-    _fb=$NT_DEF
     _fa=$(nt_amount "$NT_FROM" "$NT_TEXT")
-    [ -z "$_fa" ] || _fb="$_fb
-$(nt_translate "$NT_TEXT" "$_fa")"
-    printf '✉️ %s · %s\n\n%s' "$(nt_sender "$NT_FROM")" "$(nt_when U "$(nt_wallstr "$NT_TS")")" \
-        "$_fb"
+    printf '✉️ <b>%s</b> · %s\n<blockquote>%s</blockquote>' "$(nt_sender "$NT_FROM")" \
+        "$(nt_when "$(nt_wallstr "$NT_TS")")" "$(nt_body "$NT_TEXT")"
+    [ -z "$_fa" ] || printf '%s' "$(nt_translate "$NT_TEXT" "$_fa")"
 }
 
 # nt_below AMOUNT THRESHOLD: AMOUNT < THRESHOLD, compared in cents.
@@ -680,16 +777,32 @@ nt_pick_balance() {
     _pick_t=$2
 }
 
-# nt_low_text AMOUNT TS: the warning under a balance below the threshold (R36, R39).
+# nt_low_text: the warning of a balance below the threshold: the line of the balance message and of
+# the action line of /status (R36, R39d).
 nt_low_text() {
-    printf '⚠️ Low balance: %s %s (%s)\nTop up at least %s %s, ' \
-        "$1" "$NT_P_CUR" "$(nt_when L "$(nt_wallstr "$2")")" "$NT_LOW" "$NT_P_CUR"
-    printf 'or the data package will not renew.'
+    printf '⚠️ Top up at least %s %s, or the data package will not renew.' "$(nt_h "$NT_LOW")" \
+        "$(nt_h "$NT_P_CUR")"
+}
+
+# nt_balance_text AMOUNT BELOW (R36): the message for a balance answer in NT_FROM, NT_TS and
+# NT_TEXT: the balance in bold with the date until which it is valid, the warning when BELOW is 1,
+# and the operator's own text in a quote that starts with who sent it and when.
+nt_balance_text() {
+    printf '💶 <b>Balance: %s %s</b>' "$(nt_h "$1")" "$(nt_h "$NT_P_CUR")"
+    _bu=$(nt_until "$NT_TEXT")
+    [ -z "$_bu" ] || printf ', valid until %s' "$_bu"
+    [ "$2" != 1 ] || printf '\n%s' "$(nt_low_text)"
+    printf '\n<blockquote>%s, %s:\n%s</blockquote>' "$(nt_sender "$NT_FROM")" \
+        "$(nt_when "$(nt_wallstr "$NT_TS")")" "$(nt_body "$NT_TEXT")"
 }
 
 # nt_balance KEY AMOUNT: the balance rule (R36). A reply goes to the chat when it answers a
 # /balance from the last NT_BALANCE_WINDOW s, or when it is the first one below the threshold;
-# every reading updates the below/above memory on flash, written only when it changes.
+# every reading updates the below/above memory on flash, written only when it changes. The answer
+# to /balance takes the place of the acknowledgement of the command: the marker line @@E<id>@@ in
+# the queue file makes nt_send_item edit that message. Without its id, or after the notice that no
+# answer has come (a message of its own: an edit above it would make no sound and sit out of sight),
+# the answer is a new message.
 nt_balance() {
     _was=$(nt_get "$NT_DIR/balance" 0)
     _below=$_was
@@ -698,16 +811,20 @@ nt_balance() {
         nt_below "$2" "$NT_LOW" && _below=1
     fi
     nt_note_balance "$2" "$NT_TS"
-    _warn=
-    [ "$_below" = 1 ] && [ -n "$NT_LOW" ] && _warn="
-
-$(nt_low_text "$2" "$NT_TS")"
+    _warn=0
+    [ "$_below" = 1 ] && [ -n "$NT_LOW" ] && _warn=1
     _req=$(nt_get "$NT_RUN/balance_req")
     if [ -n "$_req" ] && [ $(($(nt_now) - _req)) -le "$NT_BALANCE_WINDOW" ]; then
+        _bid=$(sed -n 2p "$NT_RUN/balance_req" 2>/dev/null)
+        case $_bid in '' | *[!0-9]*) _bid= ;; esac
+        [ ! -f "$NT_RUN/balance_late" ] || _bid=
         rm -f "$NT_RUN/balance_req" "$NT_RUN/balance_late"
-        nt_enqueue "$1" "$(nt_format)$_warn"
-    elif [ -n "$_warn" ] && [ "$_was" != 1 ]; then
-        nt_enqueue "$1" "$(nt_format)$_warn"
+        _btx=$(nt_balance_text "$2" "$_warn")
+        [ -z "$_bid" ] || _btx="@@E$_bid@@
+$_btx"
+        nt_enqueue "$1" "$_btx"
+    elif [ "$_warn" = 1 ] && [ "$_was" != 1 ]; then
+        nt_enqueue "$1" "$(nt_balance_text "$2" 1)"
     fi
     [ "$_below" = "$_was" ] || printf '%s\n' "$_below" | lw_write_atomic "$NT_DIR/balance"
 }
@@ -902,7 +1019,7 @@ nt_balance_tick() {
         return 0
     fi
     [ "$_age" -ge "$NT_BALANCE_WAIT" ] && [ ! -f "$NT_RUN/balance_late" ] || return 0
-    nt_send "⏳ No answer from $NT_P_NAME yet (asked $_age s ago).
+    nt_send "⏳ No answer from $(nt_h "$NT_P_NAME") yet (asked $_age s ago).
 A later answer still comes here." && : >"$NT_RUN/balance_late"
 }
 
@@ -1021,7 +1138,7 @@ nt_outage_close() {
     _tw=
     [ "$_da" = 0 ] || _tw='~'
     nt_in_queue "$_ck" || nt_enqueue "$_ck" "🟢 Internet back after $_tw$(nt_span "$_cd")
-Down since $_tl$(nt_when L "$(nt_local "$_cs")"), $(nt_restarts_text "$_cr")."
+Down since $_tl$(nt_when "$(nt_local "$_cs")"), $(nt_restarts_text "$_cr")."
     printf 'state=closed\nstart=%s\ndur=%s\nrestarts=%s\nstart_approx=%s\ndur_approx=%s\n' \
         "$_cs" "$_cd" "$_cr" "$_sa" "$_da" | lw_write_atomic "$NT_OUT"
 }
@@ -1050,20 +1167,22 @@ nt_edge_tick() {
     _ek=edge$(nt_rec_get start)
     nt_in_queue "$_ek" || nt_enqueue "$_ek" "🟠 Internet slow: switched to 2G backup
 Messages and email OK, video and calls no.
-4G down since $_et$(nt_when L "$(nt_local "$_es")"), the router keeps trying to bring it back.
+4G down since $_et$(nt_when "$(nt_local "$_es")"), the router keeps trying to bring it back.
 (/alerts 2g off turns this message off)"
     printf 'state=open\nstart=%s\nntp=%s\nedge=1\n' "$(nt_rec_get start)" "$_en" |
         lw_write_atomic "$NT_OUT"
 }
 
-# nt_alerts_text: the automatic messages and whether each is on (R37).
+# nt_alerts_text: the automatic messages and whether each is on (R37): a line per message with a
+# tick or a cross, and the note that only the 2G message has a switch.
 nt_alerts_text() {
-    _al=on
-    [ -n "$NT_LOW" ] && nt_preset_ok || _al=off
-    _a2=on
-    nt_2g_on || _a2=off
-    printf '🔔 Automatic messages\nNew SMS: on · Low balance: %s · Internet back: on · 2G backup: %s' \
-        "$_al" "$_a2"
+    _ai=✅
+    [ -n "$NT_LOW" ] && nt_preset_ok || _ai=❌
+    _a2=✅
+    nt_2g_on || _a2=❌
+    printf '🔔 <b>Automatic messages</b>\n✅ New SMS\n%s Low balance\n' "$_ai"
+    printf '✅ Internet back\n%s 2G backup\n\n' "$_a2"
+    printf '<i>Only the 2G message can be turned off.</i>'
 }
 
 # nt_alerts_markup: the button under the list, which turns the 2G message the other way (R37d).

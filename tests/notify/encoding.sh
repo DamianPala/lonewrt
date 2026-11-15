@@ -72,7 +72,7 @@ sms_in 1 +38200000002 '11/07/26 12:00:05' 'second one'
 passes 2
 expect_sent 2
 sent_has 1 '6DC3B36A206B6F6C656A6E79' # "m" C3 B3 "j kolejny"
-lw_expect_eq "$(sent_text 2 | tail -n 1)" 'second one' "second message"
+lw_expect_eq "$(sent_text 2 | tail -n 1)" '<blockquote>second one</blockquote>' "second message"
 lw_expect_eq "$(rejected_n)" 0 "rejections by the fake bot"
 [ -z "$(find /etc/lw-notify/queue -type f)" ] || lw_fail "queue not empty"
 lw_expect_eq "$(cat "$T/syslog")" "" "syslog after forwarding Latin-1"
