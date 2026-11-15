@@ -30,6 +30,8 @@ umask 077
 . /usr/lib/lw/devices.sh
 # shellcheck source=src/files/usr/lib/lw/reboot.sh
 . /usr/lib/lw/reboot.sh
+# shellcheck source=src/files/usr/lib/lw/names.sh
+. /usr/lib/lw/names.sh
 # shellcheck source=src/files/usr/lib/lw/smsctl.sh
 . /usr/lib/lw/smsctl.sh
 
@@ -431,12 +433,13 @@ nt_command() {
 
 # nt_callback: a tap on a button, from the configured chat only (R45); the tap of any other chat is
 # ignored without an answer, like its messages (R37). The data names the button: "rb:<nonce>:go|no"
-# of the restart question (R45), "al:2g:on|off" of the alerts list (R37d). An unknown button just
-# gets its spinner stopped.
+# of the restart question (R45), "al:2g:on|off" of the alerts list (R37d), "dn:new|no|<mac>" of the
+# naming of devices (R50). An unknown button just gets its spinner stopped.
 nt_callback() {
     [ "$NT_CBCHAT" = "$NT_CHAT" ] || return 0
     case $NT_CBDATA in
         rb:*) nt_reboot_tap ;;
+        dn:*) nt_nm_tap ;;
         al:2g:off) nt_alerts_tap off ;;
         al:2g:on) nt_alerts_tap on ;;
         *) nt_answer "$NT_CB" ;;
@@ -448,8 +451,10 @@ nt_callback() {
 # (R37b).
 nt_update() {
     NT_UID='' NT_CID='' NT_CMD='' NT_MIG='' NT_CB='' NT_CBCHAT='' NT_CBMSG='' NT_CBDATA='' NT_CBNAME=''
+    NT_RTO='' NT_RTXT=''
     eval "$(printf '%s\n' "$1" | jsonfilter -e 'NT_UID=@.update_id' -e 'NT_CID=@.message.chat.id' \
         -e 'NT_CMD=@.message.text' -e 'NT_MIG=@.message.migrate_to_chat_id' \
+        -e 'NT_RTO=@.message.reply_to_message.message_id' -e 'NT_RTXT=@.message.reply_to_message.text' \
         -e 'NT_CB=@.callback_query.id' -e 'NT_CBCHAT=@.callback_query.message.chat.id' \
         -e 'NT_CBMSG=@.callback_query.message.message_id' -e 'NT_CBDATA=@.callback_query.data' \
         -e 'NT_CBNAME=@.callback_query.from.first_name' 2>/dev/null)"
@@ -470,7 +475,8 @@ nt_update() {
             "chat $NT_CHAT moved to $NT_MIG: set TG_CHAT_ID='$NT_MIG' in the profile and rebuild"
         return 0
     fi
-    [ -z "$NT_CMD" ] || nt_command "$NT_CMD"
+    # R50: the reply to a prompt for a name is the name; any other text is a command as before
+    [ -z "$NT_CMD" ] || nt_nm_reply || nt_command "$NT_CMD"
 }
 
 # nt_updates WAIT: one getUpdates (long poll of WAIT s). The first call after the start only

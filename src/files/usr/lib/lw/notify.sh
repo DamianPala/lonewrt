@@ -6,8 +6,9 @@
 # send queue, the low-balance memory, the last known balance, the outage record) and is written
 # only for a new SMS, a sent message, a changed balance, the start and end of an outage, its 2G
 # message, a change of the 2G switch, the note of a restart asked in the chat, the one-time flag and
-# the reset note of the keyboard message and the DHCP names (at most once a day, devices.sh) (R34c,
-# R37c, R37e, R37f, R40a, R44b, R45a). $NT_RUN in RAM holds the Bot API offset, the poll schedule, the link state, the reason of
+# the reset note of the keyboard message, the DHCP names (at most once a day, devices.sh) and the
+# names the owner gave to devices (only when one changes, names.sh) (R34c,
+# R37c, R37e, R37f, R40a, R44b, R45a, R50a). $NT_RUN in RAM holds the Bot API offset, the poll schedule, the link state, the reason of
 # this boot, what the outage tracker saw since the boot and the restart question waiting for its
 # answer.
 # The bot token sits in the API URL only. Neither the URL nor uclient-fetch's stderr is ever
@@ -76,7 +77,7 @@ nt_help() {
     printf '%s\n' '❓ <b>What the buttons do</b>' \
         '🟢 <b>Status</b> – is the internet OK' \
         '📶 <b>Wi-Fi</b> – name and password for guests' \
-        '📱 <b>Devices</b> – who is connected, data this month' \
+        '📱 <b>Devices</b> – who is connected, data this month, names' \
         '⚡ <b>Speed</b> – measure the speed (~60 s)' \
         "$_hb" \
         '✉️ <b>SMS</b> – newest SMS (/sms 10 for more)' \
@@ -559,7 +560,7 @@ nt_kb_tick() {
 }
 
 # nt_answer CALLBACK_ID [EXTRA]: answers a button tap, which stops the spinner on the button; EXTRA
-# can carry a pop-up (&show_alert=true&text=...). The pop-up text is ASCII.
+# can carry a pop-up (&show_alert=true&text=..., the text through nt_urlencode).
 nt_answer() { nt_api answerCallbackQuery "callback_query_id=$(nt_urlencode "$1")${2-}"; }
 
 # Link state: one syslog entry when sending stops working for NT_DOWN_GRACE s and one when it

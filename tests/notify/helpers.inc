@@ -219,6 +219,22 @@ tg_push() {
         >>"$G/updates/$_id.json"
 }
 
+# tg_reply CHAT TEXT MSGID: a chat message that is a reply to message MSGID of the bot, as Telegram
+# delivers it: reply_to_message carries the id and the plain text of the message replied to (the
+# first line of what the bot sent, tags removed). TEXT is the content of a JSON string (\n, \t and
+# \u0001 stay escapes; no quotes).
+tg_reply() {
+    _id=$(cat "$G/next_id")
+    echo $((_id + 1)) >"$G/next_id"
+    _rt=$(plain_of "$(sent_text "$3")" | head -n 1 | sed 's/\\/\\\\/g; s/"/\\"/g')
+    printf '{"update_id":%s,"message":{"message_id":%s,"from":{"id":42},' "$_id" "$_id" \
+        >"$G/updates/$_id.json"
+    printf '"chat":{"id":%s,"type":"supergroup"},"date":1790000000,"text":"%s",' "$1" "$2" \
+        >>"$G/updates/$_id.json"
+    printf '"reply_to_message":{"message_id":%s,"from":{"id":7,"is_bot":true},"text":"%s"}}}' \
+        "$3" "$_rt" >>"$G/updates/$_id.json"
+}
+
 # tg_tap CHAT MSGID DATA [FIRST_NAME]: a tap on a button of message MSGID in CHAT (no quotes in the
 # arguments); returns after setting TAP_ID to the callback id.
 tg_tap() {
