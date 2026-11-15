@@ -297,5 +297,33 @@ build --render-only blanks "$SCRATCH/blanks" 2>/dev/null || fail "allowed empty 
 grep -qx "P_SMS_ADMINS=''" "$SCRATCH/blanks/etc/uci-defaults/zz-lw-config" ||
     fail "an empty SMS_ADMINS is not written as empty"
 
+# R3b: VERSION (MAJOR.MINOR.PATCH, optional -prerelease) is read by every build; a missing file or a
+# malformed value stops the build naming VERSION, and a good one lands in /etc/lw-build (R7b)
+vbuild() { LW_VERSION_FILE=$1 build "${@:2}"; }
+expect_fail_with "VERSION is missing" vbuild "$SCRATCH/no-such-VERSION" generic
+i=0
+for bad in '' ' ' 1 1.2 1.2.3.4 v1.2.3 01.2.3 1.02.3 1.2.03 1.2.3- 1.2.3-rc_1 1.2.3-rc..1 1.2.3+build \
+    ' 1.2.3' '1.2.3 ' '1.2.-3' 'x.y.z' '１.２.３' '1.2.3-ü' '1.2.3
+1.2.4'; do
+    i=$((i + 1))
+    printf '%s\n' "$bad" >"$SCRATCH/bad-version-$i"
+    expect_fail_with "VERSION is not MAJOR.MINOR.PATCH" vbuild "$SCRATCH/bad-version-$i" generic
+done
+: >"$SCRATCH/empty-version"
+expect_fail_with "VERSION is not MAJOR.MINOR.PATCH" vbuild "$SCRATCH/empty-version" generic
+i=0
+for good in 0.1.0 1.2.3 10.20.30 0.0.0 1.0.0-rc.1 2.3.4-beta 1.0.0-0.3.7 1.0.0-x-y-z.1; do
+    i=$((i + 1))
+    printf '%s\n' "$good" >"$SCRATCH/good-version-$i"
+    vbuild "$SCRATCH/good-version-$i" --render-only generic "$SCRATCH/good-version-out-$i" 2>/dev/null ||
+        fail "VERSION '$good' was rejected"
+    grep -qx "version=$good" "$SCRATCH/good-version-out-$i/etc/lw-build" ||
+        fail "VERSION '$good' is not in etc/lw-build"
+done
+printf '0.9.9' >"$SCRATCH/no-newline-version"
+vbuild "$SCRATCH/no-newline-version" --render-only generic "$SCRATCH/no-newline-out" 2>/dev/null ||
+    fail "VERSION without a trailing newline was rejected"
+grep -qx "version=0.9.9" "$SCRATCH/no-newline-out/etc/lw-build" || fail "VERSION without newline not in lw-build"
+
 [ "$(listing "$I")" = "$before" ] || fail "a failed build changed image/: $(listing "$I")"
 echo ok

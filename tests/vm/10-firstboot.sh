@@ -132,9 +132,10 @@ gcheck "lw-linkwatch is enabled, runs once under procd and stays silent (R49, R4
      [ "$(ps w | grep -c "[l]w-linkwatch run")" = 1 ] &&
      ! ls /dev/cdc-wdm* >/dev/null 2>&1 &&
      ! grep -q "lw-linkwatch" /root/openwrt.log'
-gcheck "/etc/lw-build has profile, build date and src hash (R7b)" \
-    'cat /etc/lw-build; grep -q "^profile=generic$" /etc/lw-build &&
-     grep -q "^built=." /etc/lw-build && grep -q "^src_sha256=." /etc/lw-build'
+gcheck "/etc/lw-build has version, profile, build date and src hash (R7b)" \
+    'cat /etc/lw-build; grep -q "^version=[0-9]" /etc/lw-build &&
+     grep -q "^profile=generic$" /etc/lw-build && grep -q "^built=." /etc/lw-build &&
+     grep -q "^src_sha256=." /etc/lw-build'
 gnote 'cat /etc/lw-build; grep lw-firstboot /root/openwrt.log | tail -n1'
 gcheck "lw-firstboot entry in /root/openwrt.log with the /etc/lw-build content (R7b)" \
     'i=0; until grep -q "lw-firstboot" /root/openwrt.log; do

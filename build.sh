@@ -11,7 +11,8 @@
 #
 # Environment: LW_WORK (ImageBuilder and downloads, default work/ next to this script; fill it with
 # ./fetch-deps.sh), LW_ROOTFS (OpenWrt rootfs whose busybox runs the sh -n check). Tests also set
-# LW_PROFILES, LW_SRC, LW_IMAGE and LW_DEPS_LIST (the pins of deps.lst) to work on copies.
+# LW_PROFILES, LW_SRC, LW_IMAGE, LW_VERSION_FILE (the VERSION file, SPEC R3b) and LW_DEPS_LIST (the
+# pins of deps.lst) to work on copies.
 set -euo pipefail
 
 FW="$(cd "$(dirname "$0")" && pwd)"
@@ -20,6 +21,7 @@ LW_ROOTFS=${LW_ROOTFS:-$LW_WORK/dl/x86/rootfs}
 PROFILES=${LW_PROFILES:-$FW/profiles}
 SRC=${LW_SRC:-$FW/src}
 IMAGE=${LW_IMAGE:-$FW/image}
+VERSION_FILE=${LW_VERSION_FILE:-$FW/VERSION}
 # shellcheck disable=SC2034  # read by install_extra_packages in pinned-packages.sh
 DEPS=${LW_DEPS_LIST:-$FW/deps.lst}
 IB=$LW_WORK/ib
@@ -112,7 +114,8 @@ is_loose() {
 # render NAME OUT CARD_OUT: profile checks (R3), passwords (R33), overlay, sh -n (R6)
 render() {
     python3 -I "$SRC/render.py" --name "$1" --profiles "$PROFILES" --src "$SRC" --out "$2" \
-        --card-in "$IMAGE/$1-passwords.txt" --card-out "$3" --rootfs "$LW_ROOTFS"
+        --version-file "$VERSION_FILE" --card-in "$IMAGE/$1-passwords.txt" --card-out "$3" \
+        --rootfs "$LW_ROOTFS"
 }
 
 render_only() {

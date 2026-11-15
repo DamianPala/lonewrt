@@ -46,4 +46,4 @@ A `ROOT_PASSWORD` is listed in the `root=` line.
 When the profile gives only `ROOT_PASSWORD_HASH`, the card has no `root=` line and says that root uses the hash from the profile.
 When no card exists and nothing is drawn, no card is written.
 Every build hashes the root password with a new salt, so the hash in the image changes between builds while the password stays.
-The image keeps its profile name, build date and a hash of `src/` in `/etc/lw-build`; after a flash the same line goes to the log as `lw-firstboot`.
+The image keeps its release version (the file `VERSION`), profile name, build date and a hash of `src/` in `/etc/lw-build`; after a flash the same line goes to the log as `lw-firstboot`.

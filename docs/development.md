@@ -18,6 +18,7 @@ A build and the VM image also need the network: they fetch the `uqmi` package fr
 | Path | What | Git |
 |---|---|---|
 | `build.sh`, `src/render.py` | profile checks, overlay, ImageBuilder run | yes |
+| `VERSION` | the release version, one line; the build puts it into `/etc/lw-build` (SPEC R3b), see Release below | yes |
 | `qmi-handler.sh` | takes `/lib/netifd/proto/qmi.sh` from the `uqmi` package of the ImageBuilder, drops its `--network-scan` line (the build stops unless the line is there exactly once) and checks the image's copy after `make image`; sourced by `build.sh` and `tests/vm/build-image.sh`. The repository holds no copy of the file (SPEC R12d, D82) | yes |
 | `pinned-packages.sh` | the checked copy of the third-party `.apk` files into an ImageBuilder, sourced by `build.sh` and `tests/vm/build-image.sh` | yes |
 | `src/files/` | the files of the image (init scripts, `wwan-recover`, `lw-notify`, `uci-defaults/zz-lw-config`, cron, ...) | yes |
@@ -61,6 +62,13 @@ tools/tg-preview/run.sh --transcript chat.json     # a hand-written chat, for a 
 ```
 
 The transcript format and the options are in `tools/tg-preview/README.md`; `tools/tg-preview/test.sh` checks the scenario and the renderer without a browser.
+
+## Release
+
+The release version is the one line of `VERSION` at the repository root (`0.1.0`; a pre-release is `0.2.0-rc.1`, SPEC R3b).
+The build puts it into `/etc/lw-build` and the first line of the `lw-firstboot` log entry, so a router tells which release it runs.
+To release: change `VERSION`, commit, tag that commit `v<version>`, then build.
+A build stops when `VERSION` is missing or malformed.
 
 ## Recovery
 

@@ -64,6 +64,22 @@ grep -qx "profile=generic" "$D/etc/lw-build" || fail "lw-build lacks the profile
 grep -qE '^built=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$' "$D/etc/lw-build" || fail "lw-build lacks the date"
 grep -qx "src_sha256=$digest" "$D/etc/lw-build" || fail "lw-build digest is not $digest"
 grep -qx "src_sha256=$digest" "$F/etc/lw-build" || fail "fake-full digest differs from generic"
+# R3b, R7b: the version of the repository's VERSION file is in /etc/lw-build, one line, of both profiles
+[ -f "$FW/VERSION" ] || fail "no VERSION file at the repository root"
+version=$(cat "$FW/VERSION")
+grep -qE '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$' "$FW/VERSION" ||
+    fail "VERSION is not MAJOR.MINOR.PATCH"
+[ "$(grep -c '^version=' "$D/etc/lw-build")" = 1 ] || fail "lw-build lacks one version line"
+grep -qx "version=$version" "$D/etc/lw-build" || fail "lw-build version is not $version"
+grep -qx "version=$version" "$F/etc/lw-build" || fail "fake-full version differs from generic"
+# the lines an outside reader greps keep their format
+grep -qE '^src_sha256=[0-9a-f]{64}$' "$D/etc/lw-build" || fail "src_sha256 line changed its format"
+[ "$(wc -l <"$D/etc/lw-build")" = 4 ] || fail "lw-build is not four lines"
+# the build prints the version in its summary line
+printf '1.2.3-rc.1\n' >"$SCRATCH/VERSION"
+LW_VERSION_FILE=$SCRATCH/VERSION "$FW/build.sh" --render-only generic "$SCRATCH/ver-out" 2>"$SCRATCH/ver-err"
+grep -qE '^render: profile generic, version 1\.2\.3-rc\.1, src_sha256 [0-9a-f]{12}$' "$SCRATCH/ver-err" ||
+    fail "render summary lacks the version: $(cat "$SCRATCH/ver-err")"
 
 # R33: the fake profile sets both passwords, so it gets no card; the generic one gets a 0600 card
 [ ! -e "$F-passwords.txt" ] || fail "a profile with both passwords got a card"

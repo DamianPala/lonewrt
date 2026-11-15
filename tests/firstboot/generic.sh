@@ -112,6 +112,8 @@ done
 expected="lw-firstboot: $(tr '\n' ' ' </etc/lw-build | sed 's/ *$//')"
 lw_expect_grep "$SYSLOG" "$expected"
 lw_expect_grep "$SYSLOG" "profile=generic built="
+# R7b: the version of VERSION is in the entry
+lw_expect_grep "$SYSLOG" "lw-firstboot: version=$(cat /fw/VERSION) profile=generic"
 [ ! -f /etc/lw-firstboot.pending ] || lw_fail "marker left after logging"
 /etc/init.d/lw-firstboot start
 sleep 1

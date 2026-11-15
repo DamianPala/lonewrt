@@ -4,8 +4,9 @@ Run by build.sh as `python3 -I src/render.py ...`. Parses profiles/<name>.conf w
 (SPEC R3), resolves empty passwords from the password card or draws new ones (SPEC R33), copies
 src/files, fills in the @KEY@ placeholders, adds the weekly balance cron job when the profile has
 notifications and a balance threshold (SPEC R35) and the heartbeat job when the profile has a ping
-address (SPEC R42), the profile's SSH key files and /etc/lw-build
-(SPEC R7b), sets file modes and checks every shell script with busybox `sh -n` (SPEC R6).
+address (SPEC R42), the profile's SSH key files and /etc/lw-build with the release version of the
+VERSION file (SPEC R3b, R7b), sets file modes and checks every shell script with busybox `sh -n`
+(SPEC R6).
 Errors name the key, line or file, never a profile value.
 """
 
@@ -109,6 +110,11 @@ RANGES = {"LINK_RESTART_AFTER_S": (120, 900)}
 CHOICES = {"LOG_LEVEL": ("info", "debug")}
 LINE = re.compile(r"([A-Z][A-Z0-9_]*)='([^']*)'")
 PLACEHOLDER = re.compile(r"@([A-Z][A-Z0-9_]*)@")
+# SPEC R3b: the release version, MAJOR.MINOR.PATCH with an optional -prerelease (no leading zeros in
+# the numbers); ASCII only, one line
+VERSION_FORMAT = re.compile(
+    r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?"
+)
 KEY_FILES = ("authorized_keys", "dropbear_ed25519_host_key", "dropbear_rsa_host_key")
 # Script locations whose files may lack a shebang because they are sourced
 SOURCED_DIRS = ("etc/uci-defaults/", "etc/hotplug.d/", "usr/lib/lw/")
@@ -323,6 +329,20 @@ LTE router with OpenWrt (ZTE MF289F): passwords and hints
     return "\n".join(lines) + "\n" + hints
 
 
+def read_version(path: Path) -> str:
+    """The version of the VERSION file; a missing file or a bad value stops the build (R3b)."""
+    if not path.is_file():
+        raise RenderError(f"VERSION is missing: {path} must hold the release, for example 0.1.0")
+    version = path.read_bytes().decode("utf-8", errors="replace").removesuffix("\n")
+    if not VERSION_FORMAT.fullmatch(version):
+        shown = version[:40].replace("\n", "\\n")
+        raise RenderError(
+            f"VERSION is not MAJOR.MINOR.PATCH with an optional -prerelease, for example 0.1.0 "
+            f"or 0.2.0-rc.1: got '{shown}' in {path}"
+        )
+    return version
+
+
 def src_digest(src: Path) -> str:
     """sha256 over `relative path NUL sha256(content) LF` for every file under src, sorted."""
     outer = hashlib.sha256()
@@ -430,6 +450,7 @@ def render(args: argparse.Namespace) -> None:
     template = parse_profile(args.profiles / "generic.conf")
     values = parse_profile(args.profiles / f"{args.name}.conf")
     validate(values, list(template), args.name)
+    version = read_version(args.version_file)
     card = resolve_passwords(values, args.card_in)
     shell = shell_command(args.rootfs)
 
@@ -443,13 +464,13 @@ def render(args: argparse.Namespace) -> None:
     keys = install_key_files(args.profiles / args.name, out)
     built = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     digest = src_digest(args.src)
-    build_id = f"profile={args.name}\nbuilt={built}\nsrc_sha256={digest}\n"
+    build_id = f"version={version}\nprofile={args.name}\nbuilt={built}\nsrc_sha256={digest}\n"
     (out / "etc/lw-build").write_text(build_id, encoding="ascii")
     scripts = set_modes(out)
     syntax_check(out, scripts, shell)
 
     notes = [
-        f"profile {args.name}, src_sha256 {digest[:12]}",
+        f"profile {args.name}, version {version}, src_sha256 {digest[:12]}",
         f"{len(scripts)} scripts pass sh -n ({shell[-2]})",
         f"SSH key files from profile: {', '.join(keys) or 'none'}",
         f"notifications: {notify_state(values)}" + (", weekly balance check" if balance else ""),
@@ -468,6 +489,7 @@ def main() -> int:
     parser.add_argument("--name", required=True)
     parser.add_argument("--profiles", type=Path, required=True)
     parser.add_argument("--src", type=Path, required=True)
+    parser.add_argument("--version-file", type=Path, required=True, help="the VERSION file")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--card-in", type=Path, help="existing password card to reuse")
     parser.add_argument("--card-out", type=Path, help="where to write the password card")
