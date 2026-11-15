@@ -62,7 +62,7 @@ lw_expect_eq "$(cat "$T/sms-sent" 2>/dev/null)" "" "SMS sent for a command from 
 N="/fw/src/files/usr/sbin/lw-notify /fw/src/files/usr/lib/lw/notify.sh
 /fw/src/files/etc/init.d/lw-notify /fw/src/files/etc/hotplug.d/iface/95-lw-notify
 /fw/src/files/usr/lib/lw/speedtest.sh /fw/src/files/usr/lib/lw/devices.sh
-/fw/src/files/usr/lib/lw/reboot.sh /fw/src/files/usr/lib/lw/smsctl.sh
+/fw/src/files/usr/lib/lw/reboot.sh /fw/src/files/usr/lib/lw/names.sh /fw/src/files/usr/lib/lw/smsctl.sh
 /fw/src/files/usr/lib/lw/operators.sh /fw/src/files/usr/lib/lw/multipart.sh
 /fw/src/files/usr/sbin/lw-heartbeat"
 # (the hotplug's test of "$ACTION" = ifup is the only allowed mention of ifup)

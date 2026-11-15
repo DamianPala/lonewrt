@@ -28,7 +28,7 @@ expect_sent 1
 lw_expect_eq "$(last_text)" '❓ <b>What the buttons do</b>
 🟢 <b>Status</b> – is the internet OK
 📶 <b>Wi-Fi</b> – name, password and a QR code for guests
-📱 <b>Devices</b> – who is connected, data this month
+📱 <b>Devices</b> – who is connected, data this month, names
 ⚡ <b>Speed</b> – measure the speed (~60 s)
 💶 <b>Balance</b> – ask Telekom (~1 min)
 ✉️ <b>SMS</b> – newest SMS (/sms 10 for more)

@@ -370,6 +370,8 @@ nt_devices_list() {
         sed 's/^/S /' "$NT_RUN/stations"
         sed -n 's/^\([0-9a-f:]*\) \([0-9]*\)$/U \1 \2/p' "$NT_RUN/usage"
         sed 's/^/N /' "$NT_NAMES"
+        # R50: the names the owner gave come last, so they replace the DHCP names
+        nt_nm_lines
     } | awk -v ok="$([ "$NT_DATA" = ok ] && echo 1 || echo 0)" -v max="$NT_DEV_MAX" \
         -v self="$NT_SELF_MAC" '
         function gb(b) { return b < 5e7 ? "<0.1 GB" : sprintf("%.1f GB", b / 1e9) }
@@ -385,7 +387,7 @@ nt_devices_list() {
             isconn[n] = (m in kind)
             text[n] = "• " nm (ok ? " · " gb(bytes[n]) : "")
         }
-        $1 == "N" { name[$2] = $3 }
+        $1 == "N" { name[$2] = substr($0, length($1 $2) + 3) }
         $1 == "U" { used[$2] = $3 }
         $1 == "S" { kind[$2] = substr($0, length($1 $2) + 3) }
         END {
@@ -405,6 +407,10 @@ nt_devices_list() {
             printf "T %d %d %d\n", n, conn, shown
             for (i = 1; i <= shown; i++) if (isconn[i]) print "C " text[i]
             for (i = 1; i <= shown; i++) if (!isconn[i]) print "O " text[i]
+            # R50: every device, uncut, for the list of names.sh: "M <mac> n" for one with a name
+            # (DHCP or ours), "M <mac> u" for one without, the connected first
+            for (i = 1; i <= n; i++) if (isconn[i]) print "M " mac[i], (mac[i] in name) ? "n" : "u"
+            for (i = 1; i <= n; i++) if (!isconn[i]) print "M " mac[i], (mac[i] in name) ? "n" : "u"
         }'
 }
 
@@ -454,7 +460,8 @@ $_dcon"
     printf '%s' "$_dtxt"
 }
 
-nt_devices_cmd() { nt_send "$(nt_devices_text)"; }
+# the button under the list opens the picker of R50 (names.sh)
+nt_devices_cmd() { nt_send "$(nt_devices_text)" "$(nt_nm_markup)"; }
 
 # nt_data_commit: write the counters to flash now; nlbwmon does it itself once a day and when it is
 # stopped, this one is for the moment before a restart we start ourselves (R44a).

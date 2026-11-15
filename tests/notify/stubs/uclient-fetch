@@ -38,7 +38,7 @@
 # tg/photo_fail: only sendPhoto fails, after the update that asked for it was read: "net" is a
 # connection error (exit 4), a number such as 500 or 429 that HTTP status (exit 8).
 # Buttons: tg_tap (helpers.inc) writes callback_query updates. sendMessage with a reply_markup keeps
-# it in tg/sent/N.markup (anything but a valid inline_keyboard or reply keyboard is a 400). editMessageText with an
+# it in tg/sent/N.markup (anything but a valid inline_keyboard, force_reply or reply keyboard is a 400). editMessageText with an
 # unknown message_id or the text the message already shows is a 400 like Telegram's; it records
 # tg/edits/K.{msgid,text,markup}, shows the new text in tg/sent/N.shown and replaces the buttons
 # with its reply_markup; without a reply_markup it leaves them as they are (the conservative model:
@@ -176,12 +176,18 @@ rejected() {
 }
 
 # markup_ok: the reply_markup field, when there is one, is an inline keyboard (a JSON object with
-# the list inline_keyboard) or a reply keyboard (the list keyboard, whose rows hold buttons with a
+# the list inline_keyboard), a force_reply (true, with an input_field_placeholder of 1 to 64
+# characters when present) or a reply keyboard (the list keyboard, whose rows hold buttons with a
 # text; is_persistent and resize_keyboard must be booleans when present), as Telegram demands
 markup_ok() {
     m=$(param reply_markup)
     [ -z "$m" ] && return 0
     [ -z "$(printf '%s\n' "$m" | jsonfilter -e '@.inline_keyboard' 2>/dev/null)" ] || return 0
+    if [ "$(printf '%s\n' "$m" | jsonfilter -e '@.force_reply' 2>/dev/null)" = true ]; then
+        p=$(printf '%s\n' "$m" | jsonfilter -e '@.input_field_placeholder' 2>/dev/null)
+        [ "${#p}" -le 64 ] && return 0
+        return 1
+    fi
     [ -n "$(printf '%s\n' "$m" | jsonfilter -e '@.keyboard[0][0].text' 2>/dev/null)" ] || return 1
     for k in is_persistent resize_keyboard; do
         v=$(printf '%s\n' "$m" | jsonfilter -e "@.$k" 2>/dev/null)
