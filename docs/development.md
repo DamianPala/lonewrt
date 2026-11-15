@@ -10,7 +10,7 @@ A build and the VM image also need the network: they fetch the `uqmi` package fr
 
 ```sh
 ./build.sh --render-only mine tests/.out/overlay   # only the rendered rootfs overlay, no ImageBuilder
-./fetch-deps.sh --help                       # download groups: ib extra gawk rootfs vm rescue
+./fetch-deps.sh --help                       # download groups: ib extra gawk rootfs jpeg vm rescue
 ```
 
 ## Where things are
@@ -36,6 +36,7 @@ A build and the VM image also need the network: they fetch the `uqmi` package fr
 | Command | What it checks |
 |---|---|
 | `tests/run-all.sh [-j N] [area]` | the scripts of the image inside the official OpenWrt x86_64 rootfs (same busybox, `uci`, `jsonfilter`) under `bwrap`, with modem and network as stubs: recovery ladder, APN, SMS, notifications, first boot, the data session watcher (stand-ins for `uqmi`, `ip`, `sleep` and the signals to `udhcpc` in `tests/linkwatch/stubs/`). Areas: `ladder modem notify firstboot smoke linkwatch` |
+| `tests/run-all.sh hostnet` (also the last step of `tests/run-all.sh`) | the two checks that need the host: the upload of the QR photo (R51) from the image's own code and the rootfs's `uclient-fetch` to a python3 server on 127.0.0.1 that parses the multipart body, and the QR picture of `/wifi` made by the image's own `nt_qr_image` pipeline (host `qrencode` text, the awk filter, the real `cjpeg` from `./fetch-deps.sh jpeg`) and read back as the same text by `zbarimg`, for 19 names and passwords with every special character. They print `SKIP` when the host lacks a tool, a namespace or a port |
 | `tests/build/run.sh [--quick]` | profile validation, `sh -n` with the rootfs busybox, rendered overlays, `.gitignore`, the `qmi.sh` derivation against a stand-in package, then the first-boot tests; without `--quick` also two real ImageBuilder builds (about 3 minutes, network needed for `uqmi`) that check the image's `qmi.sh` against the package's |
 | `tests/vm/run-all.sh` | an x86 image in QEMU/KVM with a stand-in for the modem: first boot, no modem, power cut during first boot, reset, cron, log rotation, modem mode; see `tests/vm/README.md` |
 
@@ -52,7 +53,7 @@ Not testable without the router: the real modem and operator network (bands, APN
 
 `tools/tg-preview/` makes phone-style screenshots of the bot's chat, to see how the messages look and for the README.
 It plays a made-up chat through the bot's real code in the test rootfs, so the texts are the bot's own, and renders it as Telegram for Android (dark) with headless Chrome.
-It is a laptop tool: it needs `python3`, `bwrap` with the rootfs of `./fetch-deps.sh`, and `google-chrome` (or `chromium`, or `TGP_CHROME`); nothing changes on a router or in the image.
+It is a laptop tool: it needs `python3`, `qrencode` (draws the Wi-Fi photo, R51), `bwrap` with the rootfs of `./fetch-deps.sh`, and `google-chrome` (or `chromium`, or `TGP_CHROME`); nothing changes on a router or in the image.
 
 ```sh
 tools/tg-preview/run.sh                            # PNGs and index.html in tests/.out/tg-preview/

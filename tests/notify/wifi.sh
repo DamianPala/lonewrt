@@ -3,7 +3,9 @@
 # name and password (no band is named); "Password: same password" for a further network that has
 # it; "No password" for an open one; disabled networks, disabled radios and non-access-point
 # interfaces are left out; any character in a name or password is escaped for HTML (R37g) and
-# arrives as it is. Other chats get nothing, and nothing is written (R34c).
+# arrives as it is. Other chats get nothing, and nothing is written (R34c). The router of this test
+# has no qrencode (the stand-in is off), so every answer is the text of R51's fallback, and the log
+# says so once; the photo is tested in wifi-photo.sh.
 # shellcheck source=tests/lib.sh
 . /fw/tests/lib.sh
 # shellcheck source=tests/notify/helpers.inc
@@ -182,9 +184,11 @@ lw_expect_eq "$(ask '/WIFI@TestBot' | head -n 1)" "📶 <b>Wi-Fi</b>" "with the 
 # the token is not in the answers, and a read-only command writes nothing and logs nothing (R34c,
 # R34d)
 before=$(flash_state)
+: >"$T/syslog"
 ask >/dev/null
 lw_expect_eq "$(flash_state)" "$before" "flash after /wifi"
-lw_expect_eq "$(cat "$T/syslog")" "" "syslog after /wifi"
+lw_expect_eq "$(sed 's/^[0-9]* //' "$T/syslog")" \
+    "lw-notify: Wi-Fi photo not sent: no QR image could be made, sent as text" "syslog after /wifi"
 for f in "$G"/sent/*.text; do lw_expect_no_grep "$f" TESTtokq7x9; done
 no_orphans
 echo ok

@@ -19,7 +19,9 @@ Environment: `TGP_CHROME` (browser program; default `google-chrome`, `google-chr
 It needs `python3` and a Chrome or Chromium; the scenario needs `bwrap` and the rootfs like the tests (`./fetch-deps.sh`).
 A snap Chromium cannot read some paths; use `google-chrome` if the PNGs stay empty.
 
-Output in the out directory: `transcript.json` (scenario only), one `<screen>.html` and `<screen>.png` per screen, `index.html` with all screens side by side.
+The Wi-Fi screen is a photo (SPEC R51). The scenario's QR tools are stand-ins that draw no real code, so the transcript carries the text of the code as `photo_qr`, and `run.sh` has `photos.py` draw it with the laptop's `qrencode` (needed for the scenario; `apt install qrencode`) into `qr-<id>.png` next to the transcript, set as the message's `photo`. The picture is a PNG of the same text, where the router sends a JPEG.
+
+Output in the out directory: `transcript.json` and `qr-<id>.png` (scenario only), one `<screen>.html` and `<screen>.png` per screen, `index.html` with all screens side by side.
 
 ## Transcript format
 

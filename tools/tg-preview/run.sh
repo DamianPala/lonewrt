@@ -45,6 +45,9 @@ find_chrome() {
 }
 
 command -v python3 >/dev/null || die "python3 is needed"
+if [ -z "$transcript" ] && ! command -v qrencode >/dev/null; then
+    die "qrencode is needed for the Wi-Fi photo (apt install qrencode)"
+fi
 chrome=$(find_chrome)
 mkdir -p "$out"
 out=$(cd "$out" && pwd)
@@ -55,6 +58,9 @@ if [ -z "$transcript" ]; then
     # the scenario prints the JSON on stdout and its diagnostics on stderr
     env -C "$FW" tests/rootfs/run.sh tools/tg-preview/scenario.sh >"$transcript" ||
         die "the scenario failed (its output is above)"
+    # the photo of /wifi is drawn here, with this machine's qrencode (R51)
+    python3 -I "$HERE/photos.py" "$transcript" ||
+        die "the QR photos were not drawn (its error is above)"
 else
     [ -f "$transcript" ] || die "no such transcript: $transcript"
     transcript=$(cd "$(dirname "$transcript")" && pwd)/$(basename "$transcript")

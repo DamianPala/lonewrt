@@ -18,11 +18,12 @@ NT_DEV_MAX=20
 # nt_clean TEXT: one line without control characters.
 nt_clean() { printf '%s' "$1" | tr -d '\000-\037\177'; }
 
-# nt_wifi_aps: the networks that are switched on, as lines "s:<name>", "k:<password>",
-# "e:<encryption>" and an empty "b:" (which ends a network). Disabled networks and disabled radios,
-# and everything that is not an access point, are left out (R43). Name and password are HTML text
-# (R37g).
+# nt_wifi_aps [raw]: the networks that are switched on, as lines "s:<name>", "k:<password>",
+# "e:<encryption>", "h:<1 when hidden>" and an empty "b:" (which ends a network). Disabled networks
+# and disabled radios, and everything that is not an access point, are left out (R43). Name and
+# password are HTML text (R37g); with "raw" they are the text itself, for the QR code.
 nt_wifi_aps() {
+    _wraw=${1-}
     uci show wireless 2>/dev/null | sed -n 's/^wireless\.\([^.=]*\)=wifi-iface$/\1/p' |
         while read -r _ws; do
             [ "$(uci -q get "wireless.$_ws.disabled")" != 1 ] || continue
@@ -31,18 +32,26 @@ nt_wifi_aps() {
             [ "$(uci -q get "wireless.$_wd.disabled")" != 1 ] || continue
             _wk=$(uci -q get "wireless.$_ws.key") || _wk=
             [ -n "$_wk" ] || _wk=$(uci -q get "wireless.$_ws.sae_password") || _wk=
-            printf 's:%s\nk:%s\ne:%s\nb:\n' \
-                "$(nt_h "$(nt_clean "$(uci -q get "wireless.$_ws.ssid")")")" \
-                "$(nt_h "$(nt_clean "$_wk")")" "$(uci -q get "wireless.$_ws.encryption")"
+            printf 's:%s\nk:%s\ne:%s\nh:%s\nb:\n' \
+                "$(nt_wifi_val "$(uci -q get "wireless.$_ws.ssid")")" "$(nt_wifi_val "$_wk")" \
+                "$(uci -q get "wireless.$_ws.encryption")" "$(uci -q get "wireless.$_ws.hidden")"
         done
 }
 
-# nt_wifi_text (R43): names and passwords as the guests need them, each in a <code> tag, which a tap
-# on the phone copies (D83). Networks with the same name and password are one entry (the radios
-# differ, the guest does not care); a further network is its own paragraph and says "same password"
-# when it is. No band is named: the guest picks the network by its name.
+# nt_wifi_val TEXT: a name or password cleaned of control characters, as HTML text, or as it is
+# when nt_wifi_aps was asked for "raw".
+nt_wifi_val() {
+    if [ "$_wraw" = raw ]; then nt_clean "$1"; else nt_h "$(nt_clean "$1")"; fi
+}
+
+# nt_wifi_text [caption] (R43): names and passwords as the guests need them, each in a <code> tag,
+# which a tap on the phone copies (D83). Networks with the same name and password are one entry (the
+# radios differ, the guest does not care); a further network is its own paragraph and says "same
+# password" when it is. No band is named: the guest picks the network by its name. With "caption"
+# the text is the caption of the QR photo: "Password: none" for an open network, and a last line
+# that tells the reader what to do with the code, so the message makes sense when it is forwarded.
 nt_wifi_text() {
-    nt_wifi_aps | awk '
+    nt_wifi_aps | awk -v cap="${1-}" '
         /^s:/ { ssid = substr($0, 3) }
         /^k:/ { key = substr($0, 3) }
         /^e:/ { enc = substr($0, 3) }
@@ -57,14 +66,144 @@ nt_wifi_text() {
             for (g = 1; g <= ng; g++) {
                 if (g > 1) print ""
                 printf "Name: <code>%s</code>\n", gs[g]
-                if (gk[g] == "") print "No password"
+                if (gk[g] == "") print (cap == "caption" ? "Password: none" : "No password")
                 else if (g > 1 && gk[g] == gk[1]) print "Password: same password"
                 else printf "Password: <code>%s</code>\n", gk[g]
+            }
+            if (cap == "caption") {
+                print ""
+                print "Scan the code with the phone camera to join" \
+                    (ng > 1 ? " the first network." : ".")
             }
         }'
 }
 
-nt_wifi_cmd() { nt_send "$(nt_wifi_text)"; }
+# nt_qr_esc TEXT: TEXT for a field of the Wi-Fi QR code: \ ; , : and " each get a backslash in front
+# (the format of the WIFI: string that phone cameras read). Not for HTML.
+nt_qr_esc() { printf '%s' "$1" | sed 's/[\\;,:"]/\\&/g'; }
+
+# nt_qr_wifi SSID KEY HIDDEN (R51): the text of the QR code that makes a phone join the network.
+# The type is WPA, or nopass for a network without a key (then there is no P field); H:true marks
+# a hidden name.
+nt_qr_wifi() {
+    if [ -n "$2" ]; then
+        _qs="WIFI:T:WPA;S:$(nt_qr_esc "$1");P:$(nt_qr_esc "$2");"
+    else
+        _qs="WIFI:T:nopass;S:$(nt_qr_esc "$1");"
+    fi
+    [ "$3" != 1 ] || _qs="${_qs}H:true;"
+    printf '%s;' "$_qs"
+}
+
+# nt_wifi_first: the first network as /wifi lists it, as the text of the QR code in NT_WQR; fails
+# when no network is switched on. The name and the password are read as they are, not as HTML.
+nt_wifi_first() {
+    _wfs='' _wfk='' _wfe='' _wfh=''
+    _wfn=0
+    _wfa=$(nt_wifi_aps raw)
+    while IFS= read -r _wfl; do
+        case $_wfl in
+            s:*) _wfs=${_wfl#s:} ;;
+            k:*) _wfk=${_wfl#k:} ;;
+            e:*) _wfe=${_wfl#e:} ;;
+            h:*) _wfh=${_wfl#h:} ;;
+            b:*) _wfn=1 && break ;;
+        esac
+    done <<EOF
+$_wfa
+EOF
+    [ "$_wfn" = 1 ] || return 1
+    case $_wfe in none | owe) _wfk='' ;; esac
+    NT_WQR=$(nt_qr_wifi "$_wfs" "$_wfk" "$_wfh")
+}
+
+# nt_qr_pgm: a QR code in the text form of `qrencode -t ASCII` (two characters per module, "#" is a
+# dark module, a margin around it) on stdin as a plain PGM (P2) picture on stdout: every module a
+# square of PX by PX pixels, 0 for dark and 255 for light. PX is 500 divided by the modules in a
+# line, but at least 8 and at most 12, so the picture is about 400 to 600 pixels wide and a phone
+# camera reads it from a screen. Fails, printing nothing, when the text is not a square.
+nt_qr_pgm() {
+    awk '
+        { rows[++r] = $0; if (length($0) > w) w = length($0) }
+        END {
+            n = int((w + 1) / 2)
+            if (n < 21 || n != r) exit 1
+            px = int(500 / n)
+            if (px > 12) px = 12
+            if (px < 8) px = 8
+            for (k = 0; k < px; k++) { dark = dark "0 "; light = light "255 " }
+            print "P2"
+            print n * px, n * px
+            print 255
+            for (i = 1; i <= n; i++) {
+                line = ""
+                for (j = 0; j < n; j++)
+                    line = line (substr(rows[i], 2 * j + 1, 1) == "#" ? dark : light)
+                for (k = 0; k < px; k++) print line
+            }
+        }'
+}
+
+# nt_qr_image QR (R51): the picture of the QR code with the text QR, in the file NT_IMG with the
+# content type NT_IMG_TYPE (image/jpeg); fails, leaving no file, when it cannot be made. This is
+# the one place that knows the image format and the tools that make it (D91): qrencode draws the
+# code as text (the package has no PNG output), nt_qr_pgm turns it into a picture, and cjpeg
+# (libjpeg-turbo-utils) packs that as a JPEG of quality 90, which Telegram takes as a photo. The
+# margin is 4 modules. The text goes in through stdin, not as an argument that `ps` would show,
+# and the picture is read from a pipe, so no PGM file of a megabyte lands in RAM.
+nt_qr_image() {
+    NT_IMG=$NT_RUN/qr.$$.jpg
+    NT_IMG_TYPE=image/jpeg
+    rm -f "$NT_IMG"
+    _qra=$(printf '%s' "$1" | qrencode -t ASCII -m 4 2>/dev/null) || _qra=
+    [ -n "$_qra" ] || return 1
+    if printf '%s\n' "$_qra" | nt_qr_pgm |
+        cjpeg -quality 90 -grayscale -outfile "$NT_IMG" >/dev/null 2>&1 && [ -s "$NT_IMG" ]; then
+        return 0
+    fi
+    rm -f "$NT_IMG"
+    return 1
+}
+
+# Telegram takes 1024 characters in a caption after the markup is read. The length here counts the
+# markup and the entities too, so it is never less than Telegram's.
+NT_CAPTION_MAX=1000
+
+# nt_wifi_photo (R51): /wifi as a photo, the QR code of the first network with the caption. Returns
+# 0 when it went out, 1 when the network failed (the answer to a command is not repeated, as with
+# nt_send), 2 when there is no photo to send (no image, a caption that is too long, or Telegram
+# refused it); the caller then sends the text. The log gets one ASCII line for the third kind of
+# failure, with no name, no password and no token.
+nt_wifi_photo() {
+    nt_wifi_first || return 2
+    _wpc=$(nt_wifi_text caption)
+    if [ "${#_wpc}" -gt "$NT_CAPTION_MAX" ]; then
+        lw_log "$NT_TAG" "Wi-Fi photo not sent: the caption is too long, sent as text"
+        return 2
+    fi
+    if ! nt_qr_image "$NT_WQR"; then
+        lw_log "$NT_TAG" "Wi-Fi photo not sent: no QR image could be made, sent as text"
+        return 2
+    fi
+    _wpr=0
+    nt_photo "$NT_IMG" "$NT_IMG_TYPE" "$_wpc" || _wpr=$?
+    rm -f "$NT_IMG"
+    if [ "$_wpr" = 2 ]; then
+        lw_log "$NT_TAG" "Wi-Fi photo not sent: Telegram refused it (HTTP 400), sent as text"
+    fi
+    return "$_wpr"
+}
+
+# nt_wifi_cmd (R43, R51): the photo, and the text when there is no photo.
+nt_wifi_cmd() {
+    _wcr=0
+    nt_wifi_photo || _wcr=$?
+    case $_wcr in
+        0) return 0 ;;
+        1) return 1 ;;
+    esac
+    nt_send "$(nt_wifi_text)"
+}
 
 # nt_wifi_stations: "<mac> wifi" for every device associated on a Wi-Fi network. The list does not
 # name the band any more (R44); it only tells the devices that are connected now.

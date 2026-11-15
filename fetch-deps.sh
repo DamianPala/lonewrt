@@ -8,9 +8,10 @@
 #   extra   .apk files from outside the official feeds           (build.sh, tests/vm)
 #   gawk    GNU awk for the ImageBuilder, only if the host has none
 #   rootfs  x86_64 rootfs for tests/run-all.sh, unpacked to dl/x86/rootfs
+#   jpeg    x86_64 cjpeg (libjpeg-turbo-utils) for tests/hostnet/qr-roundtrip.sh, unpacked to dl/x86/jpeg
 #   vm      x86_64 ImageBuilder for tests/vm, about 40 MB, in $LWVM_WORK (default $LW_WORK/vm)
 #   rescue  stock images for a recovery over the serial console (not in the default set)
-# Default: ib extra gawk rootfs vm.
+# Default: ib extra gawk rootfs jpeg vm.
 #
 # A file that is already there is checked against its sha256 and left alone; a wrong sum stops the
 # script (delete the file to fetch it again). A download is checked before it gets its final name.
@@ -158,8 +159,29 @@ unpack_rootfs() {
     say "unpacked dl/x86/rootfs"
 }
 
+# unpack_jpeg: cjpeg and libjpeg of the x86_64 feed, for the host test that reads the QR picture of
+# /wifi back; they are not part of the rootfs the other tests run in
+unpack_jpeg() {
+    local dir=$LW_WORK/dl/x86 root=$LW_WORK/dl/x86/rootfs out=$LW_WORK/dl/x86/jpeg tmp
+    if [ -x "$out/usr/bin/cjpeg" ]; then
+        [ "$QUIET" = 1 ] || say "present  dl/x86/jpeg"
+        return 0
+    fi
+    [ -x "$root/bin/busybox" ] || die "jpeg: unpack the rootfs first (./fetch-deps.sh rootfs jpeg)"
+    tmp=$dir/jpeg.part
+    rm -rf -- "$tmp"
+    mkdir -p "$tmp"
+    apk_in "$root" extract --allow-untrusted --destination "$tmp" \
+        "$dir/apk/libjpeg-turbo-3.1.1-r1.apk" "$dir/apk/libjpeg-turbo-utils-3.1.1-r1.apk" >&2
+    [ -x "$tmp/usr/bin/cjpeg" ] || die "jpeg: the package has no /usr/bin/cjpeg"
+    rm -rf -- "$out"
+    mv -- "$tmp" "$out"
+    FETCHED=$((FETCHED + 1))
+    say "unpacked dl/x86/jpeg"
+}
+
 usage() {
-    sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//' >&2
+    sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//' >&2
     exit 2
 }
 
@@ -174,7 +196,7 @@ main() {
         esac
         shift
     done
-    [ ${#groups[@]} -gt 0 ] || groups=(ib extra gawk rootfs vm)
+    [ ${#groups[@]} -gt 0 ] || groups=(ib extra gawk rootfs jpeg vm)
     command -v curl >/dev/null || die "curl is required"
     [ -f "$LIST" ] || die "missing $LIST"
     for group in "${groups[@]}"; do
@@ -184,8 +206,12 @@ main() {
             fetch_group rootfs
             unpack_rootfs
             ;;
+        jpeg)
+            fetch_group jpeg
+            unpack_jpeg
+            ;;
         ib | extra | vm | rescue) fetch_group "$group" ;;
-        *) die "unknown group '$group' (ib extra gawk rootfs vm rescue)" ;;
+        *) die "unknown group '$group' (ib extra gawk rootfs jpeg vm rescue)" ;;
         esac
     done
     say "done: $PRESENT present, $FETCHED fetched (work dir $LW_WORK)"

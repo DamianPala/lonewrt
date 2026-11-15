@@ -66,6 +66,9 @@ for _r in 0 1; do
     uci set wireless.default_radio$_r.key=blue-lamp-4521
 done
 uci commit wireless
+# the router has the QR tools, so /wifi is a photo (R51); the stand-ins draw no real code, so the
+# transcript carries the text of the code and run.sh draws the picture on the laptop (photos.py)
+qr_on
 
 # devices: three on Wi-Fi (5 GHz), two gone; two have no DHCP name
 GB=1000000000
@@ -201,6 +204,7 @@ EOF
     printf '"keyboard":%s,\n' "$(jrows "$(markup_of "$GREETING")" keyboard)"
     printf '"messages":[\n'
     id=0
+    nphoto=0
     sep=
     : >"$T/tgp-screens"
     while IFS='|' read -r kind a b; do
@@ -218,8 +222,14 @@ EOF
                 printf '%s{"id":%s,"from":"bot","time":"%s","text":%s' "$sep" "$id" "$a" \
                     "$(shown "$b" | jstr)"
                 [ "$(msg_mode "$b")" != HTML ] || printf ',"parse_mode":"HTML"'
-                _ik=$(jrows "$(markup_of "$b")" inline_keyboard)
-                [ "$_ik" = '[]' ] || printf ',"inline_keyboard":%s' "$_ik"
+                if [ -f "$G/sent/$b.photo" ]; then
+                    # a photo: the QR code of the Nth picture the bot made, drawn later by photos.py
+                    nphoto=$((nphoto + 1))
+                    printf ',"photo_qr":%s' "$(qr_text "$nphoto" | jstr)"
+                else
+                    _ik=$(jrows "$(markup_of "$b")" inline_keyboard)
+                    [ "$_ik" = '[]' ] || printf ',"inline_keyboard":%s' "$_ik"
+                fi
                 printf '}'
                 sep=',
 '

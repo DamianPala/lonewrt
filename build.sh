@@ -39,6 +39,7 @@ PACKAGES=(
     wifischedule luci-app-wifischedule
     coreutils-timeout coreutils-stty
     speedtestcpp
+    qrencode libjpeg-turbo-utils
 )
 
 # Scratch directory of this run: the rendered overlay with the profile's secrets, ImageBuilder output

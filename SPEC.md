@@ -31,7 +31,7 @@ Its usefulness shows in the first long period without a visit: did link failures
 - **S6.** Operator SMS (top-ups, package expiry) keep arriving, because the router cleans the SMS store by itself and archives the whole store before it deletes anything. (R26)
 - **S7.** The owner sees in the logs and in LuCI what happened: the signal every few minutes, the course of a failure, the modem state, the data usage. A profile can turn on a debug log level for a test period: a longer persistent log, the signal samples in it and every step of the data session repair. (R28 to R30, R29c)
 - **S8.** The owner reaches the router over a WireGuard tunnel; in the generic image the tunnel is prepared but disabled. (R31 to R32)
-- **S9.** With Telegram keys in the profile, every SMS on the SIM reaches the owner's Telegram chat within seconds, and once a week the router checks the balance and sends a message only when it has fallen below a threshold; from the chat the owner asks for the balance, the link state, the WiFi password, the devices and the latest SMS, runs a speed test and restarts the router. The messages are readable for a person without technical knowledge, and after a longer outage the router says the internet is back. Numbers in the profile can also ask for the state and restart the router by SMS. (R34 to R48)
+- **S9.** With Telegram keys in the profile, every SMS on the SIM reaches the owner's Telegram chat within seconds, and once a week the router checks the balance and sends a message only when it has fallen below a threshold; from the chat the owner asks for the balance, the link state, the WiFi name and password with a QR code, the devices and the latest SMS, runs a speed test and restarts the router. The messages are readable for a person without technical knowledge, and after a longer outage the router says the internet is back. Numbers in the profile can also ask for the state and restart the router by SMS. (R34 to R48, R51)
 
 ## What it does not do
 
@@ -367,7 +367,9 @@ Some operators send no SMS when data runs low and renew a package only with enou
 
 - **R42:** When the profile sets `HC_PING_URL`, the router calls this address (healthchecks.io) every 5 min when it has internet; a normal call writes nothing to syslog or flash, and a failed call does nothing except that the signal does not arrive. An empty `HC_PING_URL` turns the calls off. This does not depend on the Telegram keys (D57).
   - **R42a:** The alarm is sent by healthchecks.io, not by the router: period 5 min, grace 25 min, only the "down" event, no repeats and no "up", by a webhook through the bot (`sendMessage` to `TG_CHAT_ID`) with a short text such as `🔴 Router offline for 30 min`. The healthchecks.io setup lives outside the image (D57).
-- **R43:** `/wifi` gives the names and passwords of the enabled WiFi networks from the router's current configuration, each name and password in a `<code>` tag so that a tap copies it (D83); the two bands with the same name and password are one entry and no band is named; a further network is a paragraph of its own, and when it shares the password it has `Password: same password`; a network without a password has `No password` (D58).
+- **R43:** `/wifi` gives the names and passwords of the enabled WiFi networks from the router's current configuration, each name and password in a `<code>` tag so that a tap copies it (D83); the two bands with the same name and password are one entry and no band is named; a further network is a paragraph of its own, and when it shares the password it has `Password: same password`; a network without a password has `No password` (D58). With the means to make a picture, the answer is a photo with a QR code and the same names and passwords as its caption (R51, D90); without them it is this text.
+- **R51:** When the router can make the picture, `/wifi` and the `📶 Wi-Fi` button answer with a photo, the QR code of the first network as R43 lists it, and a caption in HTML that makes sense when it is forwarded outside the group: the heading, the names and passwords as in R43 (`Password: none` for a network without a password, `Password: same password` as in R43), and the last line `Scan the code with the phone camera to join.`, with `... to join the first network.` when there are several networks; no command and no word about guests. The text of the code is `WIFI:T:WPA;S:<name>;P:<password>;;`, with `\`, `;`, `,`, `:` and `"` in the name and the password written with a backslash in front, `T:nopass` and no `P` field for a network without a password, `H:true` before the closing `;` for a hidden name. The picture is made for each request in RAM and deleted after the upload: `qrencode` draws the code as text with a margin of 4 modules, an awk filter makes a grayscale picture of it, 8 to 12 pixels per module (400 to 600 pixels wide for the usual lengths), and `cjpeg` packs it as a JPEG of quality 90 (D91). The upload is a `sendPhoto` as `multipart/form-data` (fields `chat_id`, `parse_mode=HTML`, `caption`, `photo`) built in a 0600 file in RAM, with the token in the URL only and the stderr of `uclient-fetch` never logged (R34d, R34i). A caption of more than 1000 characters (Telegram's limit is 1024 after the markup is read), a picture that cannot be made (a tool missing or failing), or the answer HTTP 400 to the photo gives the text of R43 instead and one `lw-notify` syslog entry in ASCII without a name, a password or the token (D92); a network failure loses the answer like that of every command.
+  - *scenario* given a router with the network `Home-Guest` and the password `blue-lamp-4521`, when the owner taps `📶 Wi-Fi`, then the chat gets a photo of a QR code that a phone camera reads as `WIFI:T:WPA;S:Home-Guest;P:blue-lamp-4521;;`, with the caption `Name: Home-Guest`, `Password: blue-lamp-4521` and the line about scanning; given `cjpeg` fails, then the chat gets the text of R43 and syslog has one entry
 - **R44:** `/devices` starts with the sum of the month in its heading, `📱 Devices · <n> GB this month (since 1 <month>)`, and lists every device with traffic in the current calendar month in two bold groups with their counts: `Connected now (<n>)` and `Earlier this month (<n>)`, each sorted by usage, largest first, with the name from DHCP or `Unknown device` with the end of the MAC address; the band is not shown; at most 20 entries in total, the smallest drop off the list but not out of the sum; the router's own traffic (a speed test, for example) is the last entry, `Router itself`, after an empty line; the same sum is the `📊` line in `/status` below the balance (D59, D63).
   - **R44b:** The router remembers the DHCP name of every MAC address with traffic in the current month, also after its lease expired, so a device switched off for the night keeps its name (D63).
   - **R44a:** The month's counters survive a router restart, losing at most a day on a power cut; flash is written at most once a day and at a stop; the month is taken from the NTP clock, not from the time before the sync (D59).
@@ -452,12 +454,22 @@ Only the 2G message can be turned off.
 
 🔴 Router offline for 30 min        (healthchecks.io webhook, R42a)
 
+📶 Wi-Fi          (R43: the text, which is the answer when no picture can be made)
+Name: OpenWrt-LTE
+Password: xxxxxxxx
+
+Name: OpenWrt-LTE-5G
+Password: same password
+
+[photo: the QR code of OpenWrt-LTE]  (R51: the same names and passwords as the caption)
 📶 Wi-Fi
 Name: OpenWrt-LTE
 Password: xxxxxxxx
 
 Name: OpenWrt-LTE-5G
 Password: same password
+
+Scan the code with the phone camera to join the first network.
 
 📱 Devices · 42 GB this month (since 1 Nov)
 
@@ -514,7 +526,7 @@ Delete it in LuCI: Modem, SMS.
 
 ❓ What the buttons do
 🟢 Status – is the internet OK
-📶 Wi-Fi – name and password for guests
+📶 Wi-Fi – name, password and a QR code for guests
 📱 Devices – who is connected, data this month
 ⚡ Speed – measure the speed (~60 s)
 💶 Balance – ask Telekom (~1 min)          (operator name from the preset, R47; "not available for this SIM" without one, R47a)
@@ -627,6 +639,9 @@ The "Enough for" line of a speed test result by verdict: `fast` ✅ 4K video on 
 | D84 | The reset note is a message of its own before the greeting, not lines in it (R37f) | a tap on the keyboard of a group arrives as a reply to the message that carries the keyboard, and the app quotes the start of that message above every tap: with the note in the greeting, every tap in the chat read `Router was reset`; the greeting with the keyboard now starts with its own words. It costs one more message once, at the first start. This replaces the "one message" of D75 |
 | D85 | A message Telegram rejects as HTML goes once more as plain text and is logged (R37g, R34f) | the markup is ours, and a mistake in it, for example a text that escaping missed, must not cost a message that carries an SMS or a warning; the plain copy has the same words without the tags, and the log line says that a markup fault exists, with no text in it, so it gets fixed (an edit has no such copy: a 400 also answers an edit that changes nothing, a double tap, and a plain copy would replace the formatted text) |
 | D86 | The answer to `/balance` edits the acknowledgement into the balance message (R36, R37) | the owner asks and waits: one message that turns from "asked" into the result is shorter than two, and the chat shows no stale "asked" line; the edit makes no sound, which is why a late reply, the weekly reply and the first amount below the threshold come as new messages |
+| D90 | `/wifi` answers with a photo of a QR code and a self-contained caption (R51) | a guest joins by pointing the phone camera at the code, with no typing of a password, and the owner can forward the message as it is to someone outside the group, so the caption holds no command and no "for guests"; the code is the one of the first network because a message carries one picture and the first is the one `/wifi` lists first; the caption says `Password: none` where the text of R43 says `No password`, because the caption is read away from the other lines of the bot |
+| D91 | The picture is made with the stock `qrencode` (text output), an awk filter and `cjpeg`, as a JPEG; packages `qrencode` (20 KiB installed, with `libqrencode` 28 KiB) and `libjpeg-turbo-utils` (136 KiB, with `libjpeg-turbo` 356 KiB), 540 KiB in all (R51, R2) | the `qrencode` package of OpenWrt 25.12.6 is built without libpng: `-t PNG` prints "PNG output is disabled at compile time" and writes no file, so no PNG comes from the feed packages; a PNG with `libpng` (156 KiB) would need our own build of `qrencode` that we would then carry and pin; `cjpeg` reads the plain-text PGM of the awk filter as it is (measured with libjpeg-turbo 3.1.1 in the x86 rootfs, and the JPEGs of quality 90, 8 to 12 pixels per module, read back with `zbarimg` as the same text), and Telegram takes a JPEG as a photo; the 540 KiB installed are about 6 % of the 8.9 MB image (the image with them is not built yet); the pipe has no file of a megabyte in RAM, and the picture is made again for every request, so nothing stays in RAM or on flash |
+| D92 | No picture means the text of R43 and one log line, not silence or an error message (R51) | the owner asks for the password to give it to a person standing there, so an answer with the password is worth more than a picture: a tool that is missing, fails or writes nothing, a caption over the limit, or a refusal of the photo (HTTP 400) all end in the text; the log line says why in ASCII, with no name, no password and no token, and a network failure is not answered with a second try, as for every command (R34c) |
 
 ## Risks
 

@@ -21,6 +21,7 @@ Compared against: `/etc/apk/world` of a clean eko.one.pl r32944 image (262 top-l
 | `nlbwmon`, `luci-app-nlbwmon` | data use per device; useful when the SIM's data plan has a cap | official |
 | `speedtestcpp` (pulls in `libspeedtestcpp`, `libcurl4`, `libstdcpp6`; about 3.6 MB installed) | `/speedtest` from the bot (R41); speedtest.net client, nearest server, about 330 MB of data per test | official (packages) |
 | `coreutils-timeout`, `coreutils-stty` | busybox has neither `timeout` nor `stty`; without `stty` a raw read of the AT port falls into an echo loop | official |
+| `qrencode`, `libjpeg-turbo-utils` (pull in `libqrencode`, `libjpeg-turbo`; 20 + 28 + 136 + 356 = 540 KiB installed) | the QR photo of `/wifi` (R51, D91): `qrencode` draws the code as text, an awk filter makes a PGM picture, `cjpeg` packs it as a JPEG; `qrencode` of the feed has no PNG output (`-t PNG`: "PNG output is disabled at compile time"), so there is no `libpng` (156 KiB) here | official |
 
 ## Left out (present in eko.one.pl, not needed here)
 
@@ -36,4 +37,4 @@ Compared against: `/etc/apk/world` of a clean eko.one.pl r32944 image (262 top-l
 
 `luci-app-sms-tool-js`, `modemdata`, `modemband` and their `luci-app-*` are kept as `.apk` files in `dl/extra/` (`modemdata` and `modemband` from the eko.one.pl feed; the `luci-app-*` from the 4IceG releases).
 `build.sh` copies them into the ImageBuilder's `packages/`, which accepts them.
-The resulting image is about 8.9 MB and fits the flash.
+The resulting image was about 8.9 MB and fit the flash before the QR packages of R51; they add 540 KiB installed (less in the compressed image, not yet measured by a build).

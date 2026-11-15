@@ -27,6 +27,16 @@
 #   hc/mode           for addresses outside the Bot API (the healthchecks.io ping): up (default),
 #                     down (exit 4), hang (never answers) or an HTTP status such as 500 ("HTTP error
 #                     500" on stderr, exit 8); every call is a line "quiet|loud <url>" in hc/calls
+# sendPhoto (R51) is a multipart/form-data body, parsed here from the bytes, not from the code under
+# test: the client must have sent exactly one Content-Type header, multipart/form-data with a boundary,
+# every line end in the body must be CRLF, the fields chat_id and photo (with a file name) must be
+# there, parse_mode HTML needs a caption Telegram takes (valid markup, at most 1024 characters after
+# the markup and entities are read). Records per message, next to sendMessage's: tg/sent/N.chat,
+# N.caption (also as N.text and N.shown, so the helpers that count messages see it), N.mode,
+# N.photo (the bytes), N.photoname, N.phototype, N.ctype (the Content-Type header as sent).
+# tg/reject_photo: when the file exists and is not empty, every sendPhoto is answered with HTTP 400.
+# tg/photo_fail: only sendPhoto fails, after the update that asked for it was read: "net" is a
+# connection error (exit 4), a number such as 500 or 429 that HTTP status (exit 8).
 # Buttons: tg_tap (helpers.inc) writes callback_query updates. sendMessage with a reply_markup keeps
 # it in tg/sent/N.markup (anything but a valid inline_keyboard or reply keyboard is a 400). editMessageText with an
 # unknown message_id or the text the message already shows is a 400 like Telegram's; it records
@@ -44,9 +54,15 @@ mkdir -p "$G/updates" "$G/sent"
 body=
 url=
 quiet=
+ctypes=
 while [ $# -gt 0 ]; do
     case $1 in
         -q) quiet=1 && shift ;;
+        --header=Content-Type:* | --header=content-type:*)
+            ctypes="$ctypes${1#--header=}
+"
+            shift
+            ;;
         -T | -O | -U | -P) shift 2 ;;
         --post-file=*) body=${1#--post-file=} && shift ;;
         -*) shift ;;
@@ -173,6 +189,100 @@ markup_ok() {
     done
 }
 
+# multipart BOUNDARY: the parts of the multipart body in $body, as lines "name, filename, type, byte
+# offset, length" separated by the character 0x1F, on stdout; exit 1 when the body is not well formed (no CRLF where the format
+# demands it, a text before the first boundary, no closing boundary or something after it). Works on
+# the hex digits of the file, so it is binary-safe and shares no logic with the code under test.
+multipart() {
+    bhex=$(printf '%s' "--$1" | hexdump -v -e '/1 "%02X"')
+    hexdump -v -e '/1 "%02X"' "$body" | awk -v D="$bhex" '
+        BEGIN { for (i = 0; i < 256; i++) v[sprintf("%02X", i)] = i }
+        { H = H $0 }
+        function ascii(h,    o, i) {
+            for (i = 1; i < length(h); i += 2) o = o sprintf("%c", v[substr(h, i, 2)])
+            return o
+        }
+        END {
+            dl = length(D); p = 1; n = 0
+            while ((i = index(substr(H, p), D)) > 0) {
+                q = p + i - 1
+                if ((q - 1) % 2 == 0) { st[++n] = q; p = q + dl } else p = q + 1
+            }
+            if (n < 2 || st[1] != 1) exit 1
+            if (substr(H, st[n] + dl) != "2D2D0D0A") exit 1
+            for (k = 1; k < n; k++) {
+                seg = substr(H, st[k] + dl, st[k + 1] - st[k] - dl)
+                if (substr(seg, 1, 4) != "0D0A" || substr(seg, length(seg) - 3) != "0D0A") exit 1
+                seg = substr(seg, 5, length(seg) - 8)
+                he = index(seg, "0D0A0D0A")
+                if (he == 0 || (he - 1) % 2 != 0) exit 1
+                hdr = ascii(substr(seg, 1, he - 1))
+                name = ""; fn = ""; ty = ""
+                if (match(hdr, /name="[^"]*"/)) name = substr(hdr, RSTART + 6, RLENGTH - 7)
+                if (match(hdr, /filename="[^"]*"/)) fn = substr(hdr, RSTART + 10, RLENGTH - 11)
+                if (match(hdr, /Content-Type: [^\r]*/)) ty = substr(hdr, RSTART + 14, RLENGTH - 14)
+                off = (st[k] + dl - 1 + 4 + he - 1 + 8) / 2
+                len = (length(seg) - he - 7) / 2
+                printf "%s\037%s\037%s\037%d\037%d\n", name, fn, ty, off, len
+            }
+        }'
+}
+
+# caption_chars: the number of characters Telegram counts in the caption on stdin (no trailing new
+# line): the markup is not counted and an entity is one character; UTF-8 continuation bytes are not.
+caption_chars() {
+    sed 's/<[^>]*>//g; s/&amp;/\&/g; s/&lt;/</g; s/&gt;/>/g; s/&quot;/"/g' | hexdump -v -e '/1 "%02X\n"' |
+        awk '$1 !~ /^[89AB]/ { n++ } END { print n - 1 }'
+}
+
+# photo_request: the sendPhoto in $body: parses it, checks it like Telegram would, records it as
+# message N; exit 1 for a request Telegram answers with HTTP 400.
+photo_request() {
+    [ "$(printf '%s' "$ctypes" | grep -c .)" = 1 ] || return 1
+    ctype=$(printf '%s' "$ctypes" | sed 's/^[^:]*: *//')
+    case $ctype in
+        'multipart/form-data; boundary='*) ;;
+        *) return 1 ;;
+    esac
+    boundary=${ctype#*boundary=}
+    d=$(mktemp -d "$G/mp.XXXXXX")
+    multipart "$boundary" >"$d/parts" || { rm -r -f "$d"; return 1; }
+    us=$(printf '\037')
+    while IFS=$us read -r name fn ty off len; do
+        [ -n "$name" ] || continue
+        tail -c +$((off + 1)) "$body" | head -c "$len" >"$d/$name.val"
+        printf '%s' "$fn" >"$d/$name.fn"
+        printf '%s' "$ty" >"$d/$name.ty"
+    done <"$d/parts"
+    if [ ! -s "$d/chat_id.val" ] || [ ! -f "$d/photo.val" ] || [ -z "$(cat "$d/photo.fn")" ]; then
+        rm -r -f "$d"
+        return 1
+    fi
+    mode=$(cat "$d/parse_mode.val" 2>/dev/null)
+    cap=$(cat "$d/caption.val" 2>/dev/null; printf x)
+    cap=${cap%x}
+    if [ "$mode" = HTML ] && [ -n "$cap" ] && ! printf '%s' "$cap" | html_valid; then
+        rm -r -f "$d"
+        return 1
+    fi
+    if [ "$(printf '%s' "$cap" | caption_chars)" -gt 1024 ]; then
+        rm -r -f "$d"
+        return 1
+    fi
+    n=$(($(find "$G/sent" -name '*.text' | wc -l) + 1))
+    cp "$d/chat_id.val" "$G/sent/$n.chat"
+    printf '%s' "$cap" >"$G/sent/$n.caption"
+    printf '%s' "$cap" >"$G/sent/$n.text"
+    printf '%s' "$cap" >"$G/sent/$n.shown"
+    : >"$G/sent/$n.markup"
+    printf '%s' "$mode" >"$G/sent/$n.mode"
+    cp "$d/photo.val" "$G/sent/$n.photo"
+    cp "$d/photo.fn" "$G/sent/$n.photoname"
+    cp "$d/photo.ty" "$G/sent/$n.phototype"
+    printf '%s' "$ctype" >"$G/sent/$n.ctype"
+    rm -r -f "$d"
+}
+
 ids() { for f in "$G"/updates/*.json; do [ -f "$f" ] && basename "$f" .json; done | sort -n; }
 
 if [ -n "$(cat "$G/status" 2>/dev/null)" ]; then
@@ -226,6 +336,20 @@ case $method in
         param text >"$G/sent/$n.shown"
         param reply_markup >"$G/sent/$n.markup"
         printf '%s' "$mode" >"$G/sent/$n.mode"
+        printf '{"ok":true,"result":{"message_id":%s}}\n' "$n"
+        ;;
+    sendPhoto)
+        case $(cat "$G/photo_fail" 2>/dev/null) in
+            '') ;;
+            net) echo "Connection error: Failed to resolve host" >&2 && exit 4 ;;
+            *) echo "HTTP error $(cat "$G/photo_fail")" >&2 && exit 8 ;;
+        esac
+        if [ -s "$G/reject_photo" ] || ! photo_request; then
+            echo x >>"$G/rejected"
+            ! [ -f "$G/down_after_reject" ] || echo down >"$G/net"
+            echo "HTTP error 400" >&2
+            exit 8
+        fi
         printf '{"ok":true,"result":{"message_id":%s}}\n' "$n"
         ;;
     editMessageText)

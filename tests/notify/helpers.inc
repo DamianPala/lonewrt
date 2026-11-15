@@ -247,6 +247,15 @@ sent() { find "$G/sent" -name '*.text' | wc -l; }
 sent_text() { cat "$G/sent/$1.text"; }
 last_text() { sent_text "$(sent)"; }
 
+# The QR picture of /wifi (R51). The stand-in for qrencode is off, like a router without the package,
+# until qr_on; qr_n is how many pictures it made, qr_text N the text of the code of the Nth.
+# sent_photo N: the bytes the fake Bot API got as the photo of message N (same numbers as sent_text).
+qr_on() { mkdir -p "$T/qr" && : >"$T/qr/on"; }
+qr_off() { rm -r -f "$T/qr"; }
+qr_n() { find "$T/qr" -name '*.text' 2>/dev/null | wc -l | tr -d ' '; }
+qr_text() { cat "$T/qr/$1.text"; }
+sent_photo() { cat "$G/sent/$1.photo"; }
+
 # rejected_n: how many sendMessage calls the fake bot answered with HTTP 400 (tg/reject400);
 # sendcalls: how many sendMessage calls it saw in all.
 rejected_n() { if [ -f "$G/rejected" ]; then wc -l <"$G/rejected" | tr -d ' '; else echo 0; fi; }

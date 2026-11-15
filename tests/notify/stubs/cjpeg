@@ -1,0 +1,60 @@
+#!/bin/sh
+# Test stand-in for cjpeg (libjpeg-turbo-utils), the last step of the QR picture of /wifi (R51,
+# nt_qr_image): the real one is called as `cjpeg -quality 90 -grayscale -outfile FILE` and reads a PGM
+# picture from stdin. This one checks that stdin is a plain PGM (P2, "W H", maxval 255, exactly W x H
+# pixel values) and fails like the real tool when it is not; it records in $LW_TEST/qr:
+#   N.cjpeg     the options (N is the number of the last picture of the qrencode stand-in)
+#   N.dim       "W H" of the picture
+#   last.pgm    the picture itself (only the last one, a made-up code is up to 1.5 MB)
+#   N.jpg       the file it wrote to -outfile: the JPEG signature, then bytes that a text tool would
+#               mangle (NUL, CR LF, a line that looks like a multipart boundary, all of 0x80..0xFF),
+#               so an upload that is not binary-safe shows in the bytes the fake Bot API records
+# It is off like the qrencode stand-in until qr_on, and with the file qr/no-cjpeg it is a router
+# without the package (exit 127). Knobs:
+#   qr/jpeg_mode   fail (exit 1, no file), empty (exit 0, an empty file), missing (exit 0, no file);
+#                  anything else: works
+T=${LW_TEST:-/lwtest}
+Q=$T/qr
+[ -f "$Q/on" ] && [ ! -f "$Q/no-cjpeg" ] || exit 127
+args=$*
+out=
+while [ $# -gt 0 ]; do
+    case $1 in
+        -outfile) out=$2 && shift 2 ;;
+        -quality) shift 2 ;;
+        *) shift ;;
+    esac
+done
+n=$(find "$Q" -name '*.text' | wc -l | tr -d ' ')
+cat >"$Q/last.pgm"
+echo "$args" >"$Q/$n.cjpeg"
+if ! awk '
+    { for (i = 1; i <= NF; i++) {
+        k++
+        if (k == 1) { if ($i != "P2") bad = 1 }
+        else if (k == 2) w = $i
+        else if (k == 3) h = $i
+        else if (k == 4) { if ($i != 255) bad = 1 }
+        else if ($i != 0 && $i != 255) bad = 1
+    } }
+    END { if (bad || w < 1 || h < 1 || k != 4 + w * h) exit 1; print w, h }' <"$Q/last.pgm" >"$Q/$n.dim"; then
+    echo "cjpeg: Not a plain PGM file" >&2
+    exit 1
+fi
+case $(cat "$Q/jpeg_mode" 2>/dev/null) in
+    fail) echo "cjpeg: cannot write the output file" >&2 && exit 1 ;;
+    empty) : >"$out" && exit 0 ;;
+    missing) exit 0 ;;
+esac
+[ -n "$out" ] || exit 1
+{
+    printf '\377\330\377\340\000\020JFIF\000'
+    printf 'IHDR\000\000\001\000\000\000\001\000\r\n--lw-boundary-lookalike\r\n\r\n'
+    i=128
+    while [ "$i" -lt 256 ]; do
+        printf "\\$(printf '%03o' "$i")"
+        i=$((i + 1))
+    done
+    printf '\377\331'
+} >"$out"
+cp "$out" "$Q/$n.jpg"

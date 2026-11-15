@@ -3,7 +3,9 @@
 #
 #   tests/run-all.sh [-j N] [area]
 #
-# area (ladder, modem, smoke ...) runs only that directory. The tests are independent (own bwrap
+# area (ladder, modem, smoke ...) runs only that directory. The area hostnet is different: its scripts
+# run on the host (they need a network port of the host, which the sandbox of the other tests
+# does not have), and print SKIP when they cannot run here. The tests are independent (own bwrap
 # sandbox, no network), so N of them run at once: -j N, else LW_JOBS, else 6 (half the cores of a
 # 12-core host). The report keeps the order of the directory listing whatever the finishing order;
 # a FAIL is followed by the last 20 lines of that test's output. Exit code 1 when any test failed.
@@ -23,10 +25,15 @@ tests=()
 for t in "$FW"/tests/${1:-*}/*.sh; do
     [ -f "$t" ] || continue
     rel=${t#"$FW"/}
-    case $rel in tests/rootfs/* | tests/vm/* | tests/build/*) continue ;; esac
+    case $rel in tests/rootfs/* | tests/vm/* | tests/build/* | tests/hostnet/*) continue ;; esac
     tests+=("$rel")
 done
-[ "${#tests[@]}" -gt 0 ] || { echo "run-all: no rootfs tests in tests/${1:-*}/" >&2; exit 2; }
+host_tests=()
+case ${1:-hostnet} in hostnet) host_tests=("$FW"/tests/hostnet/*.sh) ;; esac
+[ "${#tests[@]}" -gt 0 ] || [ "${1:-}" = hostnet ] || {
+    echo "run-all: no rootfs tests in tests/${1:-*}/" >&2
+    exit 2
+}
 
 tmp=$(mktemp -d)
 trap 'rm -rf -- "$tmp"' EXIT
@@ -68,4 +75,21 @@ for i in "${!tests[@]}"; do
 done
 wait
 flush
+
+# the host tests, one at a time: PASS, SKIP (the script says why) or FAIL
+for t in "${host_tests[@]}"; do
+    [ -f "$t" ] || continue
+    rel=${t#"$FW"/}
+    rc=0
+    "$t" >"$tmp/host.out" 2>&1 || rc=$?
+    if [ "$rc" != 0 ]; then
+        echo "FAIL $rel"
+        tail -n 20 "$tmp/host.out" | sed 's/^/    /'
+        fail=1
+    elif grep -q '^SKIP' "$tmp/host.out"; then
+        echo "SKIP $rel ($(sed -n 's/^SKIP: *//p' "$tmp/host.out" | head -n 1))"
+    else
+        echo "PASS $rel"
+    fi
+done
 exit "$fail"

@@ -68,6 +68,14 @@ assert alerts["inline_keyboard"] == [["2G backup: turn off"]], alerts
 cancelled = next(m for m in data["messages"] if m["text"] == "Restart cancelled.")
 assert "inline_keyboard" not in cancelled, "the cancelled question kept its buttons"
 assert bots[-1]["text"].startswith("\u2753 <b>What the buttons do</b>"), "the chat does not end with help"
+# R51: /wifi is a photo; the transcript holds the text of its QR code and the forwardable caption
+wifi = next(m for m in data["messages"] if m["text"].startswith("\U0001f4f6 <b>Wi-Fi</b>"))
+assert next(s for s in data["screens"] if s["name"] == "wifi")["last"] == wifi["id"]
+assert wifi["photo_qr"] == "WIFI:T:WPA;S:Home-Guest;P:blue-lamp-4521;;", wifi
+assert wifi["text"].endswith("\n\nScan the code with the phone camera to join."), wifi["text"]
+assert "inline_keyboard" not in wifi and "photo" not in wifi, wifi
+assert sum("photo_qr" in m for m in data["messages"]) == 1, "more than one photo in the chat"
+assert "\U0001f4f6 <b>Wi-Fi</b> \u2013 name, password and a QR code for guests" in texts, "help line"
 PYEOF
 grep -q 'Router was reset to its built-in settings' "$FW/src/files/usr/lib/lw/notify.sh" ||
     fail "the reset note moved in the bot's code: update this test"
@@ -297,6 +305,36 @@ echo 'not an image' >"$work/ph/text.png"
 printf '%s' '{"messages":[{"id":6,"from":"bot","time":"1:00","photo":"text.png"}]}' >"$work/ph/bad.json"
 ! python3 "$HERE/render.py" "$work/ph/bad.json" "$work/ph/o3" 2>"$work/ph/bad.err" || fail "a non-image photo is accepted"
 grep -qF 'message id 6' "$work/ph/bad.err" || fail "no message id for a non-image photo"
+
+# ---- photos.py draws the QR photos of the scenario with the laptop's qrencode
+if command -v qrencode >/dev/null && command -v zbarimg >/dev/null; then
+    mkdir -p "$work/qr"
+    cp "$work/t.json" "$work/qr/t.json"
+    python3 -I "$HERE/photos.py" "$work/qr/t.json" || fail "photos.py failed on the scenario"
+    python3 -I - "$work/qr/t.json" <<'PYEOF' || fail "photos.py left the transcript wrong"
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+msg = next(m for m in data["messages"] if "photo" in m)
+assert msg["photo"] == "qr-%d.png" % msg["id"], msg
+assert "photo_qr" not in json.dumps(data), "photo_qr is still in the transcript"
+PYEOF
+    png=$(python3 -I -c 'import json, sys
+print(next(m["photo"] for m in json.load(open(sys.argv[1]))["messages"] if "photo" in m))' "$work/qr/t.json")
+    [ "$(zbarimg --raw -q "$work/qr/$png")" = 'WIFI:T:WPA;S:Home-Guest;P:blue-lamp-4521;;' ] ||
+        fail "the drawn photo does not read back as the Wi-Fi code"
+    python3 "$HERE/render.py" "$work/qr/t.json" "$work/qr/out" >/dev/null || fail "the drawn photo does not render"
+    grep -qF '<img src="data:image/png;base64,' "$work/qr/out/wifi.html" || fail "no photo on the wifi screen"
+    printf '%s' '{"messages":[{"id":1,"from":"bot","time":"1:00","text":"x"}]}' >"$work/qr/none.json"
+    cp "$work/qr/none.json" "$work/qr/none.before"
+    python3 -I "$HERE/photos.py" "$work/qr/none.json" || fail "photos.py failed on a transcript without photos"
+    cmp -s "$work/qr/none.json" "$work/qr/none.before" || fail "photos.py changed a transcript without photos"
+    ! python3 -I "$HERE/photos.py" "$work/qr/missing.json" 2>"$work/qr/m.err" || fail "a missing transcript is accepted"
+    grep -qF 'no such transcript' "$work/qr/m.err" || fail "no clear error for a missing transcript"
+else
+    echo "SKIP: photos.py (no qrencode or zbarimg on the host)"
+fi
 
 # ---- forwarded messages and the private chat
 cat >"$work/fw.json" <<'JSONEOF'

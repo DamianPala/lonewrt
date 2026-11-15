@@ -7,6 +7,7 @@
 # extra   .apk files from outside the official feeds, copied into the ImageBuilder (packages.md)
 # gawk    GNU awk for the ImageBuilder, only used when the host has no GNU awk
 # rootfs  x86_64 rootfs the tests run in (tests/rootfs/run.sh), with coreutils-timeout added
+# jpeg    x86_64 build of libjpeg-turbo-utils (cjpeg), for tests/hostnet/qr-roundtrip.sh only
 # vm      x86_64 ImageBuilder of the VM bench (tests/vm)
 # rescue  stock images for a recovery over the serial console (docs/development.md "Recovery")
 
@@ -24,6 +25,9 @@ gawk 03da23292f00cfbc2cc96379d2f1fdf9595a06498e218779408c58228525efa8 tools/deb/
 rootfs 55e52bb34de582a1ebe56bd50f94ff54ac7c77f5bca9cae807656d1930456da4 dl/x86/openwrt-25.12.6-x86-64-rootfs.tar.gz https://downloads.openwrt.org/releases/25.12.6/targets/x86/64/openwrt-25.12.6-x86-64-rootfs.tar.gz
 rootfs fe275266eb3d917162986bad82d2d74bc3763db9f497a584b77215e40e53f158 dl/x86/apk/coreutils-9.9-r2.apk https://downloads.openwrt.org/releases/25.12.6/packages/x86_64/packages/coreutils-9.9-r2.apk
 rootfs 5a9d7cbff353150164ba6e61457b65c699c5f94a62c3eb48606a6b4c6abf7257 dl/x86/apk/coreutils-timeout-9.9-r2.apk https://downloads.openwrt.org/releases/25.12.6/packages/x86_64/packages/coreutils-timeout-9.9-r2.apk
+
+jpeg bddde33ec06b3626ae7f62e1a08132060ece1217d352cec715bd681cef72fcf7 dl/x86/apk/libjpeg-turbo-3.1.1-r1.apk https://downloads.openwrt.org/releases/25.12.6/packages/x86_64/packages/libjpeg-turbo-3.1.1-r1.apk
+jpeg 1b044754aed371a64708feabdf6f464bcd3b3ecf964cf33534d275f9b92c4f56 dl/x86/apk/libjpeg-turbo-utils-3.1.1-r1.apk https://downloads.openwrt.org/releases/25.12.6/packages/x86_64/packages/libjpeg-turbo-utils-3.1.1-r1.apk
 
 vm a792e29bd2233cda67a0823030bfb53c0b61fbb3836b2063e88adf89730d563b vm/dl/openwrt-imagebuilder-25.12.6-x86-64.Linux-x86_64.tar.zst https://downloads.openwrt.org/releases/25.12.6/targets/x86/64/openwrt-imagebuilder-25.12.6-x86-64.Linux-x86_64.tar.zst
 

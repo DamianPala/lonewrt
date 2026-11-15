@@ -75,7 +75,7 @@ nt_help() {
     if [ -z "$NT_LOW" ] || ! nt_preset_ok; then _hf='new SMS, internet back, 2G backup'; fi
     printf '%s\n' '❓ <b>What the buttons do</b>' \
         '🟢 <b>Status</b> – is the internet OK' \
-        '📶 <b>Wi-Fi</b> – name and password for guests' \
+        '📶 <b>Wi-Fi</b> – name, password and a QR code for guests' \
         '📱 <b>Devices</b> – who is connected, data this month' \
         '⚡ <b>Speed</b> – measure the speed (~60 s)' \
         "$_hb" \
@@ -379,17 +379,37 @@ nt_urlencode() {
 # number leaves it (R34d). A 400 sets NT_REJECT=1: Telegram answered, so the link is fine and the
 # link state does not change (R34f); any other failure is a link failure as before.
 nt_api() {
-    _limit=$((${3:-0} + NT_HTTP_LIMIT))
     _body=$NT_RUN/body.$$
-    _err=$NT_RUN/err.$$
     printf '%s' "$2" >"$_body"
+    nt_post "$1" "$_body" "${3:-0}"
+    _apr=$?
+    rm -f "$_body"
+    return "$_apr"
+}
+
+# nt_post METHOD FILE WAIT [CONTENT_TYPE]: nt_api with the request body already in FILE, which the
+# caller deletes; CONTENT_TYPE (the value, "multipart/form-data; boundary=...") replaces the form
+# type for a file upload (nt_photo). uclient-fetch sends one Content-Type header either way: a
+# header of ours takes the place of its default (measured with the client of OpenWrt 25.12.6,
+# tests/hostnet/photo-upload.sh).
+nt_post() {
+    _limit=$(($3 + NT_HTTP_LIMIT))
+    _err=$NT_RUN/err.$$
     (umask 077 && : >"$_err")
     NT_RC=0
     NT_REJECT=
-    NT_RESP=$(timeout $((_limit + 2)) uclient-fetch -T "$_limit" -O - --post-file="$_body" \
-        "$NT_API/bot$NT_TOKEN/$1" </dev/null 2>"$_err") || NT_RC=$?
+    set -- "$1" "$2" "${4-}"
+    NT_RESP=$(
+        if [ -n "$3" ]; then
+            timeout $((_limit + 2)) uclient-fetch -T "$_limit" -O - --post-file="$2" \
+                --header="Content-Type: $3" "$NT_API/bot$NT_TOKEN/$1" </dev/null 2>"$_err"
+        else
+            timeout $((_limit + 2)) uclient-fetch -T "$_limit" -O - --post-file="$2" \
+                "$NT_API/bot$NT_TOKEN/$1" </dev/null 2>"$_err"
+        fi
+    ) || NT_RC=$?
     _http=$(sed -n 's/^HTTP error \([0-9][0-9]*\).*/\1/p' "$_err" | head -n 1)
-    rm -f "$_body" "$_err"
+    rm -f "$_err"
     _ok=$(printf '%s\n' "$NT_RESP" | jsonfilter -e '@.ok' 2>/dev/null)
     if [ "$NT_RC" = 0 ] && [ "$_ok" = true ]; then
         nt_link_ok
@@ -437,6 +457,52 @@ nt_send() {
     # the message went out: a missing id must not turn that into a failure (and a resend)
     NT_MSGID=$(printf '%s\n' "$NT_RESP" | jsonfilter -e '@.result.message_id' 2>/dev/null) ||
         NT_MSGID=
+}
+
+# nt_form_field NAME VALUE BOUNDARY: one text field of a multipart/form-data body on stdout, with
+# the CRLF line ends the format demands. VALUE is UTF-8 (a stray Latin-1 byte is repaired as in
+# nt_urlencode, R34e); printf and not echo, so no backslash in it is read as an escape.
+nt_form_field() {
+    nt_utf8 "$2"
+    printf -- '--%s\r\nContent-Disposition: form-data; name="%s"\r\n\r\n' "$3" "$1"
+    printf '%s\r\n' "$NT_U8"
+}
+
+# nt_photo FILE TYPE CAPTION (R51): sendPhoto to the chat with the picture in FILE (TYPE image/png
+# or image/jpeg) and CAPTION as HTML (up to 1024 characters; the caller checks). The body is built
+# in a file in RAM (0600, it holds the Wi-Fi password) and deleted at once; the photo goes in as
+# bytes, by cat, between printf lines, so nothing in it is read as text. Returns 0 when it went
+# out (the message id is in NT_MSGID), 1 when the network or Telegram failed and a retry may work,
+# 2 when Telegram answered HTTP 400, which a retry would not change. A photo is not queued: it
+# answers a command, and the answer to a command is not repeated either (nt_send).
+nt_photo() {
+    case $2 in
+        image/png) _phn=wifi.png ;;
+        image/jpeg) _phn=wifi.jpg ;;
+        *) return 2 ;;
+    esac
+    _phb=$NT_RUN/photo.$$
+    _phd=lw-$(nt_now)-$$
+    {
+        nt_form_field chat_id "$NT_CHAT" "$_phd"
+        nt_form_field parse_mode HTML "$_phd"
+        nt_form_field caption "$3" "$_phd"
+        printf -- '--%s\r\nContent-Disposition: form-data; name="photo"; filename="%s"\r\n' \
+            "$_phd" "$_phn"
+        printf 'Content-Type: %s\r\n\r\n' "$2"
+        cat "$1"
+        printf '\r\n--%s--\r\n' "$_phd"
+    } >"$_phb"
+    nt_post sendPhoto "$_phb" 0 "multipart/form-data; boundary=$_phd"
+    _php=$?
+    rm -f "$_phb"
+    if [ "$_php" = 0 ]; then
+        NT_MSGID=$(printf '%s\n' "$NT_RESP" | jsonfilter -e '@.result.message_id' 2>/dev/null) ||
+            NT_MSGID=
+        return 0
+    fi
+    [ -n "$NT_REJECT" ] || return 1
+    return 2
 }
 
 # nt_edit MESSAGE_ID TEXT [EXTRA]: new HTML text for a message of the bot; the buttons stay only

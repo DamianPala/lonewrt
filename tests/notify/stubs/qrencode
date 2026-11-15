@@ -1,0 +1,56 @@
+#!/bin/sh
+# Test stand-in for qrencode, the first step of the QR picture of /wifi (R51, nt_qr_image): the real
+# one is called as `qrencode -t ASCII -m 4` and reads the text of the code from stdin. This one draws
+# a made-up pattern of the right size (version by the length of the text as for error correction L,
+# 17 + 4 x version modules, plus the margin of -m modules on every side) in the text form of the real
+# tool (two characters per module, "#" for dark) and records, in $LW_TEST/qr:
+#   N.text      the text of the code
+#   N.args      the options
+#   N.ascii     what it printed
+#   N.modules   modules per line, margin included
+# It is off until a test calls qr_on (helpers.inc), which makes it behave like a router without the
+# package: exit 127, nothing recorded. Knobs:
+#   qr/mode   fail (exit 1, no output), empty (exit 0, no output), ragged (a text that is not a
+#             square, which nt_qr_pgm refuses); anything else: works
+T=${LW_TEST:-/lwtest}
+Q=$T/qr
+[ -f "$Q/on" ] || exit 127
+args=$*
+margin=4
+while [ $# -gt 0 ]; do
+    case $1 in
+        -m) margin=$2 && shift 2 ;;
+        -t | -s | -l | -v | -d | -o) shift 2 ;;
+        *) shift ;;
+    esac
+done
+n=$(($(find "$Q" -name '*.text' | wc -l) + 1))
+cat >"$Q/$n.text"
+echo "$args" >"$Q/$n.args"
+case $(cat "$Q/mode" 2>/dev/null) in
+    fail) echo "qrencode: Failed to encode the input data" >&2 && exit 1 ;;
+    empty) exit 0 ;;
+    ragged) printf '##  ##\n##\n' && exit 0 ;;
+esac
+len=$(wc -c <"$Q/$n.text" | tr -d ' ')
+version=$(awk -v n="$len" 'BEGIN {
+    split("17 32 53 78 106 134 154 192 230 271 321 367 425 458 520 586", cap, " ")
+    for (v = 1; v <= 16; v++) if (n <= cap[v]) { print v; exit }
+    print 16 }')
+size=$((17 + 4 * version))
+total=$((size + 2 * margin))
+echo "$total" >"$Q/$n.modules"
+awk -v size="$size" -v m="$margin" -v total="$total" 'BEGIN {
+    for (r = 0; r < total; r++) {
+        line = ""
+        for (c = 0; c < total; c++) {
+            ir = r - m; ic = c - m
+            dark = 0
+            if (ir >= 0 && ic >= 0 && ir < size && ic < size)
+                dark = ((ir * 7 + ic * 13 + ir * ic) % 5 < 2 || ir == 0 || ic == 0) ? 1 : 0
+            line = line (dark ? "##" : "  ")
+        }
+        print line
+    }
+}' >"$Q/$n.ascii"
+cat "$Q/$n.ascii"

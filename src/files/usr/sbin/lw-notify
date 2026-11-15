@@ -561,11 +561,12 @@ nt_run() {
     # holds the URL with the token (nt_api). A running speed test goes down with the service; if
     # this handler comes late or never (kill -9), the watchdog of the test does it (R41d). The DHCP
     # names go to flash when they changed, as the counters of nlbwmon do on its stop (R44a, R44b).
-    trap '[ -z "$NT_NAP" ] || kill "$NT_NAP" 2>/dev/null; rm -f "$NT_RUN/err.$$"; nt_st_kill
+    trap '[ -z "$NT_NAP" ] || kill "$NT_NAP" 2>/dev/null
+        rm -f "$NT_RUN/err.$$" "$NT_RUN/photo.$$" "$NT_IMG"; nt_st_kill
         nt_names_save force
         exit 0' TERM INT
     # a killed call can leave its stderr file too
-    rm -f "$NT_RUN"/err.*
+    rm -f "$NT_RUN"/err.* "$NT_RUN"/photo.* "$NT_RUN"/qr.*
     # a test of the previous run is stopped and forgotten; its watchdog may have done it already
     nt_st_kill
     NT_ST_WATCH=$$

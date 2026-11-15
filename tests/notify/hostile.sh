@@ -173,12 +173,15 @@ uci set wireless.default_radio0.ssid='<b>Home&Net'
 uci set wireless.default_radio0.encryption=psk2
 uci set wireless.default_radio0.key='k<&>y'
 uci commit wireless
+# the photo of R51: the caption is HTML (the fake Bot API refuses broken markup), the QR text raw
+qr_on
 tg_push "$TG_CHAT" /wifi
 pass
 case $(last_text) in
-    *'Name: <code>&lt;b&gt;Home&amp;Net</code>'*'Password: <code>k&lt;&amp;&gt;y</code>') ;;
+    *'Name: <code>&lt;b&gt;Home&amp;Net</code>'*'Password: <code>k&lt;&amp;&gt;y</code>'*) ;;
     *) lw_fail "Wi-Fi name or password not escaped: $(last_text)" ;;
 esac
+lw_expect_eq "$(qr_text 1)" 'WIFI:T:WPA;S:<b>Home&Net;P:k<&>y;;' "QR text with markup characters"
 lw_expect_eq "$(cat "$T/syslog")" "" "no plain-text fallback for a device or Wi-Fi name"
 expect_all_html
 echo ok
