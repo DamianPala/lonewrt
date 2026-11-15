@@ -242,7 +242,7 @@ nt_st_ok_text() {
     _sp=$(nt_st_unit "$(nt_st_get ping)" ms)
     [ "$_sp" = unknown ] || [ -z "$(nt_st_int "$_sj")" ] ||
         _sp="$_sp (jitter $(nt_st_int "$_sj") ms)"
-    printf '🚀 Speed test: %s\n\n⬇️ Download: %s\n⬆️ Upload: %s\n📶 Ping: %s\n%s\n\n' "$_sv" \
+    printf '🚀 <b>Speed test: %s</b>\n\n⬇️ Download: %s\n⬆️ Upload: %s\n📶 Ping: %s\n%s\n\n' "$_sv" \
         "$(nt_st_unit "$_sd" Mbit/s)" "$(nt_st_unit "$(nt_st_get ul)" Mbit/s)" "$_sp" "$_se"
     if nt_st_last && [ -n "$1" ] && [ "${NT_ST_AT%% *}" = "${1%% *}" ]; then
         printf 'Previous today: %s ⬇️ / %s ⬆️ (%s)\n' "$NT_ST_DL" "$NT_ST_UL" "${NT_ST_AT#* }"

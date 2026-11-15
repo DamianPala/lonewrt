@@ -82,7 +82,7 @@ lw_expect_eq "$(last_text)" "⏳ A speed test is already running, the result com
     "second command"
 # the result arrives a few seconds after the client ends (poll cap while a test is on)
 t=$(wait_sent 5 20)
-case $(last_text) in '🚀 Speed test: fast'*) ;; *) lw_fail "no result: $(last_text)" ;; esac
+case $(last_text) in '🚀 <b>Speed test: fast</b>'*) ;; *) lw_fail "no result: $(last_text)" ;; esac
 lw_expect_eq "$(st_calls)" 1 "one client for two commands"
 kill "$svc"
 gone "$svc" 6
@@ -130,7 +130,7 @@ start_service
 n=$(sent)
 tg_push "$TG_CHAT" /speedtest
 wait_sent $((n + 2)) 12 >/dev/null
-case $(last_text) in '🚀 Speed test: fast'*) ;; *) lw_fail "no test after TERM: $(last_text)" ;; esac
+case $(last_text) in '🚀 <b>Speed test: fast</b>'*) ;; *) lw_fail "no test after TERM: $(last_text)" ;; esac
 lw_expect_eq "$(st_calls)" 2 "clients after TERM and a new command"
 kill "$svc"
 gone "$svc" 6
@@ -170,7 +170,7 @@ case $(sent_text $((n + 1))) in
     '⏱ Speed test started'*) ;;
     *) lw_fail "the stale state answered: $(sent_text $((n + 1)))" ;;
 esac
-case $(last_text) in '🚀 Speed test: fast'*) ;; *) lw_fail "no result: $(last_text)" ;; esac
+case $(last_text) in '🚀 <b>Speed test: fast</b>'*) ;; *) lw_fail "no result: $(last_text)" ;; esac
 kill "$svc"
 gone "$svc" 6
 
@@ -195,7 +195,7 @@ case $(sent_text $((n + 1))) in
     '⏱ Speed test started'*) ;;
     *) lw_fail "a stale lock answered: $(sent_text $((n + 1)))" ;;
 esac
-case $(last_text) in '🚀 Speed test: fast'*) ;; *) lw_fail "no result: $(last_text)" ;; esac
+case $(last_text) in '🚀 <b>Speed test: fast</b>'*) ;; *) lw_fail "no result: $(last_text)" ;; esac
 # no message about the dead test, and the log stays empty (R34c)
 for i in $(seq 1 "$(sent)"); do
     case $(sent_text "$i") in *'did not finish'*) lw_fail "message about a dead test" ;; esac

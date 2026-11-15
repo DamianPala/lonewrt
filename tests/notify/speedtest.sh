@@ -42,7 +42,7 @@ echo 100000000 >"$T/speedtest/tx"
 st_run
 expect_sent 2
 lw_expect_eq "$(sent_text 1)" "⏱ Speed test started, result in about 60 s." "first reply"
-lw_expect_eq "$(sent_text 2)" "🚀 Speed test: fast
+lw_expect_eq "$(sent_text 2)" "🚀 <b>Speed test: fast</b>
 
 ⬇️ Download: 129 Mbit/s
 ⬆️ Upload: 61 Mbit/s
@@ -58,7 +58,7 @@ echo 134000000 >"$T/speedtest/tx"
 st_run
 expect_sent 4
 lw_expect_eq "$(sent_text 3)" "⏱ Speed test started, result in about 60 s." "second reply"
-lw_expect_eq "$(sent_text 4)" "🚀 Speed test: fast
+lw_expect_eq "$(sent_text 4)" "🚀 <b>Speed test: fast</b>
 
 ⬇️ Download: 99 Mbit/s
 ⬆️ Upload: 62 Mbit/s
@@ -122,7 +122,7 @@ wall_set '2026-11-09 10:00'
 check() {
     st_json "$1" 10 20 1
     st_run
-    lw_expect_eq "$(line_of "$(last_text)" '🚀')" "🚀 Speed test: $2" "verdict for $1"
+    lw_expect_eq "$(line_of "$(last_text)" '🚀')" "🚀 <b>Speed test: $2</b>" "verdict for $1"
     lw_expect_eq "$(last_text | grep -m 1 'Enough for')" "$3" "Enough-for line for $1"
 }
 check 120 fast '✅ Enough for 4K video on several devices and video calls'
@@ -160,7 +160,7 @@ mv "$T/wwan0/rx.off" "$T/wwan0/rx_bytes"
 # the tool prints a banner before the JSON: the last line that starts with "{" is the answer
 st_mode banner
 st_run
-lw_expect_eq "$(line_of "$(last_text)" '🚀')" "🚀 Speed test: fast" "banner before the JSON"
+lw_expect_eq "$(line_of "$(last_text)" '🚀')" "🚀 <b>Speed test: fast</b>" "banner before the JSON"
 st_mode ok
 
 # ---- a second command while a test runs (R41c): one answer, one run
@@ -182,7 +182,7 @@ lw_expect_eq "$(st_calls)" $((calls + 1)) "the client runs once"
 st_wait
 pass
 lw_expect_eq "$(sent)" $((n + 4)) "the result of the one test"
-case $(last_text) in '🚀 Speed test:'*) ;; *) lw_fail "no result: $(last_text)" ;; esac
+case $(last_text) in '🚀 <b>Speed test:'*) ;; *) lw_fail "no result: $(last_text)" ;; esac
 # and the next command starts a new test again
 st_mode ok 0
 st_run
@@ -262,13 +262,13 @@ Try again later." "killed worker"
 [ ! -e /tmp/lw-notify/speedtest.pid ] || lw_fail "pid file of the killed test kept"
 st_mode ok 0
 st_run
-case $(last_text) in '🚀 Speed test:'*) ;; *) lw_fail "no test after a killed one" ;; esac
+case $(last_text) in '🚀 <b>Speed test:'*) ;; *) lw_fail "no test after a killed one" ;; esac
 # a pid file that names a live, unrelated process is no lock either
 sleep 100 &
 other=$!
 echo "$other" >/tmp/lw-notify/speedtest.pid
 st_run
-case $(last_text) in '🚀 Speed test:'*) ;; *) lw_fail "a foreign pid blocked the test" ;; esac
+case $(last_text) in '🚀 <b>Speed test:'*) ;; *) lw_fail "a foreign pid blocked the test" ;; esac
 kill "$other" 2>/dev/null || :
 # a pid file of a process that is gone, as a crashed service leaves it
 echo 99999 >/tmp/lw-notify/speedtest.pid
@@ -278,7 +278,7 @@ lw_expect_eq "$(sent)" $((n + 1)) "the leftover of a dead worker is reported onc
 pass
 lw_expect_eq "$(sent)" $((n + 1)) "and not again"
 st_run
-case $(last_text) in '🚀 Speed test:'*) ;; *) lw_fail "no test after a stale pid file" ;; esac
+case $(last_text) in '🚀 <b>Speed test:'*) ;; *) lw_fail "no test after a stale pid file" ;; esac
 
 # ---- no clock from NTP: the result has no "Previous", /status has no line (nothing is "today")
 ntp_off
@@ -305,7 +305,7 @@ n=$(sent)
 echo up >"$G/net"
 pass
 lw_expect_eq "$(sent)" $((n + 1)) "the result goes out when Telegram is back"
-case $(last_text) in '🚀 Speed test:'*) ;; *) lw_fail "late result: $(last_text)" ;; esac
+case $(last_text) in '🚀 <b>Speed test:'*) ;; *) lw_fail "late result: $(last_text)" ;; esac
 pass
 lw_expect_eq "$(sent)" $((n + 1)) "and only once"
 echo ok
