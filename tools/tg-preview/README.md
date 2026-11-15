@@ -55,6 +55,26 @@ The renderer escapes all text, so `<`, `>` and `&` show literally.
 Like Telegram it turns `/commands`, phone numbers (7 digits or more) and web addresses into blue links.
 A bot message that was edited is written with its final text and buttons.
 
+### Optional keys
+
+| Key | Where | Meaning |
+|---|---|---|
+| `parse_mode` | message | `"HTML"`: `text` (and a photo caption) is Telegram's HTML subset, drawn like the Android app. Without it the text is plain and escaped. No other value is accepted |
+| `photo` | message | path of an image (PNG, JPEG, GIF or WebP, up to 10 MB), relative to the transcript file or absolute. Drawn on top of the bubble, full width; `text` is the optional caption, the time sits at the end of the caption, or on the image in a dark pill when there is no caption. The image is embedded in each page as a data URI |
+| `forwarded_from` | message | a name; the bubble starts with the "Forwarded from **name**" line in the link colour |
+| `chat` | top level | `"group"` (default) or `"private"`. Private: the top bar shows "last seen recently" instead of the member count (`members` is ignored), incoming bubbles have no sender name and no avatar, and a missing or empty `keyboard` draws no reply keyboard, just the input bar. In a private chat `from: "bot"` is the other person (the owner a guest talks to), `user` is you |
+
+### HTML text
+
+The HTML must follow Telegram's documented rules; the renderer refuses what breaks them, with an error that names the message `id`, instead of drawing something close.
+It is stricter than the Telegram server may be: the server can keep a bare `>` or `&` as text or quietly drop a link or nesting it does not take, but the docs do not promise that, so the bot should not rely on it.
+Allowed: `<b> <strong> <i> <em> <u> <ins> <s> <strike> <del> <code> <pre> <a href="..."> <blockquote> <blockquote expandable> <tg-spoiler> <span class="tg-spoiler">` and `<pre><code class="language-x">` (the language shows above the code).
+Entities: `&lt; &gt; &amp; &quot;` and numeric ones (`&#169;`, `&#xA9;`). A literal `<`, `>` or `&` in the text must be written as an entity, so `<b>&amp;</b>` shows a bold `&`.
+Refused: any other tag or attribute (also `<tg-emoji>` and `<tg-time>`, which Telegram takes but this renderer does not draw), an unclosed, unmatched or misnested tag, an unknown entity, a bare `<`, `>` or `&` (also in an attribute value), `<a>` without `href` or with a scheme other than `http`, `https`, `tg` or `ton`, and nesting that Telegram does not take (anything inside `<code>`, anything but one `<code>` inside `<pre>`, a `<a>`, `<pre>`, `<code>` or `<blockquote>` inside the same tag).
+Auto links (`/commands`, phone numbers, web addresses) apply to the plain text pieces, never inside `<code>`, `<pre>` or `<a>`.
+The line break next to a `<pre>` or `<blockquote>` belongs to the block, as in Telegram, so it adds no empty line.
+An expandable quote is drawn collapsed to three lines with the expand arrow; a spoiler is a static dotted block (Telegram animates it).
+
 `example.json` is a small mockup to start from.
 
 ## Look

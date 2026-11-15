@@ -9,10 +9,12 @@ library only.
 """
 
 import argparse
+import base64
 import html
 import json
 import re
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 
 # Phone screen in CSS px; the PNG size follows from the device scale in run.sh.
@@ -165,6 +167,59 @@ a, .link { color: var(--link); text-decoration: none; }
 .nav svg { position: absolute; top: 15px; width: 24px; height: 24px; }
 """
 
+# Added to a page only when the transcript uses HTML, photos, forwards or a private chat, so a
+# plain transcript renders byte for byte as it did before these features existed.
+EXTRA_CSS = """
+:root { --code: #8fd0ff; }
+.tg-code, .tg-pre { font-family: "Roboto Mono", "DejaVu Sans Mono", "Liberation Mono",
+  monospace; letter-spacing: 0; }
+.in { --qa: var(--name); }
+.private .in { --qa: var(--link); }
+.out { --qa: #fff; }
+.tg-code { font-size: 16.4px; color: var(--code); }
+.out .tg-code { color: #fff; }
+.tg-pre { display: block; position: relative; margin: 3px 0; padding: 6px 11px;
+  border-radius: 6px; background: rgba(0,0,0,.24); font-size: 16px; line-height: 21px;
+  white-space: pre-wrap; }
+.out .tg-pre { background: rgba(0,0,0,.2); }
+.tg-lang { display: block; color: var(--qa); font: 500 14.5px/20px Roboto, "Noto Sans", sans-serif;
+  letter-spacing: 0; padding-bottom: 1px; }
+.tg-ic { position: absolute; width: 16px; height: 16px; color: var(--qa); opacity: .9; }
+.tg-pre .tg-ic { position: static; float: right; margin: 2px 0 0 8px; }
+.tg-quote { position: relative; margin: 3px 0; padding: 4px 28px 4px 11px; border-radius: 6px;
+  background: color-mix(in srgb, var(--qa) 15%, transparent); overflow: hidden; }
+.tg-quote::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  background: var(--qa); }
+.tg-quote .tg-ic { right: 6px; top: 5px; }
+.tg-quote .tg-chev { right: 6px; top: auto; bottom: 5px; }
+.tg-exp .q-body { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  overflow: hidden; }
+.tg-spoiler { color: transparent; border-radius: 4px; text-shadow: 0 0 9px rgba(255,255,255,.7);
+  background: radial-gradient(circle, rgba(255,255,255,.55) .7px, transparent 1.2px) 0 0 / 4px 4px,
+    rgba(255,255,255,.1); }
+.tg-spoiler * { color: transparent !important; }
+.fwd { color: var(--link); font-size: 17px; line-height: 21.75px; margin-bottom: 2px; }
+.fwd b { font-weight: 500; }
+.photo .col { width: 293px; }
+.photo .bubble { padding: 0; }
+.photo .ph-hd { padding: 6px 12px 4px; }
+.photo .ph-hd .quote, .photo .ph-hd .fwd { margin-bottom: 0; }
+.photo .ph { border-radius: inherit; overflow: hidden; line-height: 0; }
+.photo .ph-hd + .ph { border-top-left-radius: 6px; border-top-right-radius: 6px; }
+.photo .ph.cap { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.photo .ph img { display: block; width: 100%; height: auto; max-height: 420px;
+  object-fit: cover; }
+.photo .text.cap { padding: 6px 12px 8px; }
+.photo .meta.pill { right: 8px; bottom: 8px; padding: 1px 7px; border-radius: 12px;
+  background: rgba(0,0,0,.45); color: #fff; }
+.private .in .col { margin-left: 8px; max-width: 343px; }
+.nokb .chat { height: 774px; }
+.nokb .input { top: 781px; }
+.nokb .out .bubble, .nokb .out.last .bubble::before { background: linear-gradient(180deg,
+  var(--out-1) 0, var(--out-2) 195px, var(--out-3) 495px, var(--out-4) 685px,
+  var(--out-5) 774px) fixed; }
+"""
+
 PAGE = (
     '<!doctype html>\n<html lang="en"><head><meta charset="utf-8">'
     '<meta name="viewport" content="width=%(w)d">\n<title>%(title)s</title>\n'
@@ -207,6 +262,15 @@ NAV = (
 )
 
 
+IMAGE_SIGNATURES = (
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"GIF87a", "image/gif"),
+    (b"GIF89a", "image/gif"),
+)
+MAX_PHOTO_BYTES = 10 * 1024 * 1024
+
+
 class TranscriptError(Exception):
     """The transcript does not follow the format."""
 
@@ -215,20 +279,288 @@ def esc(text):
     return html.escape(text, quote=True)
 
 
-def linkify(text):
-    """Escaped HTML of text, with /commands, phone numbers and web addresses as links."""
+def linkify(text, before=""):
+    """Escaped HTML of text, with /commands, phone numbers and web addresses as links.
+
+    before is the character in front of text (the end of an earlier piece of the same message),
+    which the patterns need to see.
+    """
     out = []
-    pos = 0
-    for found in LINK_RE.finditer(text):
+    start = len(before)
+    src = before + text
+    pos = start
+    for found in LINK_RE.finditer(src, start):
         piece = found.group(0)
         # a full stop or bracket at the end belongs to the sentence, not to the address
         while found.lastgroup == "url" and piece[-1] in ".,;:)!?":
             piece = piece[:-1]
-        out.append(esc(text[pos : found.start()]))
+        out.append(esc(src[pos : found.start()]))
         out.append(f'<span class="link">{esc(piece)}</span>')
         pos = found.start() + len(piece)
-    out.append(esc(text[pos:]))
+    out.append(esc(src[pos:]))
     return "".join(out)
+
+
+class HtmlError(Exception):
+    """The text is not valid Telegram HTML; the message says where and why."""
+
+
+ENTITIES = {"lt": "<", "gt": ">", "amp": "&", "quot": '"'}
+INLINE_TAGS = {
+    "b": "b", "strong": "b", "i": "i", "em": "i", "u": "u", "ins": "u",
+    "s": "s", "strike": "s", "del": "s",
+}  # fmt: skip
+TOKEN_RE = re.compile(
+    r"<(?P<close>/?)(?P<tag>[A-Za-z][A-Za-z0-9-]*)(?P<attrs>(?:\s[^<>]*)?)>"
+    r"|(?P<lt><)|(?P<gt>>)"
+    r"|&(?P<ent>#[0-9]+|#[xX][0-9A-Fa-f]+|[A-Za-z][A-Za-z0-9]*);|(?P<amp>&)"
+)
+ATTR_RE = re.compile(
+    r"""\s+([A-Za-z_][\w:.-]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>=`]+)))?"""
+)
+LANG_RE = re.compile(r"language-[\w+#.-]+")
+# Telegram keeps a link only for these schemes or none (it adds http://); a digit after the
+# colon is a port, as in example.org:8080
+SCHEME_RE = re.compile(r"([A-Za-z][A-Za-z0-9+.-]*):(?!\d)")
+LINK_SCHEMES = ("http", "https", "tg", "ton")
+
+COPY_ICON = (
+    '<svg class="tg-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+    'stroke-width="2" stroke-linejoin="round"><rect x="8" y="8" width="12" height="12" '
+    'rx="2.5"/><path d="M16 8V6.5A2.5 2.5 0 0 0 13.5 4h-7A2.5 2.5 0 0 0 4 6.5v7A2.5 2.5 0 0 0 '
+    '6.5 16H8"/></svg>'
+)
+QUOTE_ICON = (
+    '<svg class="tg-ic" viewBox="0 0 24 24" fill="currentColor"><path d="M6 17h3l2-4V7H5v6h3z'
+    'm8 0h3l2-4V7h-6v6h3z"/></svg>'
+)
+CHEVRON_ICON = (
+    '<svg class="tg-ic tg-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+    'stroke-width="2.600" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/>'
+    "</svg>"
+)
+
+
+def decode_entity(name):
+    """The character of an entity name from the tag-less text (without & and ;)."""
+    if name in ENTITIES:
+        return ENTITIES[name]
+    if name[0] == "#":
+        number = int(name[2:], 16) if name[1] in "xX" else int(name[1:])
+        if 0 < number <= 0x10FFFF and not 0xD800 <= number <= 0xDFFF:
+            return chr(number)
+    raise HtmlError(
+        f"unsupported entity &{name}; (use &lt; &gt; &amp; &quot; or a number)"
+    )
+
+
+def decode_attr_value(value):
+    """An attribute value with its entities decoded; a bare & is refused like in the text."""
+    out, pos = [], 0
+    for found in TOKEN_RE.finditer(value):
+        if found.group("ent"):
+            out.append(value[pos : found.start()] + decode_entity(found.group("ent")))
+        elif found.group("amp"):
+            raise HtmlError(f"a bare & in the attribute value {value!r}: write &amp;")
+        else:
+            raise HtmlError(f"a bare < or > in the attribute value {value!r}")
+        pos = found.end()
+    return "".join(out) + value[pos:]
+
+
+def parse_attrs(tag, raw):
+    """The attributes of a start tag as a dict; a bare attribute (expandable) has value ''."""
+    attrs, pos = {}, 0
+    for found in ATTR_RE.finditer(raw):
+        if found.start() != pos:
+            break
+        name = found.group(1).lower()
+        if name in attrs:
+            raise HtmlError(f"<{tag}> has the attribute {name} twice")
+        value = next((g for g in found.groups()[1:] if g is not None), "")
+        attrs[name] = decode_attr_value(value)
+        pos = found.end()
+    if raw[pos:].strip():
+        raise HtmlError(f"cannot read the attributes of <{tag}>: {raw[pos:].strip()!r}")
+    return attrs
+
+
+def check_attrs(tag, attrs):
+    """Refuse every attribute Telegram does not take on this tag."""
+    allowed = {
+        "a": {"href"},
+        "code": {"class"},
+        "span": {"class"},
+        "blockquote": {"expandable"},
+    }
+    extra = set(attrs) - allowed.get(tag, set())
+    if extra:
+        raise HtmlError(f"<{tag}> does not take the attribute {sorted(extra)[0]}")
+    if tag == "a" and not attrs.get("href"):
+        raise HtmlError('<a> needs a non-empty href="..."')
+    scheme = SCHEME_RE.match(attrs["href"]) if tag == "a" else None
+    if scheme and scheme.group(1).lower() not in LINK_SCHEMES:
+        raise HtmlError(
+            f"<a href> takes http, https, tg or ton links, not {scheme.group(1)}:"
+        )
+    if tag == "span" and attrs.get("class") != "tg-spoiler":
+        raise HtmlError('<span> only works as <span class="tg-spoiler">')
+    if tag == "code" and "class" in attrs and not LANG_RE.fullmatch(attrs["class"]):
+        raise HtmlError(f'<code class="{attrs["class"]}"> is not class="language-NAME"')
+    if tag == "blockquote" and attrs.get("expandable", ""):
+        raise HtmlError("expandable takes no value: <blockquote expandable>")
+
+
+@dataclass
+class Frame:
+    """An open tag and what it has collected so far."""
+
+    tag: str
+    attrs: dict
+    parts: list = field(default_factory=list)
+    lang: str = ""
+    code_done: bool = False
+
+
+class TelegramHtml:
+    """Telegram's HTML subset to page markup. Anything Telegram would refuse raises HtmlError."""
+
+    BLOCKS = ("pre", "blockquote")
+
+    def __init__(self):
+        self.stack = [Frame("", {})]
+        self.before = ""
+        self.swallow = False
+        self.plain = []
+
+    def feed(self, text):
+        buf, pos = [], 0
+        for found in TOKEN_RE.finditer(text):
+            buf.append(text[pos : found.start()])
+            pos = found.end()
+            try:
+                if found.group("ent"):
+                    buf.append(decode_entity(found.group("ent")))
+                    continue
+                self.flush("".join(buf))
+                buf = []
+                self.token(found)
+            except HtmlError as err:
+                raise HtmlError(f"{err} (at character {found.start() + 1})") from None
+        self.flush("".join(buf) + text[pos:])
+        if len(self.stack) > 1:
+            raise HtmlError(f"unclosed tag <{self.stack[-1].tag}>")
+        return "".join(self.stack[0].parts)
+
+    def token(self, found):
+        if found.group("tag"):
+            name = found.group("tag").lower()
+            if found.group("close"):
+                if found.group("attrs").strip():
+                    raise HtmlError(f"the end tag </{name}> takes no attributes")
+                self.close(name)
+            else:
+                self.open(name, parse_attrs(name, found.group("attrs")))
+        elif found.group("lt"):
+            raise HtmlError("a stray < (write &lt; for the character)")
+        elif found.group("gt"):
+            raise HtmlError("a stray > (write &gt; for the character)")
+        else:
+            raise HtmlError("a bare & (write &amp; for the character)")
+
+    def flush(self, raw):
+        """Add plain text: escaped, with auto links, except inside <code>, <pre> and <a>."""
+        frame = self.stack[-1]
+        # the reply preview reads the message text, which keeps the newline a block swallows
+        self.plain.append(raw)
+        if self.swallow and raw.startswith("\n"):
+            raw = raw[1:]
+        if self.swallow and raw:
+            self.swallow = False
+        if not raw:
+            return
+        if frame.tag == "pre" and frame.code_done:
+            if raw.strip():
+                raise HtmlError(
+                    "<pre> can hold text or one <code>, not text after the <code>"
+                )
+            return
+        in_raw = any(f.tag in ("code", "pre", "a") for f in self.stack)
+        frame.parts.append(esc(raw) if in_raw else linkify(raw, self.before))
+        self.before = raw[-1]
+
+    def open(self, name, attrs):
+        self.swallow = False
+        if name not in INLINE_TAGS and name not in (
+            "a", "code", "pre", "blockquote", "tg-spoiler", "span",
+        ):  # fmt: skip
+            raise HtmlError(f"unsupported tag <{name}>")
+        check_attrs(name, attrs)
+        parent = self.stack[-1]
+        names = [f.tag for f in self.stack]
+        if parent.tag == "code" or (parent.tag == "pre" and name != "code"):
+            raise HtmlError(f"<{name}> cannot be inside <{parent.tag}>")
+        if (
+            name == "code"
+            and parent.tag == "pre"
+            and (parent.parts or parent.code_done)
+        ):
+            raise HtmlError("<code> inside <pre> must be the only content of the <pre>")
+        if name in ("a", "pre", "blockquote", "code") and name in names:
+            raise HtmlError(f"<{name}> cannot be inside another <{name}>")
+        if name in self.BLOCKS and parent.parts and parent.parts[-1].endswith("\n"):
+            parent.parts[-1] = parent.parts[-1][:-1]
+        self.stack.append(Frame(name, attrs))
+
+    def close(self, name):
+        self.swallow = False
+        frame = self.stack[-1]
+        if len(self.stack) == 1:
+            raise HtmlError(f"the end tag </{name}> has no start tag")
+        if frame.tag != name:
+            raise HtmlError(
+                f"the end tag </{name}> does not match the open <{frame.tag}>"
+            )
+        self.stack.pop()
+        parent = self.stack[-1]
+        inner = "".join(frame.parts)
+        if name == "code" and parent.tag == "pre":
+            parent.parts.append(inner)
+            parent.lang = frame.attrs.get("class", "")[len("language-") :]
+            parent.code_done = True
+        else:
+            parent.parts.append(self.wrap(frame, inner))
+        self.swallow = name in self.BLOCKS
+
+    @staticmethod
+    def wrap(frame, inner):
+        name = frame.tag
+        if name in INLINE_TAGS:
+            tag = INLINE_TAGS[name]
+            return f"<{tag}>{inner}</{tag}>"
+        if name == "a":
+            return f'<a class="link" href="{esc(frame.attrs["href"])}">{inner}</a>'
+        if name == "code":
+            return f'<code class="tg-code">{inner}</code>'
+        if name == "pre":
+            lang = (
+                f'<span class="tg-lang">{esc(frame.lang)}</span>' if frame.lang else ""
+            )
+            return f'<pre class="tg-pre">{COPY_ICON}{lang}{inner}</pre>'
+        if name == "blockquote":
+            expandable = "expandable" in frame.attrs
+            icons = QUOTE_ICON + (CHEVRON_ICON if expandable else "")
+            cls = "tg-quote tg-exp" if expandable else "tg-quote"
+            body = f'<div class="q-body">{inner}</div>'
+            return f'<blockquote class="{cls}">{body}{icons}</blockquote>'
+        return f'<span class="tg-spoiler">{inner}</span>'
+
+
+def telegram_html(text):
+    """(markup, plain text) of a Telegram HTML message; HtmlError when Telegram would refuse it."""
+    parser = TelegramHtml()
+    markup = parser.feed(text)
+    return markup, "".join(parser.plain)
 
 
 def initials(name):
@@ -238,6 +570,74 @@ def initials(name):
     if len(words) == 1:
         return words[0][:2].upper()
     return (words[0][0] + words[1][0]).upper()
+
+
+def check_message(msg, where, seen):
+    """The keys every message needs; a photo may come without text (a photo with no caption)."""
+    if not isinstance(msg, dict):
+        raise TranscriptError(f"{where}: must be an object")
+    for key in ("id", "from", "time", "text"):
+        if key not in msg and not (key == "text" and "photo" in msg):
+            raise TranscriptError(f"{where}: missing '{key}'")
+    msg.setdefault("text", "")
+    if not isinstance(msg["text"], str) or not isinstance(msg["time"], str):
+        raise TranscriptError(f"{where}: 'text' and 'time' must be strings")
+    if msg["from"] not in ("bot", "user"):
+        raise TranscriptError(f"{where}: 'from' must be bot or user")
+    if msg["id"] in seen:
+        raise TranscriptError(f"{where}: duplicate id {msg['id']}")
+    reply = msg.get("reply_to")
+    if reply is not None and reply not in seen:
+        raise TranscriptError(f"{where}: reply_to {reply} is not an earlier message")
+
+
+def photo_uri(name, base, where, cache):
+    """A data URI of the image file (relative to the transcript's folder, or absolute)."""
+    if not isinstance(name, str) or not name:
+        raise TranscriptError(f"{where}: 'photo' must be a file name")
+    file = Path(name) if Path(name).is_absolute() else base / name
+    if file not in cache:
+        try:
+            raw = file.read_bytes()
+        except OSError as err:
+            raise TranscriptError(
+                f"{where}: cannot read the photo {name}: {err}"
+            ) from err
+        mime = next((m for sig, m in IMAGE_SIGNATURES if raw.startswith(sig)), None)
+        if raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+            mime = "image/webp"
+        if mime is None:
+            raise TranscriptError(
+                f"{where}: the photo {name} is not a PNG, JPEG, GIF or WebP"
+            )
+        if len(raw) > MAX_PHOTO_BYTES:
+            raise TranscriptError(
+                f"{where}: the photo {name} is over 10 MB, Telegram refuses it"
+            )
+        cache[file] = f"data:{mime};base64,{base64.b64encode(raw).decode()}"
+    return cache[file]
+
+
+def check_extras(msg, path, base, photos):
+    """parse_mode, photo and forwarded_from: check them and prepare what the renderer needs."""
+    where = f"{path}: message id {msg['id']}"
+    forwarded = msg.get("forwarded_from")
+    if forwarded is not None and (
+        not isinstance(forwarded, str) or not forwarded.strip()
+    ):
+        raise TranscriptError(f"{where}: 'forwarded_from' must be a name")
+    mode = msg.get("parse_mode")
+    if mode is not None and mode != "HTML":
+        raise TranscriptError(
+            f"{where}: parse_mode {mode!r} is not supported, only 'HTML'"
+        )
+    if "photo" in msg:
+        msg["_photo"] = photo_uri(msg["photo"], base, where, photos)
+    if mode == "HTML":
+        try:
+            msg["_body"], msg["_plain"] = telegram_html(msg["text"])
+        except HtmlError as err:
+            raise TranscriptError(f"{where}: not valid Telegram HTML: {err}") from None
 
 
 def load(path):
@@ -252,29 +652,22 @@ def load(path):
     data.setdefault("members", 2)
     data.setdefault("bot_name", data["title"])
     data.setdefault("keyboard", [])
+    data.setdefault("chat", "group")
+    if data["chat"] not in ("group", "private"):
+        raise TranscriptError(f"{path}: 'chat' must be group or private")
     msgs = data.get("messages")
     if not isinstance(msgs, list) or not msgs:
         raise TranscriptError(f"{path}: 'messages' must be a non-empty list")
     seen = set()
+    photos = {}
     for i, msg in enumerate(msgs):
-        where = f"{path}: messages[{i}]"
-        if not isinstance(msg, dict):
-            raise TranscriptError(f"{where}: must be an object")
-        for key in ("id", "from", "time", "text"):
-            if key not in msg:
-                raise TranscriptError(f"{where}: missing '{key}'")
-        if not isinstance(msg["text"], str) or not isinstance(msg["time"], str):
-            raise TranscriptError(f"{where}: 'text' and 'time' must be strings")
-        if msg["from"] not in ("bot", "user"):
-            raise TranscriptError(f"{where}: 'from' must be bot or user")
-        if msg["id"] in seen:
-            raise TranscriptError(f"{where}: duplicate id {msg['id']}")
-        reply = msg.get("reply_to")
-        if reply is not None and reply not in seen:
-            raise TranscriptError(
-                f"{where}: reply_to {reply} is not an earlier message"
-            )
+        check_message(msg, f"{path}: messages[{i}]", seen)
+        check_extras(msg, path, Path(path).resolve().parent, photos)
         seen.add(msg["id"])
+    # the page gets the extra style only when a feature needs it: plain pages stay unchanged
+    data["_extra"] = data["chat"] == "private" or any(
+        m.get("parse_mode") or m.get("photo") or m.get("forwarded_from") for m in msgs
+    )
     ids = [m["id"] for m in msgs]
     screens = data.get("screens") or [{"name": "chat", "last": ids[-1]}]
     names = set()
@@ -295,11 +688,28 @@ def load(path):
 def render_quote(msg, by_id, data):
     quoted = by_id[msg["reply_to"]]
     who = data["bot_name"] if quoted["from"] == "bot" else "You"
-    first = quoted["text"].split("\n", 1)[0]
+    first = quoted.get("_plain", quoted["text"]).split("\n", 1)[0]
+    if not first.strip() and "_photo" in quoted:
+        first = "Photo"
     return (
         f'<div class="quote"><div class="name">{esc(who)}</div>'
         f'<div class="qt">{esc(first)}</div></div>'
     )
+
+
+def render_photo(msg, head, body, meta):
+    """The inside of a photo bubble: image edge to edge, caption under it, time at its end.
+
+    Without a caption the time sits on the image in a dark pill.
+    """
+    caption = msg["text"] != ""
+    inner = f'<div class="ph-hd">{head}</div>' if head else ""
+    inner += f'<div class="ph{" cap" if caption else ""}"><img src="{msg["_photo"]}" alt=""></div>'
+    if caption:
+        return (
+            inner + f'<div class="text cap">{body}</div><div class="meta">{meta}</div>'
+        )
+    return inner + f'<div class="meta pill">{meta}</div>'
 
 
 def render_message(msg, prev, nxt, by_id, data):
@@ -309,15 +719,24 @@ def render_message(msg, prev, nxt, by_id, data):
         classes.append("gap")
     if nxt is None or nxt["from"] != msg["from"]:
         classes.append("last")
-    inner = ""
-    if not out and (prev is None or prev["from"] != "bot"):
-        inner += f'<div class="name">{esc(data["bot_name"])}</div>'
+    private = data["chat"] == "private"
+    head = ""
+    if not out and not private and (prev is None or prev["from"] != "bot"):
+        head += f'<div class="name">{esc(data["bot_name"])}</div>'
+    if msg.get("forwarded_from"):
+        head += (
+            f'<div class="fwd">Forwarded from <b>{esc(msg["forwarded_from"])}</b></div>'
+        )
     if msg.get("reply_to") is not None:
-        inner += render_quote(msg, by_id, data)
-    inner += f'<div class="text">{linkify(msg["text"])}</div>'
+        head += render_quote(msg, by_id, data)
+    body = msg["_body"] if "_body" in msg else linkify(msg["text"])
     meta = esc(msg["time"]) + (TICK if out else "")
-    inner += f'<div class="meta">{meta}</div>'
-    if not out and "last" in classes:
+    if "_photo" in msg:
+        inner = render_photo(msg, head, body, meta)
+        classes.append("photo")
+    else:
+        inner = head + f'<div class="text">{body}</div><div class="meta">{meta}</div>'
+    if not out and "last" in classes and not private:
         inner += f'<div class="avatar">{esc(initials(data["bot_name"]))}</div>'
     kb = ""
     rows = msg.get("inline_keyboard") or []
@@ -343,17 +762,26 @@ def render_screen(data, last):
         prev = upto[i - 1] if i else None
         nxt = upto[i + 1] if i + 1 < len(upto) else None
         body.append(render_message(msg, prev, nxt, by_id, data))
+    private = data["chat"] == "private"
     count = data["members"]
-    members = f"{count} member" + ("" if count == 1 else "s")
+    members = (
+        "last seen recently"
+        if private
+        else f"{count} member" + ("" if count == 1 else "s")
+    )
     keys = "".join(
         '<div class="row">'
         + "".join(f'<div class="key">{esc(k)}</div>' for k in row)
         + "</div>"
         for row in data["keyboard"]
     )
+    # a private chat without a reply keyboard shows just the input bar
+    no_kb = private and not keys
+    kb = "" if no_kb else f'<div class="kb">{keys}</div>\n'
+    phone = "phone" + (" private" if private else "") + (" nokb" if no_kb else "")
     clock = upto[-1]["time"]
     title = esc(data["title"])
-    return f"""<div class="phone">
+    return f"""<div class="{phone}">
 <div class="chat">{"".join(body)}</div>
 <div class="status"><span>{esc(clock)}</span>
 <span class="bat">80</span></div>
@@ -362,14 +790,15 @@ def render_screen(data, last):
 <div class="t1">{title}</div><div class="t2">{members}</div></div>
 <div class="menu">{MENU}</div></div>
 <div class="input">{SMILE}<span class="hint">Message</span>{CLIP}<div class="cam"></div></div>
-<div class="kb">{keys}</div>
-<div class="nav">{NAV}</div>
+{kb}<div class="nav">{NAV}</div>
 </div>"""
 
 
-def page(title, body, theme):
+def page(title, body, theme, extra=False):
     css_vars = ";".join(f"--{k}:{v}" for k, v in THEMES[theme].items())
     css = CSS % {"vars": css_vars, "w": WIDTH, "h": HEIGHT}
+    if extra:
+        css += EXTRA_CSS
     return PAGE % {"w": WIDTH, "title": esc(title), "css": css, "body": body}
 
 
@@ -401,9 +830,8 @@ def render_all(data, out_dir, theme="dark"):
     for scr in data["screens"]:
         path = out_dir / f"{scr['name']}.html"
         title = f"{data['title']} - {scr['name']}"
-        path.write_text(
-            page(title, render_screen(data, scr["last"]), theme), encoding="utf-8"
-        )
+        body = render_screen(data, scr["last"])
+        path.write_text(page(title, body, theme, data["_extra"]), encoding="utf-8")
         written.append(path)
     index = out_dir / "index.html"
     index.write_text(
@@ -413,7 +841,7 @@ def render_all(data, out_dir, theme="dark"):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
     parser.add_argument("transcript", help="transcript JSON file")
     parser.add_argument("out_dir", help="directory for the HTML files")
     parser.add_argument(
