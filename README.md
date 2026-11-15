@@ -12,11 +12,9 @@ I built it for a flat abroad with guests and no admin on site. What it fixes:
 - **Someone asks for the Wi-Fi password at 23:00.** You tap a button in Telegram and the bot posts the Wi-Fi name and password with a QR code that a phone camera scans to join. Other buttons give the link state, the connected devices, the newest SMS, a speed test (about 330 MB of your data) and a restart. Typed commands do the same: `/status`, `/wifi`, `/devices`, `/sms`, `/speedtest`, `/balance`, `/alerts`, `/reboot`, `/help`.
 - **The internet is down and so is the bot.** A healthchecks.io heartbeat tells you from the outside, and the router posts when it is back and how long it was gone.
 
-What the chat looks like, and the keyboard that saves remembering commands:
+What the chat looks like, with the keyboard that saves remembering commands (made-up data, rendered from the bot's code by `tools/tg-preview`):
 
-<img src="docs/img/telegram-status.png" width="440" alt="Telegram chat: a tap on Status and the router's reply with signal, Wi-Fi, balance, data and uptime">
-
-<img src="docs/img/telegram-keyboard.png" width="440" alt="The bot's keyboard: Status, Wi-Fi, Devices, Speed, Balance, SMS, Alerts, Reboot, Help">
+<img src="docs/img/telegram-status.png" width="260" alt="Telegram chat: a tap on Status and the router's reply with signal, Wi-Fi, balance, data and uptime"> <img src="docs/img/telegram-wifi.png" width="260" alt="A tap on Wi-Fi: a QR code photo with the network name and password, ready to forward to a guest"> <img src="docs/img/telegram-devices.png" width="260" alt="A tap on Devices: connected and earlier devices with their data this month, and the button to name a device">
 
 Phone numbers you list can also text `status` or `reboot` to the SIM, for the day Telegram is not an option.
 The router checks only the sender's number, and numbers can be faked. So SMS can only ask for the state and a restart, and restarts by SMS are limited to 5 a day.
