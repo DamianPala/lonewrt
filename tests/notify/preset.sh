@@ -264,6 +264,13 @@ printf '%s\n' "$GOOD" | sed "s/^BALANCE_REPLY_PATTERN=.*/BALANCE_REPLY_PATTERN='
 printf '%s\n' "$GOOD" | sed "s/^BALANCE_REPLY_PATTERN=.*/BALANCE_REPLY_PATTERN='Saldo {any}.,{amount}'/" | bad_case "any, dot and comma, amount"
 printf '%s\n' "$GOOD" | sed "s/^BALANCE_REPLY_PATTERN=.*/BALANCE_REPLY_PATTERN='Saldo {amount} do {any}.{day}.{month}'/" | bad_case "any, dot, day"
 printf '%s\n' "$GOOD" | sed "s/^BALANCE_REPLY_PATTERN=.*/BALANCE_REPLY_PATTERN='Saldo {any}.{any}{amount}'/" | bad_case "any, dot, any, amount"
+printf '%s\n' "$GOOD" | sed "s/^BALANCE_REPLY_PATTERN=.*/BALANCE_REPLY_PATTERN='Saldo {any} .{amount}'/" | bad_case "any, space, dot, amount"
+printf '%s\n' "$GOOD" | sed "s/^BALANCE_REPLY_PATTERN=.*/BALANCE_REPLY_PATTERN='Saldo {any}. {amount}'/" | bad_case "any, dot, space, amount"
+printf '%s\n' "$GOOD" | sed "s/^BALANCE_REPLY_PATTERN=.*/BALANCE_REPLY_PATTERN='Saldo {any}, {amount}'/" | bad_case "any, comma, space, amount"
+printf '%s\n' "$GOOD" | sed "s/^BALANCE_REPLY_PATTERN=.*/BALANCE_REPLY_PATTERN='Saldo {any}1.5{amount}'/" | bad_case "any, a number, amount"
+printf '%s\n' "$GOOD" | sed "s/^BALANCE_REPLY_PATTERN=.*/BALANCE_REPLY_PATTERN='Saldo {any}.{any}.{amount}'/" | bad_case "any, dot, any, dot, amount"
+printf '%s\n' "$GOOD" | sed "s/^BALANCE_REPLY_PATTERN=.*/BALANCE_REPLY_PATTERN='Saldo {amount} do {any},{month}.{day}'/" | bad_case "any, comma, month"
+printf '%s\n' "$GOOD" | sed "s/^BALANCE_REPLY_PATTERN=.*/BALANCE_REPLY_PATTERN='Saldo {amount} do {any}.{month}.{day}'/" | bad_case "any, dot, month"
 { printf '%s\n' "$GOOD"; i=0; while [ "$i" -lt 150 ]; do echo '# padding padding padding padding padding padding padding'; i=$((i + 1)); done; } |
     bad_case "file over 4096 bytes"
 printf '' | bad_case "empty file"
