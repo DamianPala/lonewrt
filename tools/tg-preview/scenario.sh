@@ -19,13 +19,38 @@ tick() {
     lw_uptime_add "$1"
     wall_add "$1"
 }
-# new_bot N0: every bot message after the N0-th is a line of the event log
+# snap N: message N as it is now; the transcript keeps this state, not the final one, for a message
+# that a later tap edits (the list of devices, which loses its buttons when a device is picked)
+snap() {
+    mkdir -p "$T/tgp-snap"
+    cp "$G/sent/$1.shown" "$T/tgp-snap/$1.text"
+    cp "$G/sent/$1.markup" "$T/tgp-snap/$1.markup"
+    cp "$G/sent/$1.mode" "$T/tgp-snap/$1.mode"
+}
+# new_bot N0 [snap]: every bot message after the N0-th is a line of the event log
 new_bot() {
     _nb=$1
     while [ "$_nb" -lt "$(sent)" ]; do
         _nb=$((_nb + 1))
         printf 'b|%s|%s\n' "$(hhmm)" "$_nb" >>"$EV"
+        [ -z "${2:-}" ] || snap "$_nb"
     done
+}
+# tap MSG DATA [snap]: a tap on a button of message MSG; the messages it causes are bot lines of the log
+tap() {
+    _tn=$(sent)
+    tg_tap "$TG_CHAT" "$1" "$2"
+    pass
+    new_bot "$_tn" "${3:-}"
+}
+# reply_to PROMPT TEXT: the owner answers the prompt with TEXT (a reply to that message), and the bot
+# answers
+reply_to() {
+    _rn=$(sent)
+    tg_reply "$TG_CHAT" "$2" "$1"
+    printf 'r|%s|%s|%s\n' "$(hhmm)" "$1" "$2" >>"$EV"
+    pass
+    new_bot "$_rn"
 }
 # press ROW COL: a tap on a key of the reply keyboard; the client sends the label as a message
 press() {
@@ -130,6 +155,21 @@ screen wifi
 press 0 2 # Devices
 screen devices
 
+# naming a device (R50): the button under /devices, the list (kept as sent), a tap on the unnamed
+# phone, the owner's reply to the prompt, and /devices again with the name
+DEVMSG=$(sent)
+tap "$DEVMSG" dn:new snap
+LIST=$(sent)
+screen name-pick
+tap "$LIST" "$(button_data "$LIST" 1)"
+PROMPT=$(sent)
+tick 62
+reply_to "$PROMPT" "Kate's iPhone"
+screen name-done
+tick 5
+press 0 2 # Devices
+screen devices-named
+
 tick 45
 press 1 1 # Balance
 tick 15
@@ -163,8 +203,15 @@ screen help
 jstr() {
     printf '"%s"' "$(sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/\t/\\t/g' | sed ':a;N;$!ba;s/\n/\\n/g')"
 }
-# msg_mode N: the parse_mode message N has now, the one of its last edit if it was edited
+# msg_text N, msg_markup N, msg_mode N: what message N shows in the transcript: the state kept by
+# snap, else the final one (the text and the parse_mode of its last edit if it was edited)
+msg_text() { if [ -f "$T/tgp-snap/$1.text" ]; then cat "$T/tgp-snap/$1.text"; else shown "$1"; fi; }
+msg_markup() { if [ -f "$T/tgp-snap/$1.markup" ]; then cat "$T/tgp-snap/$1.markup"; else markup_of "$1"; fi; }
 msg_mode() {
+    if [ -f "$T/tgp-snap/$1.mode" ]; then
+        cat "$T/tgp-snap/$1.mode"
+        return 0
+    fi
     _mm=$(mode_of "$1")
     _mk=1
     while [ "$_mk" -le "$(edits)" ]; do
@@ -203,22 +250,33 @@ EOF
     id=0
     sep=
     : >"$T/tgp-screens"
-    while IFS='|' read -r kind a b; do
+    while IFS='|' read -r kind a b c; do
         case $kind in
             s) printf '%s %s\n' "$id" "$a" >>"$T/tgp-screens" ;;
             u)
                 id=$((id + 1))
                 printf '%s{"id":%s,"from":"user","time":"%s","reply_to":%s,"text":%s}' "$sep" "$id" "$a" \
-                    "$GREETING" "$(printf '%s' "$b" | jstr)"
+                    "$GREETING" "$(printf '%s' "${b}${c:+|$c}" | jstr)"
+                sep=',
+'
+                ;;
+            r)
+                # the reply to a prompt: b is the prompt's number in the fake API, c the text
+                id=$((id + 1))
+                _rt=
+                eval "_rt=\$tgp_id_$b"
+                printf '%s{"id":%s,"from":"user","time":"%s","reply_to":%s,"text":%s}' "$sep" "$id" "$a" \
+                    "$_rt" "$(printf '%s' "$c" | jstr)"
                 sep=',
 '
                 ;;
             b)
                 id=$((id + 1))
+                eval "tgp_id_$b=$id"
                 printf '%s{"id":%s,"from":"bot","time":"%s","text":%s' "$sep" "$id" "$a" \
-                    "$(shown "$b" | jstr)"
+                    "$(msg_text "$b" | jstr)"
                 [ "$(msg_mode "$b")" != HTML ] || printf ',"parse_mode":"HTML"'
-                _ik=$(jrows "$(markup_of "$b")" inline_keyboard)
+                _ik=$(jrows "$(msg_markup "$b")" inline_keyboard)
                 [ "$_ik" = '[]' ] || printf ',"inline_keyboard":%s' "$_ik"
                 printf '}'
                 sep=',

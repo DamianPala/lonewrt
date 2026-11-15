@@ -46,7 +46,7 @@ grep -q 'notifications: off$' "$SCRATCH/generic.err" ||
 [ "$(stat -c %a "$D/usr/share/lw/operators/29702")" = 644 ] || fail "preset 29702 is not 0644"
 cmp -s "$D/usr/share/lw/operators/29702" "$FW/src/files/usr/share/lw/operators/29702" ||
     fail "preset 29702 differs from the sources"
-for f in operators.sh multipart.sh; do
+for f in operators.sh multipart.sh names.sh; do
     [ "$(stat -c %a "$D/usr/lib/lw/$f")" = 644 ] || fail "$f is not 0644"
 done
 grep -qx "P_ROUTER_NAME='Router'" "$D/$UD" || fail "generic zz-lw-config: router name"

@@ -11,7 +11,7 @@ trap 'rm -rf "$work"' EXIT
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
-# ---- the scenario: JSON, the seven screens, texts word for word from the bot's code
+# ---- the scenario: JSON, the ten screens, texts word for word from the bot's code
 env -C "$FW" tests/rootfs/run.sh tools/tg-preview/scenario.sh >"$work/t.json" 2>"$work/t.err" ||
     { cat "$work/t.err" >&2; fail "the scenario did not run"; }
 
@@ -23,24 +23,30 @@ data = json.load(open(sys.argv[1], encoding="utf-8"))
 msgs = {m["id"]: m for m in data["messages"]}
 texts = "\n".join(m["text"] for m in data["messages"] if m["from"] == "bot")
 
-want = ["status", "wifi", "devices", "balance", "sms", "alerts-reboot", "help"]
+want = ["status", "wifi", "devices", "name-pick", "name-done", "devices-named", "balance", "sms",
+        "alerts-reboot", "help"]
 assert [s["name"] for s in data["screens"]] == want, data["screens"]
 assert all(s["last"] in msgs for s in data["screens"])
 assert data["title"] == "Home Router" and data["members"] == 2
 assert [len(r) for r in data["keyboard"]] == [3, 3, 3], data["keyboard"]
 
 users = [m for m in data["messages"] if m["from"] == "user"]
-assert len(users) == 8, len(users)
+assert len(users) == 10, len(users)
 # the reset note is a message of its own, the greeting (id 2) carries the keyboard, and a tap is a
 # reply to the greeting, so no tap quotes "Router was reset"
 note, greeting = data["messages"][0], data["messages"][1]
 assert note["from"] == "bot" and note["id"] == 1 and "was reset" in note["text"]
 assert greeting["from"] == "bot" and greeting["id"] == 2 and "bot is ready" in greeting["text"]
-assert all(m["reply_to"] == greeting["id"] for m in users), "a tap without reply_to"
+# a keyboard press is a reply to the greeting; the name is a reply to the prompt (R50)
+prompt = next(m for m in data["messages"] if m["text"].startswith("\u270f\ufe0f Send the new name for"))
+presses = [m for m in users if m["text"] != "Kate's iPhone"]
+assert all(m["reply_to"] == greeting["id"] for m in presses), "a tap without reply_to"
+reply = next(m for m in users if m["text"] == "Kate's iPhone")
+assert reply["reply_to"] == prompt["id"], "the name is not a reply to the prompt"
 bots = [m for m in data["messages"] if m["from"] == "bot"]
 assert all(m.get("parse_mode") == "HTML" for m in bots), "a bot message without parse_mode HTML"
 assert users[0]["text"] == "\U0001f7e2 Status" and users[0]["time"] == "07:58", users[0]
-assert users[-1]["time"] == "08:00", users[-1]
+assert users[-1]["time"] == "08:01", users[-1]
 
 for needle in [
     "\U0001f504 <b>Router was reset to its built-in settings.</b>\nEarlier logs and saved SMS are gone.",
@@ -48,6 +54,11 @@ for needle in [
     "\U0001f7e2 <b>Internet works</b>",
     "<blockquote>Tech: B3+B1 · RSRP -94 dBm · SINR -2.2 dB · ping 41 ms · VPN handshake 40 s ago</blockquote>",
     "Unknown device (…",
+    "\u270f\ufe0f <b>Which device do you want to name?</b>",
+    "\u270f\ufe0f Send the new name for <b>Unknown device (…3c:5d)</b> as a reply to this message.\n"
+    "Up to 24 characters. Send <code>-</code> to remove a name.",
+    "\u2705 <b>Unknown device (…3c:5d)</b> is now called <b>Kate's iPhone</b>.",
+    "• Kate's iPhone · 11.0 GB",
     "\U0001f4f6 <b>Wi-Fi</b>\nName: <code>Home-Guest</code>\nPassword: <code>blue-lamp-4521</code>",
     "\U0001f4b6 <b>Balance: 0.31 EUR</b>, valid until 5 Jan\n⚠️ Top up at least 7.50 EUR",
     "<blockquote>Telekom 1466, today ",
@@ -67,6 +78,16 @@ alerts = next(m for m in data["messages"] if m["text"].startswith("\U0001f514 <b
 assert alerts["inline_keyboard"] == [["2G backup: turn off"]], alerts
 cancelled = next(m for m in data["messages"] if m["text"] == "Restart cancelled.")
 assert "inline_keyboard" not in cancelled, "the cancelled question kept its buttons"
+# the naming flow (R50): the button under /devices, the list as it was sent (unnamed first, short
+# names two to a row, Cancel), and the confirmation after it
+by_screen = {s["name"]: msgs[s["last"]] for s in data["screens"]}
+assert by_screen["devices"]["inline_keyboard"] == [["\u270f\ufe0f Name a device"]], by_screen["devices"]
+assert by_screen["name-pick"]["inline_keyboard"] == [
+    ["Unknown device (…3c:5d)"], ["Unknown device (…b1:0f)"],
+    ["Pixel-8", "Tablet-Lena"], ["work-laptop", "Cancel"]], by_screen["name-pick"]
+assert by_screen["name-done"]["text"].startswith("\u2705 "), by_screen["name-done"]
+assert "• Kate's iPhone · 11.0 GB" in by_screen["devices-named"]["text"]
+assert "Unknown device (…3c:5d)" not in by_screen["devices-named"]["text"]
 assert bots[-1]["text"].startswith("\u2753 <b>What the buttons do</b>"), "the chat does not end with help"
 PYEOF
 grep -q 'Router was reset to its built-in settings' "$FW/src/files/usr/lib/lw/notify.sh" ||
