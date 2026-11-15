@@ -12,6 +12,7 @@
 . /fw/tests/notify/helpers.inc
 notify_setup 7.50
 passes 2
+data_since '2026-10-20 08:00'
 
 GB=1000000000
 NAMES=/etc/lw-notify/devnames

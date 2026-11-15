@@ -230,6 +230,26 @@ nt_cable_stations() {
     done
 }
 
+# R44c: when the counters started. nlbwmon's database and $NT_DIR are wiped by the same resets
+# (sysupgrade with or without -n, a factory reset; -o keeps both), so a missing mark means the
+# counters began at this boot. Written once, at the first pass with a synced clock, and after
+# nt_reset_mark in the pass, which reads an empty $NT_DIR as a reset (R37f).
+NT_DATA_SINCE=$NT_DIR/data-since
+nt_data_mark() {
+    [ ! -e "$NT_DATA_SINCE" ] && nt_clock_ok || return 0
+    mkdir -p "$NT_DIR"
+    nt_local $(($(nt_wall) - $(lw_uptime))) | lw_write_atomic "$NT_DATA_SINCE" || :
+}
+
+# nt_data_since: "1 Nov", or the start of the counters when it falls in the current month (R44c).
+nt_data_since() {
+    _dsm=$(head -n 1 "$NT_DATA_SINCE" 2>/dev/null)
+    case $_dsm in
+        "$(date -d "@$(nt_wall)" +%Y-%m)"-[0-9][0-9]\ [0-9][0-9]:[0-9][0-9]) nt_when "$_dsm" ;;
+        *) printf '1 %s' "$(date -d "@$(nt_wall)" +%b)" ;;
+    esac
+}
+
 # nt_data_read (R44, R44a): the month's counters per MAC from nlbwmon into $NT_RUN/usage as lines
 # "<mac> <bytes>", NT_DATA = ok, noclock (ntpd has not set the month yet) or unknown (nlbwmon does
 # not answer), NT_DATA_TOTAL = the sum in bytes.
@@ -275,7 +295,7 @@ nt_data_gb() {
 # nt_data_summary: "42 GB (since 1 Nov)" after nt_data_read, or why there is no number.
 nt_data_summary() {
     case $NT_DATA in
-        ok) printf '%s (since 1 %s)' "$(nt_data_gb)" "$(date -d "@$(nt_wall)" +%b)" ;;
+        ok) printf '%s (since %s)' "$(nt_data_gb)" "$(nt_data_since)" ;;
         noclock) printf 'unknown (the router clock is not set yet)' ;;
         *) printf unknown ;;
     esac
@@ -431,7 +451,7 @@ nt_devices_text() {
     _dcon=$(sed -n 's/^C //p' "$NT_RUN/dev_list" | nt_hf)
     _doff=$(sed -n 's/^O //p' "$NT_RUN/dev_list" | nt_hf)
     if [ "$NT_DATA" = ok ]; then
-        _dtxt="📱 <b>Devices</b> · $(nt_data_gb) this month (since 1 $(date -d "@$(nt_wall)" +%b))"
+        _dtxt="📱 <b>Devices</b> · $(nt_data_gb) this month (since $(nt_data_since))"
         [ -z "$_dcon" ] || _dtxt="$_dtxt
 
 <b>Connected now ($_dc)</b>

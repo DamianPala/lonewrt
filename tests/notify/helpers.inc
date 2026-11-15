@@ -61,6 +61,9 @@ wall_add() { echo $(($(cat "$T/wall") + $1)) >"$T/wall"; }
 # ntp_on / ntp_off: whether ntpd has synced the clock since the boot (OpenWrt's 25-dnsmasqsec file)
 ntp_on() { mkdir -p /var/state && echo "ntpd says time is valid" >/var/state/dnsmasqsec; }
 ntp_off() { rm -f /var/state/dnsmasqsec; }
+# data_since "YYYY-MM-DD hh:mm": the counters started then (R44c), e.g. a router counting since an
+# earlier month; without it the first pass marks this boot, as after a reset.
+data_since() { mkdir -p /etc/lw-notify && echo "$1" >/etc/lw-notify/data-since; }
 
 # wifi_set N...: one Wi-Fi network per argument with that many associated devices; no argument
 # removes the networks.

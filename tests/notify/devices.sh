@@ -1,7 +1,7 @@
 # R44, R44b, D59, D63: /devices lists every device with traffic this calendar month in two groups,
 # connected now and earlier this month (no band is named), each biggest first, at most 20 in all (the
 # smallest drop off the list but stay in the total), the router's own traffic as a line of its own,
-# and the month's total with "since 1 <month>" in the heading; the same total is the data line of /status
+# and the month's total with "since 1 <month>" in the heading, or the start after a reset (R44c); the same total is the data line of /status
 # (R39c). A device without a DHCP name is "Unknown device (...xx:xx)"; a name stays after the lease is
 # gone, also over a restart of the router, written to flash at most once a day. Without nlbwmon or
 # without a clock set by ntpd the numbers are "unknown", not guesses (R44a).
@@ -12,6 +12,7 @@
 . /fw/tests/notify/helpers.inc
 notify_setup 7.50
 passes 2
+data_since '2026-10-20 08:00'
 
 ask() {
     tg_push "$TG_CHAT" "${1:-/devices}"
@@ -85,6 +86,27 @@ case $(ask) in
     *) lw_fail "December label: $(last_text)" ;;
 esac
 wall_set '2026-11-07 11:20'
+
+# R44c: counters that started this month (a reset wiped them) give their start, not the 1st
+data_since '2026-11-07 09:05'
+case $(ask) in
+    '📱 <b>Devices</b> · 1.2 GB this month (since today 09:05)'*) ;;
+    *) lw_fail "start after a reset: $(last_text)" ;;
+esac
+case $(tg_push "$TG_CHAT" /status && pass && last_text) in
+    *'📊 Data this month: 1.2 GB (since today 09:05)'*) ;;
+    *) lw_fail "start after a reset in /status: $(last_text)" ;;
+esac
+# a missing mark is written at the first pass with a synced clock, as the time of this boot
+rm -f /etc/lw-notify/data-since
+ntp_off
+pass
+[ ! -e /etc/lw-notify/data-since ] || lw_fail "start marked without a synced clock"
+ntp_on
+lw_uptime_set 3570
+pass
+lw_expect_eq "$(cat /etc/lw-notify/data-since)" "2026-11-07 10:20" "start = this boot"
+data_since '2026-10-20 08:00'
 
 # small totals: one decimal under 10 GB, "<0.1 GB" (written &lt;, R37g) under 50 MB, whole GB from 10
 nlbw_set "aa:bb:cc:00:00:01 $((4 * GB)) 200000000"
