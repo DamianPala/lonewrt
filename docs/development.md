@@ -48,6 +48,19 @@ A change in one area needs that area during the work and the full run once befor
 
 Not testable without the router: the real modem and operator network (bands, APN, 2G fallback), WiFi, the ipq40xx kernel.
 
+## Screenshots of the Telegram bot
+
+`tools/tg-preview/` makes phone-style screenshots of the bot's chat, to see how the messages look and for the README.
+It plays a made-up chat through the bot's real code in the test rootfs, so the texts are the bot's own, and renders it as Telegram for Android (dark) with headless Chrome.
+It is a laptop tool: it needs `python3`, `bwrap` with the rootfs of `./fetch-deps.sh`, and `google-chrome` (or `chromium`, or `TGP_CHROME`); nothing changes on a router or in the image.
+
+```sh
+tools/tg-preview/run.sh                            # PNGs and index.html in tests/.out/tg-preview/
+tools/tg-preview/run.sh --transcript chat.json     # a hand-written chat, for a message that has no code yet
+```
+
+The transcript format and the options are in `tools/tg-preview/README.md`; `tools/tg-preview/test.sh` checks the scenario and the renderer without a browser.
+
 ## Recovery
 
 The MF289F has no button recovery.

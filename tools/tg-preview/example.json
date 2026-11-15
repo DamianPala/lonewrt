@@ -1,0 +1,18 @@
+{
+  "title": "Home Router",
+  "members": 2,
+  "keyboard": [
+    ["🟢 Status", "📶 Wi-Fi", "📱 Devices"],
+    ["⚡ Speed", "💶 Balance", "✉️ SMS"],
+    ["🔔 Alerts", "🔄 Reboot", "❓ Help"]
+  ],
+  "messages": [
+    {"id": 1, "from": "bot", "time": "09:00",
+     "text": "🤖 The router bot is ready. Tap a button below, or send /help to see what each one does."},
+    {"id": 2, "from": "user", "time": "09:01", "reply_to": 1, "text": "🔔 Alerts"},
+    {"id": 3, "from": "bot", "time": "09:01",
+     "text": "🔔 Automatic messages\nNew SMS: on · Low balance: on · Internet back: on · 2G backup: on",
+     "inline_keyboard": [["2G backup: turn off"]]}
+  ],
+  "screens": [{"name": "alerts", "last": 3}]
+}
