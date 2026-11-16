@@ -196,6 +196,10 @@ def parse_ssh_entry(entry: str) -> tuple[str, str, str] | None:
         (length,) = struct.unpack(">I", blob[:4])
     except (ValueError, struct.error):  # binascii.Error is a ValueError; so is non-ASCII data
         return None
+    # what validate=True lets through differs between Python versions (3.12 drops excess '='), so
+    # only the canonical spelling of the bytes counts
+    if base64.b64encode(blob).decode() != data:
+        return None
     if blob[4 : 4 + length] != key_type.encode():
         return None
     return key_type, data, comment
