@@ -31,6 +31,9 @@ bwrap --ro-bind / / --unshare-user true 2>/dev/null || skip "bwrap cannot make a
 tmp=$(mktemp -d)
 trap 'rm -rf -- "$tmp"' EXIT
 mkdir -p "$tmp/ascii" "$tmp/text" "$tmp/out" "$tmp/stubbin"
+# shellcheck source=tests/rootfs/root.bash
+. "$FW/tests/rootfs/root.bash"
+root_args "$ROOTFS" "$tmp"
 have_cjpeg=0
 [ -x "$CJPEG_ROOT/usr/bin/cjpeg" ] && have_cjpeg=1
 
@@ -61,7 +64,7 @@ printf '%s\n' "${cases[@]}" >"$tmp/cases"
 
 # the strings of the image's nt_qr_wifi
 sandbox() {
-    bwrap --overlay-src "$ROOTFS" --tmp-overlay / --dev /dev --proc /proc --tmpfs /tmp \
+    bwrap "${ROOT_ARGS[@]}" --dev /dev --proc /proc --tmpfs /tmp \
         --ro-bind "$FW" /fw --unshare-user --uid 0 --gid 0 --unshare-net --unshare-pid \
         --die-with-parent --clearenv --setenv PATH /usr/sbin:/usr/bin:/sbin:/bin \
         --setenv HOME /root --setenv NT_RUN /tmp/nt --setenv LW_TEST /lwtest "$@"

@@ -30,6 +30,9 @@ cleanup() {
     rm -rf -- "$tmp"
 }
 trap cleanup EXIT
+# shellcheck source=tests/rootfs/root.bash
+. "$FW/tests/rootfs/root.bash"
+root_args "$ROOTFS" "$tmp"
 
 token='123456789:TESTtokq7x9-AAAAAAAAAAAAAAAAAAAAAAAAAAA'
 mkdir -p "$tmp/expect"
@@ -81,7 +84,7 @@ fi
 port=$(cat "$tmp/port")
 
 # like tests/rootfs/run.sh, but the network of the host stays (the one thing that run.sh unshares)
-bwrap --overlay-src "$ROOTFS" --tmp-overlay / \
+bwrap "${ROOT_ARGS[@]}" \
     --dev /dev --proc /proc --tmpfs /tmp \
     --ro-bind "$FW" /fw --ro-bind "$tmp/expect" /expect \
     --unshare-user --uid 0 --gid 0 --unshare-pid --die-with-parent \

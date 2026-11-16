@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run one test script inside the official OpenWrt 25.12.6 x86_64 rootfs: the same busybox, uci,
-# jsonfilter and coreutils timeout as the router, a throwaway writable overlay, no network.
+# jsonfilter and coreutils timeout as the router, a throwaway writable root, no network.
 # Usage: tests/rootfs/run.sh tests/<area>/<test>.sh   (path relative to the firmware directory)
 # The rootfs comes from ./fetch-deps.sh into $LW_WORK/dl/x86/rootfs (LW_WORK defaults to work/).
 # LW_NO_PORT=1 starts without /dev/ttyUSB2, to test a modem that never appears.
@@ -15,7 +15,13 @@ ROOTFS=${LW_ROOTFS:-$LW_WORK/dl/x86/rootfs}
 port=(--dev-bind /dev/null /dev/ttyUSB2)
 [ "${LW_NO_PORT:-0}" = 1 ] && port=()
 
-exec bwrap --overlay-src "$ROOTFS" --tmp-overlay / \
+# shellcheck source=tests/rootfs/root.bash
+. "$FW/tests/rootfs/root.bash"
+scratch=$(mktemp -d)
+trap 'rm -rf -- "$scratch"' EXIT
+root_args "$ROOTFS" "$scratch"
+
+bwrap "${ROOT_ARGS[@]}" \
     --dev /dev "${port[@]}" --proc /proc --tmpfs /tmp \
     --ro-bind "$FW" /fw \
     --unshare-user --uid 0 --gid 0 --unshare-net --unshare-pid --die-with-parent \
