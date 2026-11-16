@@ -25,7 +25,7 @@ The full behaviour, with reasons, is in [SPEC.md](SPEC.md).
 ## What you need
 
 - A ZTE MF289F that already runs OpenWrt. Installing OpenWrt over the stock firmware is not covered here.
-- A Linux x86_64 build host with `bash`, `python3`, `openssl`, `curl`, `tar`, `zstd`, `make`, `flock` and GNU awk. The tests also want `bubblewrap` and `squashfs-tools`. Details in [docs/development.md](docs/development.md).
+- A Linux x86_64 build host with `bash`, `python3`, `openssl`, `curl`, `tar`, `zstd`, `make`, `flock` and GNU awk. The tests also want `bubblewrap`, `squashfs-tools`, `qrencode` and `zbar-tools`. Details in [docs/development.md](docs/development.md).
 - For the notifications, a Telegram bot token and a chat. For remote access, a WireGuard server. For the heartbeat, a healthchecks.io check. Each is optional.
 
 ## Quick start
@@ -59,6 +59,23 @@ This model has no failsafe for a broken image: the way back is opening the case 
 
 Reference for the profile keys: [docs/profile.md](docs/profile.md).
 Balance checks for your operator: [docs/operators.md](docs/operators.md).
+
+## After flashing
+
+These are the hints that the password card carries when the build draws a password.
+A build on GitHub writes no card, because both passwords are the ones you put in your profile, so the hints are here, for you and for whoever gets the router.
+The router's own settings page is called LuCI.
+
+- **Wi-Fi.** The network name is `WIFI_SSID` of the profile and the password is `WIFI_KEY`. It is one network on both the 2.4 and the 5 GHz band.
+- **Opening LuCI.** Join the router's Wi-Fi or plug a cable into its LAN port, and open `https://` followed by the router's address (`LAN_IP` of the profile, `192.168.1.1` unless you changed it) in a browser. The user is `root`; the password is `ROOT_PASSWORD` of the profile, or the password behind `ROOT_PASSWORD_HASH` if you gave a hash.
+- **The browser warns about the certificate.** This is expected: the router signs its own certificate, so the browser cannot know it. Choose Advanced and continue.
+- **The button reset.** Holding the router's reset button puts back the settings of the image, passwords included: the ones of your profile. Changes you made later in LuCI, the logs and the SMS archive on the router are lost.
+- **A SIM card with a PIN.** The router cannot use it. Take the PIN off in a phone, or enter it in LuCI: Network > Interfaces > WWAN > Edit > PIN.
+- **No internet 5 minutes after the router starts.** Enter your operator's APN (the mobile data name, on the operator's site) in LuCI: Network > Interfaces > WWAN > Edit > APN, then Save & Apply.
+- **LTE only.** The router uses LTE and nothing else. The network mode (2G/3G/LTE) cannot be changed in LuCI: the router sets LTE again at every start.
+- **The router restarts itself.** When the internet fails, it first restarts the connection, then, if that does not help, the whole router. To turn the restarts off, go to LuCI: System > Scheduled Tasks and delete the line with `/usr/sbin/wwan-recover`.
+- **SMS on the SIM.** When the SIM holds more than 30 messages, the router copies all of them to `/root/sms-archive/` once a day at 04:10 and deletes the oldest, keeping 20, so new SMS (top-ups, package expiry) keep arriving.
+- **The Wi-Fi country.** It is the `WIFI_COUNTRY` of the profile. To change it without a new image, go to LuCI: Network > Wireless > Edit on each radio > Advanced Settings > Country Code.
 
 ## What goes over the network
 

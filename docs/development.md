@@ -4,7 +4,7 @@
 
 Linux x86_64 with `bash`, `python3`, `openssl`, `curl`, `tar`, `zstd`, `make`, `flock` (util-linux) and GNU awk.
 Without `gawk`, `fetch-deps.sh` unpacks Ubuntu's, which needs `dpkg-deb` and glibc 2.38 or newer.
-The tests need `bubblewrap` and `squashfs-tools`; the VM bench also `qemu-system-x86_64` and `/dev/kvm`.
+The tests need `bubblewrap`, `squashfs-tools`, `qrencode` and `zbar-tools` (without the last two the two host tests print `SKIP`); the VM bench also `qemu-system-x86_64` and `/dev/kvm`.
 `build.sh` checks for its programs before it starts and names the missing one.
 A build and the VM image also need the network: they fetch the `uqmi` package from the package feeds of the ImageBuilder to derive `qmi.sh` from it (SPEC R12d).
 
@@ -28,6 +28,7 @@ A build and the VM image also need the network: they fetch the `uqmi` package fr
 | `image/` | build output: `<name>-sysupgrade.bin`, `.manifest`, `<name>-passwords.txt` | no |
 | `work/` | ImageBuilder, downloads, VM bench (`LW_WORK` moves it) | no |
 | `fetch-deps.sh`, `deps.lst` | downloads with pinned sha256 | yes |
+| `ci/github-run.sh` | the steps of a build run on GitHub: checks, dependencies, build, tests, files for the artifact, summary (SPEC R53 to R54). The workflow of the template repository only calls it, so a change here ships with the next release (D118) | yes |
 | `tests/` | tests; reports and scratch in `tests/.out/` | yes |
 | `SPEC.md` | what the image does and why, with requirement ids (`R14`) and decision ids (`D3`) that the code comments cite | yes |
 | `packages.md` | the packages in the image and the ones left out | yes |
@@ -39,6 +40,7 @@ A build and the VM image also need the network: they fetch the `uqmi` package fr
 | `tests/run-all.sh [-j N] [area]` | the scripts of the image inside the official OpenWrt x86_64 rootfs (same busybox, `uci`, `jsonfilter`) under `bwrap`, with modem and network as stubs: recovery ladder, APN, SMS, notifications, first boot, the data session watcher (stand-ins for `uqmi`, `ip`, `sleep` and the signals to `udhcpc` in `tests/linkwatch/stubs/`). Areas: `ladder modem notify firstboot smoke linkwatch` |
 | `tests/run-all.sh hostnet` (also the last step of `tests/run-all.sh`) | the two checks that need the host: the upload of the QR photo (R51) from the image's own code and the rootfs's `uclient-fetch` to a python3 server on 127.0.0.1 that parses the multipart body, and the QR picture of `/wifi` made by the image's own `nt_qr_image` pipeline (host `qrencode` text, the awk filter, the real `cjpeg` from `./fetch-deps.sh jpeg`) and read back as the same text by `zbarimg`, for 19 names and passwords with every special character. They print `SKIP` when the host lacks a tool, a namespace or a port |
 | `tests/build/run.sh [--quick]` | profile validation, `sh -n` with the rootfs busybox, rendered overlays, `.gitignore`, the `qmi.sh` derivation against a stand-in package, then the first-boot tests; without `--quick` also two real ImageBuilder builds (about 3 minutes, network needed for `uqmi`) that check the image's `qmi.sh` against the package's |
+| `tests/ci/run.sh` | `ci/github-run.sh` on the host, in a scratch copy of the repository with stand-ins for `build.sh`, `fetch-deps.sh` and the two test runners (and a recorder for `sudo`): the gates (public repository, secret, name, profile, passwords), a test that fails or prints `SKIP`, the files and the summary of a good run, and that no secret value of the profile and no profile file is left (R53 to R54). It takes seconds and builds nothing; `tests/run-all.sh` does not run it |
 | `tests/vm/run-all.sh` | an x86 image in QEMU/KVM with a stand-in for the modem: first boot, no modem, power cut during first boot, reset, cron, log rotation, modem mode; see `tests/vm/README.md` |
 
 All test data is made up: phone numbers, names, keys, tokens, SMS texts and device names in `tests/` belong to nobody.
@@ -47,6 +49,8 @@ Put values of your own private profile, one per line, into `tests/build/private-
 
 `tests/run-all.sh` runs 6 tests at once (`-j N` or `LW_JOBS`); the report keeps the listing order.
 A change in one area needs that area during the work and the full run once before it is reported.
+
+The run on GitHub itself is only partly testable here: its user-namespace setting, the `apt` install, the template's workflow and the artifact upload need a runner. To try the script end to end on this machine, run it with a profile in `LW_PROFILE` (the fixture of `tests/build/lib.bash` will do), `LW_REPO_PRIVATE=true` and `LW_WORK` set; the files go to `out/` (`LW_OUT_DIR`).
 
 Not testable without the router: the real modem and operator network (bands, APN, 2G fallback), WiFi, the ipq40xx kernel.
 
