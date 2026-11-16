@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1] - 2026-11-16
+
+### Fixed
+
+- A build on GitHub failed or hung at its tests, because GitHub's Ubuntu 24.04 machine has an older bubblewrap and Python and runs its steps with SIGPIPE ignored; the tests now pass there, so the run gives the image to download
+- An `SSH_KEYS` entry whose key data ends in an extra `=` is now refused on every Python version, not only on newer ones
+
 ## [0.2.0] - 2026-11-16
 
 ### Added
@@ -28,5 +35,6 @@ First public release, experimental: it runs on one router in daily use.
 - Listed phone numbers can text `status` or `reboot` to the SIM, at most 5 restarts a day
 - Optional WireGuard tunnel for remote access, LuCI apps for the modem, the LTE bands and SMS, persistent logs, and the release version in `/etc/lw-build`
 
+[0.2.1]: https://github.com/DamianPala/lonewrt/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/DamianPala/lonewrt/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/DamianPala/lonewrt/releases/tag/v0.1.0
