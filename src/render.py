@@ -4,17 +4,19 @@ Run by build.sh as `python3 -I src/render.py ...`. Parses profiles/<name>.conf w
 (SPEC R3), resolves empty passwords from the password card or draws new ones (SPEC R33), copies
 src/files, fills in the @KEY@ placeholders, adds the weekly balance cron job when the profile has
 notifications and a balance threshold (SPEC R35) and the heartbeat job when the profile has a ping
-address (SPEC R42), the profile's SSH key files and /etc/lw-build with the release version of the
-VERSION file (SPEC R3b, R7b), sets file modes and checks every shell script with busybox `sh -n`
-(SPEC R6).
+address (SPEC R42), the profile's SSH key files merged with its SSH_KEYS (SPEC R61) and
+/etc/lw-build with the release version of the VERSION file (SPEC R3b, R7b), sets file modes and
+checks every shell script with busybox `sh -n` (SPEC R6).
 Errors name the key, line or file, never a profile value.
 """
 
 import argparse
+import base64
 import hashlib
 import re
 import secrets
 import shutil
+import struct
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -41,6 +43,7 @@ MAY_BE_EMPTY = {
     "LOW_BALANCE",
     "HC_PING_URL",
     "SMS_ADMINS",
+    "SSH_KEYS",
 }
 NOTIFY_KEYS = ("TG_BOT_TOKEN", "TG_CHAT_ID")
 # Weekly balance check (SPEC R35), only in images with notifications and a threshold
@@ -115,7 +118,10 @@ PLACEHOLDER = re.compile(r"@([A-Z][A-Z0-9_]*)@")
 VERSION_FORMAT = re.compile(
     r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?"
 )
-KEY_FILES = ("authorized_keys", "dropbear_ed25519_host_key", "dropbear_rsa_host_key")
+KEY_FILES = ("dropbear_ed25519_host_key", "dropbear_rsa_host_key")
+SSH_KEY_TYPES = ("ssh-ed25519", "ssh-rsa", "ecdsa-sha2-nistp256")
+# A comment is printable text (a control character would break the line of authorized_keys)
+SSH_COMMENT = re.compile(r"[^\x00-\x1f\x7f]*")
 # Script locations whose files may lack a shebang because they are sourced
 SOURCED_DIRS = ("etc/uci-defaults/", "etc/hotplug.d/", "usr/lib/lw/")
 PASSWORD_ALPHABET = "abcdefghijkmnpqrstuvwxyz23456789"  # gitleaks:allow (an alphabet, not a key)
@@ -169,6 +175,54 @@ def check_value(key: str, value: str, name: str) -> None:
         raise RenderError(f"profile {name}: key {key} has an invalid value{allowed_hint(key)}")
 
 
+def parse_ssh_entry(entry: str) -> tuple[str, str, str] | None:
+    """One entry of SSH_KEYS as (type, base64 data, comment), None when it is malformed (R61).
+
+    Whitespace around the entry and between its fields is dropped, so the line written to the image
+    always has single spaces. The data must be strict base64 whose first field, in the SSH wire
+    format a 4-byte length and the type name, is the declared type: that catches a swapped type
+    and a pasted fragment without parsing the rest of the key.
+    """
+    fields = entry.split(None, 2)
+    if len(fields) < 2 or fields[0] not in SSH_KEY_TYPES:
+        return None
+    key_type, data = fields[0], fields[1]
+    comment = fields[2].strip() if len(fields) == 3 else ""
+    # no ';' to test for: the entry is what is left between two of them
+    if not SSH_COMMENT.fullmatch(comment):
+        return None
+    try:
+        blob = base64.b64decode(data, validate=True)
+        (length,) = struct.unpack(">I", blob[:4])
+    except (ValueError, struct.error):  # binascii.Error is a ValueError; so is non-ASCII data
+        return None
+    if blob[4 : 4 + length] != key_type.encode():
+        return None
+    return key_type, data, comment
+
+
+def parse_ssh_keys(value: str, name: str) -> list[tuple[str, str, str]]:
+    """The keys of SSH_KEYS in order, each key (type and data, not the comment) once (R61, D114).
+
+    An empty entry, such as `a;;b`, a leading or a trailing `;`, is malformed like any other bad
+    entry: it is most likely a pasted key that lost its text. The error gives the entry's number
+    (1-based) and never the entry.
+    """
+    keys: list[tuple[str, str, str]] = []
+    if not value:
+        return keys
+    for number, entry in enumerate(value.split(";"), 1):
+        key = parse_ssh_entry(entry)
+        if key is None:
+            raise RenderError(
+                f"profile {name}: key SSH_KEYS entry {number} is malformed; "
+                f"expected <type> <base64 data> [comment], type {', '.join(SSH_KEY_TYPES)}"
+            )
+        if all(key[:2] != seen[:2] for seen in keys):
+            keys.append(key)
+    return keys
+
+
 def validate(values: dict[str, str], required: list[str], name: str) -> None:
     for key in values:
         if key not in required:
@@ -179,6 +233,7 @@ def validate(values: dict[str, str], required: list[str], name: str) -> None:
             fix = f"add the line {key}=''" if key in MAY_BE_EMPTY else "copy it from generic.conf"
             raise RenderError(f"profile {name}: key {key} is missing; {fix}")
         check_value(key, values[key], name)
+    parse_ssh_keys(values["SSH_KEYS"], name)
     if values["ROOT_PASSWORD"] and values["ROOT_PASSWORD_HASH"]:
         raise RenderError(
             f"profile {name}: keys ROOT_PASSWORD and ROOT_PASSWORD_HASH are both set; use one"
@@ -370,8 +425,46 @@ def fill_placeholders(out: Path, values: dict[str, str]) -> None:
         path.write_bytes(filled.encode("utf-8", errors="surrogateescape"))
 
 
-def install_key_files(profile_dir: Path, out: Path) -> list[str]:
-    installed = []
+def folder_key_ids(line: str) -> set[tuple[str, str]]:
+    """The (type, data) pairs a line of profiles/<name>/authorized_keys holds; none for a comment or
+    a blank line. The line may start with options (`from="..." ssh-ed25519 ...`), so a type is
+    searched for as a word; the folder file is the owner's and R61 does not validate it."""
+    if line.lstrip().startswith("#"):
+        return set()
+    return set(re.findall(rf"(?:^|\s)({'|'.join(SSH_KEY_TYPES)})\s+(\S+)", line))
+
+
+def write_authorized_keys(
+    profile_dir: Path, out: Path, ssh_keys: list[tuple[str, str, str]]
+) -> bool:
+    """Write /etc/dropbear/authorized_keys: the keys of SSH_KEYS, then the lines of the profile
+    folder's file whose key is not among them (R61, D114). The same key is the same type and data,
+    whatever the comment or options. Folder lines are copied as they are and are not compared
+    with each other; with an empty SSH_KEYS the file is copied unchanged, as before R61. With
+    neither source there is no file."""
+    source = profile_dir / "authorized_keys"
+    if not ssh_keys and not source.is_file():
+        return False
+    target = out / "etc/dropbear/authorized_keys"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if not ssh_keys:
+        shutil.copyfile(source, target)
+        return True
+    seen = {key[:2] for key in ssh_keys}
+    lines = [" ".join(part for part in key if part) for key in ssh_keys]
+    if source.is_file():
+        text = source.read_text(encoding="utf-8", errors="surrogateescape")
+        lines += [
+            line for line in text.removesuffix("\n").split("\n") if not folder_key_ids(line) & seen
+        ]
+    target.write_text("\n".join(lines) + "\n", encoding="utf-8", errors="surrogateescape")
+    return True
+
+
+def install_key_files(
+    profile_dir: Path, out: Path, ssh_keys: list[tuple[str, str, str]]
+) -> list[str]:
+    installed = ["authorized_keys"] if write_authorized_keys(profile_dir, out, ssh_keys) else []
     for name in KEY_FILES:
         source = profile_dir / name
         if source.is_file():
@@ -461,7 +554,8 @@ def render(args: argparse.Namespace) -> None:
     fill_placeholders(out, values)
     balance = add_balance_cron(out, values)
     heartbeat = add_heartbeat_cron(out, values)
-    keys = install_key_files(args.profiles / args.name, out)
+    ssh_keys = parse_ssh_keys(values["SSH_KEYS"], args.name)
+    keys = install_key_files(args.profiles / args.name, out, ssh_keys)
     built = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     digest = src_digest(args.src)
     build_id = f"version={version}\nprofile={args.name}\nbuilt={built}\nsrc_sha256={digest}\n"
@@ -473,6 +567,7 @@ def render(args: argparse.Namespace) -> None:
         f"profile {args.name}, version {version}, src_sha256 {digest[:12]}",
         f"{len(scripts)} scripts pass sh -n ({shell[-2]})",
         f"SSH key files from profile: {', '.join(keys) or 'none'}",
+        f"SSH_KEYS: {len(ssh_keys)} keys",
         f"notifications: {notify_state(values)}" + (", weekly balance check" if balance else ""),
         f"heartbeat: {'on' if heartbeat else 'off'}",
     ]

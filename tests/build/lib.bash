@@ -20,6 +20,17 @@ fi
 # The fake WireGuard private key is joined from two parts here and put into the fixture by
 # make_profiles, so no file holds a whole private-key-shaped string for secret scanners to flag.
 FAKE_WG_PRIVATE_KEY="RkFLRS13Zy1wcml2YXRl""LWtleS1xN3g5LTAxMjM0NTY=" # gitleaks:allow (synthetic)
+# Made-up public keys (SPEC R61), generated with ssh-keygen for these tests and thrown away: A and E
+# are the SSH_KEYS of fixtures/fake-full.conf, B, C and R only for the cases that build their own
+# profile. Fields of a key: type, base64 data, comment.
+FAKE_SSH_A='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDtjebEKCMyD5Axd0fck9Ocn1OgZmQhNul0Ncp1JYtt+ fake-a-q7x9'
+FAKE_SSH_B='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFHF63RiGknO6QTxBQccyl9LCtKCX65r86YAAUJws0ic fake-b-q7x9'
+FAKE_SSH_C='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMSo+/Ex00mQyD4rBqpFwf33Jju9gcPxYKXhOVVYrp/j fake-c-q7x9'
+FAKE_SSH_E='ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBIb4S0E9CJVs37XjP+aVL29hb0goeiPSxe7xLh+tBNFNmyLGG9ek/3fmu4W7fevEjBjacTIogxLoWQ1JRoBTqHU= fake-e-q7x9'
+FAKE_SSH_R='ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAAAgQDbw/bZNzbHd+uT/PgpVJQ61Fxv/ufhl6Zs7F+Xemfb8pLl4Xauj5MEOCpT+belkAwjXoNKJvZ3QtsYrWKdJX1eP0HFeaumdW5dB9eoIudwW0iuVpFpqrVSMzjtGHzscX2yZ3YoZQx2eYN4oWA0srZCTEOTnafnPS8bHSzpV2JQkw== fake-r-q7x9'
+# ssh_field KEY N: the Nth space-separated field of one of the lines above (1 type, 2 data, 3 comment)
+ssh_field() { cut -d' ' -f"$2" <<<"$1"; }
+
 # Values that only fixtures/fake-full.conf and fixtures/fake-full/ carry (SPEC R4, R4a)
 FAKE_VALUES=(
     fakelw-q7x9 192.168.77.1 FakeLwSsid-q7x9 fake-wifi-key-q7x9 fakesaltq7x9 fake.apn.q7x9
@@ -27,7 +38,7 @@ FAKE_VALUES=(
     RkFLRS13Zy1wZWVyLXB1YmxpYy1rZXktcTd4OS0wMTI= 10.99.77. vpn.fake-q7x9.example
     FAKEauthorizedKEYq7x9 FAKE-dropbear-ed25519-host-key-q7x9 FAKE-dropbear-rsa-host-key-q7x9
     FAKEtgtokenq7x9 -1009977001977 hc-ping.fake-q7x9.example FAKEhcping-q7x9-0001
-    +15550100123 15550100456
+    +15550100123 15550100456 fake-a-q7x9 fake-e-q7x9
 )
 
 fail() {

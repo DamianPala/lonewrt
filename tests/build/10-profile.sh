@@ -96,6 +96,56 @@ for good in '+15550100123' '15550100456' '+15550100123,15550100456' '123456' '12
         fail "SMS_ADMINS '$good' not written verbatim"
 done
 
+# R61: SSH_KEYS is a key every profile must have, and it may be empty. A malformed entry stops the
+# build with the key's name and the entry's number (1-based), and the error shows no part of the
+# value. Whitespace around ';' goes, an empty entry (a;;b, a trailing or a leading ';') is malformed,
+# the data must be base64 whose first field is the declared type.
+variant no-ssh '/^SSH_KEYS=/d'
+expect_fail_with "key SSH_KEYS is missing; add the line SSH_KEYS=''" build no-ssh
+A_DATA=$(ssh_field "$FAKE_SSH_A" 2)
+B_DATA=$(ssh_field "$FAKE_SSH_B" 2)
+i=0
+for spec in \
+    '1|ssh-ed25519 not-base64' \
+    '1|;' \
+    '1| ' \
+    "2|$FAKE_SSH_A;;$FAKE_SSH_B" \
+    "2|$FAKE_SSH_A; ;$FAKE_SSH_B" \
+    "2|$FAKE_SSH_A;" \
+    "1|;$FAKE_SSH_A" \
+    "2|$FAKE_SSH_A;ssh-ed25519 not-base64" \
+    "3|$FAKE_SSH_A;$FAKE_SSH_B;ssh-ed25519" \
+    "1|ssh-dss $A_DATA" \
+    "1|ecdsa-sha2-nistp384 $A_DATA" \
+    "1|$(ssh_field "$FAKE_SSH_E" 1) $A_DATA" \
+    "1|ssh-rsa $A_DATA" \
+    "1|ssh-ed25519" \
+    "1|ssh-ed25519 AAAA" \
+    "1|ssh-ed25519 ${A_DATA%+}" \
+    "1|ssh-ed25519 ${A_DATA}= x" \
+    "1|ssh-ed25519 AAAAC3NzaC1lZDI1NTE5.AAAAIDtj" \
+    "1|$A_DATA ssh-ed25519" \
+    "1|options ssh-ed25519 $A_DATA"; do
+    i=$((i + 1))
+    want=${spec%%|*}
+    bad=${spec#*|}
+    variant "bad-ssh-$i" "s|^SSH_KEYS=.*|SSH_KEYS='$bad'|"
+    expect_fail_with "key SSH_KEYS entry $want is malformed" build "bad-ssh-$i"
+    err=$(build "bad-ssh-$i" 2>&1 || true)
+    for secret in not-base64 "$A_DATA" "$B_DATA" fake-a-q7x9; do
+        ! grep -qF -- "$secret" <<<"$err" || fail "error message of bad-ssh-$i echoes part of SSH_KEYS ($secret)"
+    done
+done
+i=0
+for good in '' "$FAKE_SSH_A" "$FAKE_SSH_E" "$FAKE_SSH_R" "$FAKE_SSH_A;$FAKE_SSH_B" \
+    "  $FAKE_SSH_A  ;  $FAKE_SSH_B  " "$(ssh_field "$FAKE_SSH_A" 1) $A_DATA" \
+    "$(ssh_field "$FAKE_SSH_A" 1) $A_DATA two words and (dots.)"; do
+    i=$((i + 1))
+    variant "good-ssh-$i" "s|^SSH_KEYS=.*|SSH_KEYS='$good'|"
+    build --render-only "good-ssh-$i" "$SCRATCH/good-ssh-$i" 2>/dev/null ||
+        fail "SSH_KEYS case $i was rejected"
+done
+
 # R48: ROUTER_NAME is required, 1 to 20 characters, ASCII letters and digits, space and -, and starts
 # with a letter or digit; anything else stops the build, and the error never shows the value
 variant no-name '/^ROUTER_NAME=/d'
@@ -292,6 +342,7 @@ sed -e "s/^\(WWAN_[A-Z]*\)=.*/\1=''/" -e "s/^LTE_BANDS=.*/LTE_BANDS=''/" \
     -e "s/^\(WG_[A-Z_]*\)=.*/\1=''/" -e "s/^WG_ENABLED=''/WG_ENABLED='0'/" \
     -e "s/^\(TG_[A-Z_]*\)=.*/\1=''/" -e "s/^LOW_BALANCE=.*/LOW_BALANCE=''/" \
     -e "s/^HC_PING_URL=.*/HC_PING_URL=''/" -e "s/^SMS_ADMINS=.*/SMS_ADMINS=''/" \
+    -e "s/^SSH_KEYS=.*/SSH_KEYS=''/" \
     "$P/fake-full.conf" >"$P/blanks.conf"
 build --render-only blanks "$SCRATCH/blanks" 2>/dev/null || fail "allowed empty values were rejected"
 grep -qx "P_SMS_ADMINS=''" "$SCRATCH/blanks/etc/uci-defaults/zz-lw-config" ||

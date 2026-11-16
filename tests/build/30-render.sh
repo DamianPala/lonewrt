@@ -32,8 +32,13 @@ old_paths=$(find "$D" "$F" -mindepth 1 -printf '%P\n' | grep -E '(^|[-_./])rh([-
 # File modes: secrets and the crontab 0600, the uci-defaults script 0700, scripts executable
 for f in authorized_keys dropbear_ed25519_host_key dropbear_rsa_host_key; do
     [ "$(stat -c %a "$F/etc/dropbear/$f")" = 600 ] || fail "etc/dropbear/$f is not 0600"
+done
+for f in dropbear_ed25519_host_key dropbear_rsa_host_key; do
     cmp -s "$F/etc/dropbear/$f" "$FIX/fake-full/$f" || fail "etc/dropbear/$f differs from the profile"
 done
+# R61: the SSH_KEYS of the fake profile first, then the line of the profile folder's file
+cmp -s "$F/etc/dropbear/authorized_keys" "$FIX/fake-full-authorized_keys" ||
+    fail "etc/dropbear/authorized_keys is not SSH_KEYS plus the profile's file"
 [ "$(stat -c %a "$D/$UD")" = 700 ] || fail "$UD is not 0700"
 [ "$(stat -c %a "$D/etc/crontabs/root")" = 600 ] || fail "crontab is not 0600"
 [ "$(stat -c %a "$D/etc/init.d/lw-firstboot")" = 755 ] || fail "lw-firstboot is not executable"
@@ -80,6 +85,42 @@ printf '1.2.3-rc.1\n' >"$SCRATCH/VERSION"
 LW_VERSION_FILE=$SCRATCH/VERSION "$FW/build.sh" --render-only generic "$SCRATCH/ver-out" 2>"$SCRATCH/ver-err"
 grep -qE '^render: profile generic, version 1\.2\.3-rc\.1, src_sha256 [0-9a-f]{12}$' "$SCRATCH/ver-err" ||
     fail "render summary lacks the version: $(cat "$SCRATCH/ver-err")"
+
+# R61 scenario: SSH_KEYS with two keys (A, B), the folder's authorized_keys with one of them (B, under
+# another comment) and a third (C, behind an options prefix): three keys once each, SSH_KEYS first;
+# the folder file's own lines stay as they are, and the comment does not make a key another key
+sed "s|^SSH_KEYS=.*|SSH_KEYS='$FAKE_SSH_A;$FAKE_SSH_B'|" "$P/fake-full.conf" >"$P/ssh-merge.conf"
+mkdir -p "$P/ssh-merge"
+C_LINE="from=\"10.1.1.1\" $FAKE_SSH_C"
+printf '%s other-comment\n%s\n' "$(ssh_field "$FAKE_SSH_B" 1) $(ssh_field "$FAKE_SSH_B" 2)" "$C_LINE" \
+    >"$P/ssh-merge/authorized_keys"
+LW_PROFILES=$P "$FW/build.sh" --render-only ssh-merge "$SCRATCH/ssh-merge" 2>/dev/null
+AK=$SCRATCH/ssh-merge/etc/dropbear/authorized_keys
+[ "$(cat "$AK")" = "$FAKE_SSH_A"$'\n'"$FAKE_SSH_B"$'\n'"$C_LINE" ] ||
+    fail "R61: merged authorized_keys is not A, B, C once each in that order: $(cut -c1-60 "$AK")"
+[ "$(stat -c %a "$AK" "$SCRATCH/ssh-merge/etc/dropbear")" = $'600\n700' ] ||
+    fail "R61: merged authorized_keys is not 0600 in a 0700 directory"
+# R61: the same key twice in SSH_KEYS (comment ignored), and every type, give each key once
+sed "s|^SSH_KEYS=.*|SSH_KEYS=' $FAKE_SSH_R ; $FAKE_SSH_E ; $(ssh_field "$FAKE_SSH_R" 1) $(ssh_field "$FAKE_SSH_R" 2) again'|" \
+    "$P/fake-full.conf" >"$P/ssh-types.conf"
+LW_PROFILES=$P "$FW/build.sh" --render-only ssh-types "$SCRATCH/ssh-types" 2>/dev/null
+[ "$(head -n 2 "$SCRATCH/ssh-types/etc/dropbear/authorized_keys")" = "$FAKE_SSH_R"$'\n'"$FAKE_SSH_E" ] ||
+    fail "R61: ssh-rsa and ecdsa keys, trimmed around the ';', are not written as given"
+[ "$(wc -l <"$SCRATCH/ssh-types/etc/dropbear/authorized_keys")" = 2 ] ||
+    fail "R61: a key repeated in SSH_KEYS under another comment was written twice"
+# R61: SSH_KEYS alone, without a folder file, makes the file; both empty make none (generic above)
+sed "s|^SSH_KEYS=.*|SSH_KEYS='$FAKE_SSH_B'|" "$P/generic.conf" >"$P/ssh-only.conf"
+LW_PROFILES=$P "$FW/build.sh" --render-only ssh-only "$SCRATCH/ssh-only" 2>/dev/null
+[ "$(cat "$SCRATCH/ssh-only/etc/dropbear/authorized_keys")" = "$FAKE_SSH_B" ] ||
+    fail "R61: SSH_KEYS alone did not give the image its key"
+[ "$(ls "$SCRATCH/ssh-only/etc/dropbear")" = authorized_keys ] || fail "R61: SSH_KEYS alone made other files"
+# R61: with SSH_KEYS empty the folder's file is copied as it is, comments, blank lines and repeats included
+sed "s|^SSH_KEYS=.*|SSH_KEYS=''|" "$P/fake-full.conf" >"$P/ssh-none.conf"
+mkdir -p "$P/ssh-none"
+printf '# mine\n\n%s\n%s\n' "$FAKE_SSH_B" "$FAKE_SSH_B" >"$P/ssh-none/authorized_keys"
+LW_PROFILES=$P "$FW/build.sh" --render-only ssh-none "$SCRATCH/ssh-none" 2>/dev/null
+cmp -s "$SCRATCH/ssh-none/etc/dropbear/authorized_keys" "$P/ssh-none/authorized_keys" ||
+    fail "R61: an empty SSH_KEYS changed the folder's authorized_keys"
 
 # R33: the fake profile sets both passwords, so it gets no card; the generic one gets a 0600 card
 [ ! -e "$F-passwords.txt" ] || fail "a profile with both passwords got a card"

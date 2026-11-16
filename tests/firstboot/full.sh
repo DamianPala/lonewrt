@@ -62,9 +62,12 @@ fb_expect lonewrt.notify.sms_admins "+15550100123,15550100456"
     lw_fail "the SMS admins are outside /etc/config/lonewrt"
 
 grep -qF "root:\$6\$fakesaltq7x9\$" /etc/shadow || lw_fail "root hash is not the profile's"
-for f in authorized_keys dropbear_ed25519_host_key dropbear_rsa_host_key; do
+for f in dropbear_ed25519_host_key dropbear_rsa_host_key; do
     cmp -s "/etc/dropbear/$f" "/fw/tests/build/fixtures/fake-full/$f" || lw_fail "/etc/dropbear/$f"
 done
+# R61: the profile's SSH_KEYS, then the file of the profile folder
+cmp -s /etc/dropbear/authorized_keys /fw/tests/build/fixtures/fake-full-authorized_keys ||
+    lw_fail "/etc/dropbear/authorized_keys"
 
 # R8a for the full profile too
 first=$(fb_state)

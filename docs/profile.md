@@ -5,7 +5,8 @@ A profile is `profiles/<name>.conf`: lines `KEY='value'` (single quotes, no `'` 
 Every key of `profiles/generic.conf` must be present.
 A missing key, an unknown key, an empty value where none is allowed or a malformed value stops the build with the key's name, never its value.
 
-SSH keys go in `profiles/<name>/` as `authorized_keys`, `dropbear_ed25519_host_key` and `dropbear_rsa_host_key`, each optional.
+Public SSH keys for root's key login go in the profile key `SSH_KEYS`, so a profile can carry them without a folder.
+`profiles/<name>/` may hold `authorized_keys`, `dropbear_ed25519_host_key` and `dropbear_rsa_host_key`, each optional; the image's `authorized_keys` has the keys of `SSH_KEYS` and then the lines of the folder's file that are not among them.
 
 | Key | Meaning | May be empty |
 |---|---|---|
@@ -15,6 +16,7 @@ SSH keys go in `profiles/<name>/` as `authorized_keys`, `dropbear_ed25519_host_k
 | `WIFI_CHANNEL_2G`, `WIFI_HTMODE_2G`, `WIFI_CHANNEL_5G`, `WIFI_HTMODE_5G` | `auto` or a channel, and `HT20`, `HT40`, `VHT80`... | no |
 | `ROOT_PASSWORD` | the root password in clear text, 8 to 63 printable ASCII characters; the build hashes it and the image holds only the hash. Set this or `ROOT_PASSWORD_HASH`, not both | drawn |
 | `ROOT_PASSWORD_HASH` | crypt(3) hash, e.g. from `openssl passwd -6`. Set this or `ROOT_PASSWORD`, not both | drawn |
+| `SSH_KEYS` | public SSH keys of the people who may log in as root, separated by `;`; each is `<type> <base64 data> [comment]` with the type `ssh-ed25519`, `ssh-rsa` or `ecdsa-sha2-nistp256`, e.g. `ssh-ed25519 AAAAC3...u1x laptop;ssh-ed25519 AAAAC3...Qk2 phone`. Spaces around `;` are dropped; an empty entry (`;;`, a trailing `;`) or an entry that is not a key of its type stops the build, naming the key and the entry's number. The same key (type and data, whatever the comment) is written once, also when `authorized_keys` in the profile's folder has it; options such as `from="..."` belong in that file, which is copied as it is. Not a secret | yes: only the keys of the profile's folder, if any |
 | `WWAN_APN`, `WWAN_AUTH`, `WWAN_USERNAME`, `WWAN_PASSWORD` | LTE access; empty APN lets the network assign one; auth is `none`, `pap`, `chap` or `both` | yes |
 | `LTE_BANDS` | comma list of LTE bands to lock, e.g. `1,3,20` | yes: bands untouched |
 | `WG_ENABLED` | `1` turns the WireGuard client on; needs the four keys marked below | no |

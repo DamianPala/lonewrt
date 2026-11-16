@@ -127,5 +127,8 @@ grep -qxF '*/5 * * * * /usr/sbin/lw-heartbeat' "$R/etc/crontabs/root" ||
 for f in authorized_keys dropbear_ed25519_host_key dropbear_rsa_host_key; do
     [ "$(stat -c %a "$R/etc/dropbear/$f")" = 600 ] || fail "/etc/dropbear/$f is not 0600 in the image"
 done
+# R61: the image's authorized_keys is the profile's SSH_KEYS and then the folder's file
+cmp -s "$R/etc/dropbear/authorized_keys" "$FIX/fake-full-authorized_keys" ||
+    fail "R61: image authorized_keys is not SSH_KEYS plus the profile's file"
 [ "$(stat -c %a "$I/fake-full-sysupgrade.bin")" = 600 ] || fail "image file is not 0600"
 echo "ok: $(stat -c %s "$DI/generic-sysupgrade.bin") bytes (scratch image, removed with the test)"
