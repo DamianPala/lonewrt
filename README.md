@@ -83,7 +83,7 @@ Then flash, in one of two ways.
 3. **Untick "Keep settings"** (the wording differs a little between versions). Without it the router takes everything from your profile, as after a button reset. This is what `sysupgrade -n` does in the commands of the Quick start.
 4. Click **Continue** and leave the router alone. It is back after about 100 seconds, with LTE and the tunnel about 70 seconds later. Use a cable if you can, because the Wi-Fi drops while it flashes.
 
-Tried from OpenWrt 25.12.6. <!-- verify: LuCI flash pending, SPEC Unverified -->
+Not yet tried on an MF289F: the steps above are LuCI's standard flash, which is meant to do what `sysupgrade -n` does. <!-- verify: LuCI flash pending, SPEC Unverified -->
 LuCI refuses an image that does not fit the router, but this model has no failsafe for a broken one: the way back is opening the case and a serial console ([docs/development.md](docs/development.md), "Recovery"). Flash only the image you built here.
 
 ### Flash with a coding agent
