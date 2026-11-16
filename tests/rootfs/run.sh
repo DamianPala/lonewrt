@@ -21,7 +21,10 @@ scratch=$(mktemp -d)
 trap 'rm -rf -- "$scratch"' EXIT
 root_args "$ROOTFS" "$scratch"
 
-bwrap "${ROOT_ARGS[@]}" \
+# The GitHub runner starts its steps with SIGPIPE ignored, and an ignored signal passes through
+# exec, so `yes | head` in a test never ended there. The router's shell has the default; so does
+# the sandbox (a shell cannot undo an ignore it inherited, env can).
+env --default-signal=PIPE bwrap "${ROOT_ARGS[@]}" \
     --dev /dev "${port[@]}" --proc /proc --tmpfs /tmp \
     --ro-bind "$FW" /fw \
     --unshare-user --uid 0 --gid 0 --unshare-net --unshare-pid --die-with-parent \
