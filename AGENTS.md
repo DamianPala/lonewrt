@@ -9,7 +9,7 @@ OpenWrt 25.12.6 firmware for the ZTE MF289F, built with the official ImageBuilde
 `SPEC.md` is the source of truth: part 1 says what the image does, part 2 holds the requirements (`R14`), decisions (`D3`) and scenarios (`S4`) that code comments and test names cite.
 When code and spec disagree, say so; do not silently change either.
 
-Layout, tests and the upgrade path: `docs/development.md`.
+Layout, tests and the upgrade path: `docs/development.md`. The agent skill for building and flashing a person's image: [`skills/lonewrt/SKILL.md`](skills/lonewrt/SKILL.md).
 Profile keys: `docs/profile.md`. Operator presets and how to write one: `docs/operators.md`.
 
 ## Commands
@@ -19,6 +19,7 @@ Profile keys: `docs/profile.md`. Operator presets and how to write one: `docs/op
 ./build.sh generic                       # the secret-free image, image/generic-sysupgrade.bin
 ./build.sh --render-only generic tests/.out/overlay   # rendered overlay only, seconds, no ImageBuilder
 tests/build/run.sh --quick               # profile checks, sh -n, rendered overlays, first boot
+tests/skill/run.sh                       # skills/lonewrt/SKILL.md exists and README.md and AGENTS.md link to it, seconds
 tests/run-all.sh                         # all rootfs tests, 6 at once (-j N or LW_JOBS), one PASS/FAIL line each
 tests/ci/run.sh                          # ci/github-run.sh (the build on GitHub) on the host with stand-ins, seconds
 tests/configurator/run.sh                # configurator/index.html: static checks, then a headless browser (agent-browser), seconds
@@ -34,13 +35,13 @@ During work run the area you changed; run everything (`tests/run-all.sh`, `tests
 
 ## Rules
 
-- **Private data.** `profiles/*` except `generic.conf`, `image/`, `work/` and `tests/build/private-values.txt` are the owner's and git ignores them. Never read, print or quote a private profile, a password card or a token. Report a profile problem by key name only; `build.sh` already does.
+- **Private data.** `profiles/*` except `generic.conf`, `image/`, `work/` and `tests/build/private-values.txt` are the owner's and git ignores them. Never read, print or quote a private profile, a password card or a token. Report a profile problem by key name only; `build.sh` already does. This holds for work on the code. The one exception is the agent skill [`skills/lonewrt/SKILL.md`](skills/lonewrt/SKILL.md), run at the person's request to build and flash their image: it uses the person's profile file but never shows a secret value (SPEC R59c, R59f, D115).
 - **Test data stays fake.** Phone numbers, tokens, keys, SMS texts and device names in `tests/` are made up. Keep them that way; never paste a real value, even redacted.
 - **Profiles and presets are data, not code.** `build.sh` parses `KEY='value'`; `operators.sh` parses a preset with a strict allowlist. Do not add `source`, `eval` or shell expansion to either path.
 - **Modem access.** The image's scripts talk to the modem only with AT commands through `sms_tool` under `/tmp/lw-at.lock`, never raw reads of the port and never QMI. The one exception is `lw-linkwatch` (SPEC R49a, D80): it runs `uqmi` only while netifd shows `wwan` up, every call with `-t` and a timeout. Keep it so.
 - **Busybox shell.** Everything under `src/files/` runs on the router's busybox `ash`: POSIX sh, no bashisms, no GNU-only flags. The rootfs tests catch most of it; `shellcheck -s sh` catches the rest. Variables shared between the sourced `lw/*.sh` files show up there as unused; everything else it reports is real.
 - **Comments say why,** and cite the spec id (`# R19: the limit counts restarts, not cycles`). No comments that narrate what the next line does.
-- **Flashing and rebooting a router** are the owner's actions. Produce the image and the command; do not run `sysupgrade` or `reboot` on a router you were not told to.
+- **Flashing and rebooting a router** are the owner's actions. Produce the image and the command; do not run `sysupgrade` or `reboot` on a router you were not told to. When the person asks you to build and flash their image, follow [`skills/lonewrt/SKILL.md`](skills/lonewrt/SKILL.md).
 - **No new background jobs** on the router (cron entries, loops, services) without the owner's word; the image already has its cron and the spec lists it.
 
 ## Adding or changing behaviour
