@@ -25,7 +25,7 @@ tests=()
 for t in "$FW"/tests/${1:-*}/*.sh; do
     [ -f "$t" ] || continue
     rel=${t#"$FW"/}
-    case $rel in tests/rootfs/* | tests/vm/* | tests/build/* | tests/ci/* | tests/hostnet/*) continue ;; esac
+    case $rel in tests/rootfs/* | tests/vm/* | tests/build/* | tests/ci/* | tests/configurator/* | tests/hostnet/*) continue ;; esac
     tests+=("$rel")
 done
 host_tests=()

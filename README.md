@@ -57,6 +57,7 @@ To go back, flash any other OpenWrt sysupgrade image the same way and restore th
 
 This model has no failsafe for a broken image: the way back is opening the case and a serial console ([docs/development.md](docs/development.md), "Recovery"). That is why `sysupgrade -T` checks the image before the flash. The image also keeps the official kernel and only adds packages and files on top.
 
+You can also write the profile in the configurator, a web page in one file: open `configurator/index.html` from disk in a browser (it sends nothing); a hosted copy will be on GitHub Pages.
 Reference for the profile keys: [docs/profile.md](docs/profile.md).
 Balance checks for your operator: [docs/operators.md](docs/operators.md).
 

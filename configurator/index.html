@@ -1,0 +1,539 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- R58, D104: the browser itself refuses any request this page might make: nothing may load
+     (default-src) and no script may call out (connect-src falls back to default-src). Inline code is
+     all there is. The blob of the Save button is a download, which this policy does not cover. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; form-action 'none'; base-uri 'none'">
+<meta name="referrer" content="no-referrer">
+<link rel="icon" href="data:,">
+<title>lonewrt profile configurator</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #f6f7f9; --card: #ffffff; --fg: #1b1f24; --muted: #5a6370; --border: #c9cfd8;
+  --accent: #0b5cad; --accent-fg: #ffffff;
+  --err: #b3261e; --err-bg: #fdecea; --note: #7a4b00; --note-bg: #fff4dc; --new: #0b5cad; --new-bg: #e6f0fb;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171b; --card: #1d2228; --fg: #e6e9ed; --muted: #a3acb8; --border: #3a424c;
+    --accent: #6cb0f5; --accent-fg: #0d1117;
+    --err: #ff9b93; --err-bg: #3b1d1b; --note: #f0c36b; --note-bg: #3a2e12; --new: #8fc3f7; --new-bg: #172a40;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, sans-serif; }
+main { max-width: 46rem; margin: 0 auto; padding: 1rem 16px 4rem; }
+h1 { font-size: 1.5rem; margin: 0.5rem 0 0.25rem; }
+h2 { font-size: 1.1rem; margin: 0; }
+p { margin: 0.4rem 0; }
+code { font: 0.9em ui-monospace, monospace; overflow-wrap: anywhere; }
+a { color: var(--accent); }
+.version { color: var(--muted); margin: 0; }
+.privacy { border-left: 4px solid var(--accent); background: var(--card); padding: 0.5rem 0.75rem; margin: 0.75rem 0; }
+.panel, fieldset { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem 1rem; margin: 1rem 0; min-width: 0; }
+legend { font-weight: 600; font-size: 1.1rem; padding: 0 0.4rem; }
+.intro, .help { color: var(--muted); font-size: 0.9rem; }
+.field { padding: 0.75rem 0; border-top: 1px solid var(--border); }
+.field:first-of-type { border-top: 0; }
+label { display: block; font-weight: 600; }
+label.inline { display: inline; font-weight: 400; }
+.tag { margin-left: 0.5rem; font-size: 0.75rem; font-weight: 400; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 0 0.3rem; }
+input, select, textarea { width: 100%; font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 0.4rem 0.5rem; margin-top: 0.25rem; }
+textarea { font-family: ui-monospace, monospace; font-size: 0.9rem; }
+input[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--err); border-width: 2px; }
+.msg { margin: 0.4rem 0 0; padding: 0.3rem 0.5rem; border-radius: 6px; font-size: 0.9rem; }
+.msg[hidden] { display: none; }
+.msg.err { background: var(--err-bg); color: var(--err); }
+.msg.note { background: var(--note-bg); color: var(--note); }
+.msg.new { background: var(--new-bg); color: var(--new); }
+button { font: inherit; padding: 0.45rem 0.9rem; border-radius: 6px; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-fg); cursor: pointer; }
+button.plain { background: transparent; color: var(--accent); }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+.row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0.5rem 0; }
+.row input[type="text"] { width: auto; flex: 1 1 10rem; margin: 0; }
+details { margin: 0.5rem 0; }
+summary { cursor: pointer; font-weight: 600; }
+ol { padding-left: 1.4rem; }
+#out { min-height: 12rem; }
+#load-report ul { margin: 0.2rem 0; padding-left: 1.2rem; }
+</style>
+</head>
+<body>
+<main>
+<h1>lonewrt profile configurator</h1>
+<p class="version">For lonewrt release <strong id="version"></strong>. Start your run on GitHub with this version.</p>
+<p class="privacy"><strong>Everything stays in this page.</strong> It sends nothing, loads nothing from outside and keeps nothing in the browser: no cookies, no browser storage, so a reload empties the form. The form holds secrets (Wi-Fi password, tokens, keys), so close the tab when you are done.</p>
+<noscript><p class="msg err">This page needs JavaScript to build the profile text. It still sends nothing.</p></noscript>
+
+<section class="panel" aria-labelledby="load-title">
+  <h2 id="load-title">Start from an existing profile (optional)</h2>
+  <p class="help">Paste the text of a profile or open a saved <code>.conf</code> file. Its values go into the form, a key it lacks gets the default of this release and is marked <em>new</em>, and a key this release no longer has is named as left out. Only <code>KEY='value'</code> lines are read; nothing is run.</p>
+  <label for="load-text">Profile text</label>
+  <textarea id="load-text" rows="4" autocomplete="off" spellcheck="false" autocapitalize="off"></textarea>
+  <div class="row">
+    <button type="button" id="load-btn">Load the text</button>
+    <button type="button" class="plain" id="reset-btn">Back to the defaults</button>
+  </div>
+  <label for="load-file">Or open a saved .conf file</label>
+  <input type="file" id="load-file" accept=".conf,.txt,text/plain" autocomplete="off">
+  <div id="load-report" role="status" aria-live="polite"></div>
+</section>
+
+<details id="tg-help">
+  <summary>How to get the Telegram bot token and the chat ID</summary>
+  <p class="help">You do these steps yourself in Telegram and in your own browser. This page never contacts Telegram.</p>
+  <ol>
+    <li>In Telegram open a chat with <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer">@BotFather</a> (the real one has a blue tick). Send <code>/newbot</code>, then give the bot a name and a user name that ends in <code>bot</code>. BotFather replies with a token that looks like <code>123456789:AAH...</code>. Put it into <code>TG_BOT_TOKEN</code>. Whoever has the token controls the bot, so keep it secret.</li>
+    <li>Open a chat with your new bot (BotFather's reply links to it) and send it any message, for example <code>/start</code>. For a group instead: add the bot to the group and send a command there, for example <code>/start@your_bot_name</code>.</li>
+    <li>In your own browser open the address <code>https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</code> with your token in place of <code>&lt;TOKEN&gt;</code>. The reply is text that holds <code>"chat":{"id":123456789</code>. That number is the chat ID for <code>TG_CHAT_ID</code>; a group's ID is negative, for example <code>-1001234567890</code>. When <code>result</code> is empty, send the bot another message and reload.</li>
+  </ol>
+  <p class="help">The address contains your token: do not share it or open it on a computer that is not yours. The bot answers only in the chat whose ID you give, and anyone in that chat can read the Wi-Fi password and restart the router.</p>
+</details>
+
+<div id="groups"></div>
+
+<section class="panel" aria-labelledby="out-title">
+  <h2 id="out-title">Your profile</h2>
+  <p class="help">One <code>KEY='value'</code> line per key, in the order of <code>generic.conf</code>. Copy it into the GitHub secret <code>LW_PROFILE</code>, or save it as <code>&lt;name&gt;.conf</code> and keep that file: it holds your passwords, and this page of a later release loads it.</p>
+  <p id="out-status" class="msg" role="status" aria-live="polite"></p>
+  <textarea id="out" rows="14" readonly spellcheck="false" autocomplete="off" aria-label="Profile text"></textarea>
+  <div class="row">
+    <button type="button" id="copy-btn">Copy the text</button>
+    <label for="name" class="inline">File name</label>
+    <input type="text" id="name" value="router" autocomplete="off" spellcheck="false" autocapitalize="off" aria-describedby="name-note">
+    <span>.conf</span>
+    <button type="button" id="save-btn">Save as a file</button>
+  </div>
+  <p id="name-note" class="msg note" hidden></p>
+  <p id="copy-status" class="help" role="status" aria-live="polite"></p>
+  <p class="help">The text stays on your clipboard after copying: copy something else once you have pasted it.</p>
+</section>
+</main>
+
+<script type="application/json" id="lw-data">
+{
+"groups": [
+  {"id": "basics", "title": "Basics", "intro": "The router's name, its address in your network and its time zone."},
+  {"id": "wifi", "title": "Wi-Fi", "intro": "One network on both bands, 2.4 and 5 GHz."},
+  {"id": "passwords", "title": "Passwords", "intro": "The root password opens the router's settings page (LuCI) and SSH. Set it in clear text or as a hash, not both."},
+  {"id": "ssh", "title": "SSH keys", "intro": "Public keys of the people who may log in to the router as root. Not a secret."},
+  {"id": "mobile", "title": "Mobile data", "intro": "The SIM card's LTE connection. The defaults let the network assign the settings."},
+  {"id": "wireguard", "title": "WireGuard", "intro": "A tunnel for remote access to the router. It needs a WireGuard server of your own, which the image never changes."},
+  {"id": "telegram", "title": "Telegram & alerts", "intro": "SMS forwarding, balance alerts and a bot you use from a chat. The bot needs both the token and the chat ID.", "slot": "tg-help"},
+  {"id": "sms", "title": "SMS control", "intro": "Phone numbers that may control the router by SMS, and the name that starts its SMS replies."},
+  {"id": "advanced", "title": "Advanced", "intro": "The defaults are right for most routers."}
+],
+"fields": [
+  {"key": "HOSTNAME", "group": "basics", "default": "lte-router", "empty": false,
+   "help": "The router's name on the network: letters, digits and `-`."},
+  {"key": "LAN_IP", "group": "basics", "default": "192.168.1.1", "empty": false,
+   "help": "The router's address in its network (a /24 network). The settings page (LuCI) is at `https://` followed by this address."},
+  {"key": "TIMEZONE", "group": "basics", "default": "CET-1CEST,M3.5.0,M10.5.0/3", "empty": false,
+   "help": "The time zone as a POSIX string, for example `CET-1CEST,M3.5.0,M10.5.0/3` for Central Europe. It goes together with `ZONENAME`."},
+  {"key": "ZONENAME", "group": "basics", "default": "Europe/Warsaw", "empty": false,
+   "help": "The name of the time zone, for example `Europe/Warsaw`."},
+
+  {"key": "WIFI_SSID", "group": "wifi", "default": "OpenWrt-LTE", "empty": false,
+   "help": "The name of the Wi-Fi network, 1 to 32 characters."},
+  {"key": "WIFI_KEY", "group": "wifi", "default": "", "empty": true, "secret": true,
+   "help": "The Wi-Fi password, 8 to 63 characters. On Linux, an empty key is drawn by the build and written to a password card. A run on GitHub needs it set."},
+  {"key": "WIFI_COUNTRY", "group": "wifi", "default": "PL", "empty": false,
+   "help": "The two-letter regulatory country of the place the router runs in, for example `PL`, `DE` or `ME`. Set it before building."},
+  {"key": "WIFI_CHANNEL_2G", "group": "wifi", "default": "auto", "empty": false, "suggest": ["auto"],
+   "help": "`auto` or a channel number for the 2.4 GHz band."},
+  {"key": "WIFI_HTMODE_2G", "group": "wifi", "default": "HT20", "empty": false, "suggest": ["HT20", "HT40"],
+   "help": "The channel width mode of the 2.4 GHz band: `HT20`, `HT40`..."},
+  {"key": "WIFI_CHANNEL_5G", "group": "wifi", "default": "auto", "empty": false, "suggest": ["auto"],
+   "help": "`auto` or a channel number for the 5 GHz band."},
+  {"key": "WIFI_HTMODE_5G", "group": "wifi", "default": "VHT80", "empty": false, "suggest": ["HT20", "HT40", "VHT20", "VHT40", "VHT80"],
+   "help": "The channel width mode of the 5 GHz band: `HT20`, `HT40`, `VHT80`..."},
+
+  {"key": "ROOT_PASSWORD", "group": "passwords", "default": "", "empty": true, "secret": true,
+   "help": "The root password in clear text, 8 to 63 printable ASCII characters. The build hashes it and the image holds only the hash. Set this or `ROOT_PASSWORD_HASH`, not both. With both empty the build draws a password, but a run on GitHub needs one of them."},
+  {"key": "ROOT_PASSWORD_HASH", "group": "passwords", "default": "", "empty": true, "secret": true,
+   "help": "The root password as a crypt(3) hash, for example from `openssl passwd -6`. Set this or `ROOT_PASSWORD`, not both."},
+
+  {"key": "SSH_KEYS", "group": "ssh", "default": "", "empty": true, "area": true,
+   "help": "Public SSH keys of the people who may log in as root, separated by `;` on one line. Each is `<type> <base64 data> [comment]` with the type `ssh-ed25519`, `ssh-rsa` or `ecdsa-sha2-nistp256`, for example `ssh-ed25519 AAAAC3...u1x laptop;ssh-ed25519 AAAAC3...Qk2 phone`. An empty entry (`;;`, a trailing `;`) or an entry that is not a key of its type stops the build. Empty: no key login."},
+
+  {"key": "WWAN_APN", "group": "mobile", "default": "", "empty": true,
+   "help": "The operator's APN. Empty lets the network assign one."},
+  {"key": "WWAN_AUTH", "group": "mobile", "default": "", "empty": true, "options": ["", "none", "pap", "chap", "both"],
+   "help": "The login type of the APN: `none`, `pap`, `chap` or `both`. Empty: not set."},
+  {"key": "WWAN_USERNAME", "group": "mobile", "default": "", "empty": true,
+   "help": "The APN user name, if the operator wants one."},
+  {"key": "WWAN_PASSWORD", "group": "mobile", "default": "", "empty": true, "secret": true,
+   "help": "The APN password, if the operator wants one."},
+  {"key": "LTE_BANDS", "group": "mobile", "default": "", "empty": true,
+   "help": "A comma list of LTE bands to lock, for example `1,3,20`. Empty leaves the modem's bands untouched."},
+
+  {"key": "WG_ENABLED", "group": "wireguard", "default": "0", "empty": false, "options": ["0", "1"],
+   "labels": {"0": "0 (off)", "1": "1 (on)"},
+   "help": "`1` turns the WireGuard client on and needs the four keys below (`WG_PRIVATE_KEY`, `WG_ADDRESS`, `WG_PEER_PUBLIC_KEY`, `WG_ENDPOINT_HOST`). With `0` the tunnel is prepared but stays off."},
+  {"key": "WG_PRIVATE_KEY", "group": "wireguard", "default": "", "empty": true, "secret": true,
+   "help": "The router's WireGuard private key (44 characters ending in `=`). Required when `WG_ENABLED` is `1`."},
+  {"key": "WG_ADDRESS", "group": "wireguard", "default": "", "empty": true,
+   "help": "The router's address in the tunnel: a space-separated CIDR list, for example `10.0.0.2/32`. Required when `WG_ENABLED` is `1`."},
+  {"key": "WG_PEER_PUBLIC_KEY", "group": "wireguard", "default": "", "empty": true,
+   "help": "The public key of the WireGuard server (44 characters ending in `=`). Required when `WG_ENABLED` is `1`."},
+  {"key": "WG_ENDPOINT_HOST", "group": "wireguard", "default": "", "empty": true,
+   "help": "The host name or address of the WireGuard server. Required when `WG_ENABLED` is `1`."},
+  {"key": "WG_ENDPOINT_PORT", "group": "wireguard", "default": "", "empty": true,
+   "help": "The server's port."},
+  {"key": "WG_ALLOWED_IPS", "group": "wireguard", "default": "", "empty": true,
+   "help": "A space-separated CIDR list of the networks reached through the tunnel."},
+  {"key": "WG_KEEPALIVE", "group": "wireguard", "default": "", "empty": true,
+   "help": "The keepalive interval in seconds."},
+
+  {"key": "TG_BOT_TOKEN", "group": "telegram", "default": "", "empty": true, "secret": true,
+   "help": "The token of your Telegram bot, from @BotFather (steps above). With the chat ID set, SMS forwarding, alerts and the bot commands are on; both empty means no notifications."},
+  {"key": "TG_CHAT_ID", "group": "telegram", "default": "", "empty": true,
+   "help": "The ID of your chat or group with the bot (steps above). A group's ID is negative, for example `-1001234567890`."},
+  {"key": "LOW_BALANCE", "group": "telegram", "default": "", "empty": true,
+   "help": "The balance threshold in the currency of the SIM's operator preset, for example `7.50`. It turns on the weekly balance SMS and the low-balance alert, needs the bot, and works only for an operator the image has a preset for."},
+  {"key": "HC_PING_URL", "group": "telegram", "default": "", "empty": true, "secret": true,
+   "help": "The https ping address of a check at healthchecks.io, which the router calls every 5 minutes, so that you hear when it stops. Empty: no heartbeat."},
+
+  {"key": "SMS_ADMINS", "group": "sms", "default": "", "empty": true, "secret": true,
+   "help": "The phone numbers that may control the router by SMS (`status`, `reboot`, `help`, any case): a comma list, each number with an optional `+` and 6 to 15 digits, no spaces, for example `+15550100123,15550100456`. Write them in international form. Empty: no SMS control."},
+  {"key": "SMS_REBOOT_MAX_AGE_MIN", "group": "sms", "default": "10", "empty": false,
+   "help": "An SMS `reboot` older than this many minutes is refused. A whole number."},
+  {"key": "SMS_REBOOT_MAX_PER_DAY", "group": "sms", "default": "5", "empty": false,
+   "help": "At most this many restarts by SMS in 24 hours. A whole number."},
+  {"key": "ROUTER_NAME", "group": "sms", "default": "Router", "empty": false,
+   "help": "The router's name at the start of its SMS replies (`<name>: internet OK ...`), so that a reply reaching another router with this image is not answered back. 1 to 20 ASCII characters: letters, digits, space and `-`, starting with a letter or digit."},
+
+  {"key": "LINK_RESTART_AFTER_S", "group": "advanced", "default": "120", "empty": false,
+   "help": "The seconds without an answer to the pings after which the router restarts its mobile connection. A whole number from `120` to `900`. Shorter heals a dropped data session sooner but restarts on glitches that would pass alone."},
+  {"key": "LOG_LEVEL", "group": "advanced", "default": "info", "empty": false, "options": ["info", "debug"],
+   "help": "`info` or `debug`. `debug` is for a test period: a longer persistent log with every signal sample and every step of a data session repair. All of it is extra flash writes, so go back to `info` afterwards."}
+]
+}
+</script>
+
+<script>
+(function () {
+'use strict';
+
+// R56e, D123: the release this page belongs to; the test of tests/configurator compares it with VERSION.
+const LW_VERSION = '0.1.0';
+
+const DATA = JSON.parse(document.getElementById('lw-data').textContent);
+const GROUPS = DATA.groups;
+const FIELDS = DATA.fields;
+const $ = (id) => document.getElementById(id);
+const inputs = {};
+const parts = {};
+
+// R57, D100: only what no profile can hold. The rest (formats, ranges) is build.sh's to decide, so a
+// value it accepts is never refused here.
+const LINE_BREAK = /[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]/;
+function roughError(field, value) {
+  if (value.includes("'")) return "A ' cannot be in a value: the profile format has no way to write it.";
+  if (LINE_BREAK.test(value)) return 'A line break cannot be in a value: put it on one line.';
+  if (value === '' && !field.empty) return 'Required: build.sh refuses a profile with this value empty.';
+  return '';
+}
+
+// R57a, D112: not an error. build.sh on Linux draws the passwords, a run on GitHub refuses the profile.
+const RUN_NOTE = 'A run on GitHub refuses a profile with this empty (R53i), because a run draws no password. The text is still made: build.sh on Linux draws one.';
+function passwordNotes(values) {
+  const notes = {};
+  if (values.WIFI_KEY === '') notes.WIFI_KEY = 'WIFI_KEY is empty. ' + RUN_NOTE;
+  if (values.ROOT_PASSWORD === '' && values.ROOT_PASSWORD_HASH === '') {
+    const text = 'ROOT_PASSWORD and ROOT_PASSWORD_HASH are both empty. ' + RUN_NOTE;
+    notes.ROOT_PASSWORD = text;
+    notes.ROOT_PASSWORD_HASH = text;
+  }
+  return notes;
+}
+
+function el(tag, attrs, text) {
+  const node = document.createElement(tag);
+  for (const [name, value] of Object.entries(attrs || {})) node.setAttribute(name, value);
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+// `code` in the help texts becomes <code>; built with textContent, so no text is ever read as HTML.
+function richText(parent, text) {
+  text.split('`').forEach((piece, index) => {
+    if (index % 2) parent.append(el('code', {}, piece));
+    else parent.append(piece);
+  });
+}
+
+function buildInput(field) {
+  const id = 'f-' + field.key;
+  let input;
+  if (field.options) {
+    input = el('select', { id });
+    for (const value of field.options) {
+      const label = (field.labels && field.labels[value]) || value || '(empty)';
+      const option = el('option', { value }, label);
+      input.append(option);
+    }
+  } else if (field.area) {
+    input = el('textarea', { id, rows: '3' });
+  } else {
+    input = el('input', { id, type: 'text' });
+    // suggestions only: any text stays possible, build.sh judges it
+    if (field.suggest) input.setAttribute('list', id + '-list');
+  }
+  // Nothing here may be autofilled or remembered by the browser: a reload shows the defaults (R56c).
+  input.setAttribute('autocomplete', 'off');
+  input.setAttribute('autocapitalize', 'off');
+  input.setAttribute('autocorrect', 'off');
+  input.setAttribute('spellcheck', 'false');
+  input.addEventListener('input', refresh);
+  input.addEventListener('change', refresh);
+  return input;
+}
+
+function buildField(field) {
+  const wrap = el('div', { class: 'field', 'data-key': field.key });
+  const label = el('label', { for: 'f-' + field.key });
+  label.append(el('code', {}, field.key));
+  if (field.secret) label.append(el('span', { class: 'tag' }, 'secret'));
+  const input = buildInput(field);
+  const help = el('p', { class: 'help', id: 'h-' + field.key });
+  richText(help, field.help);
+  input.setAttribute('aria-describedby', 'h-' + field.key + ' m-' + field.key);
+  const msgs = el('div', { id: 'm-' + field.key });
+  const slots = {};
+  for (const kind of ['err', 'note', 'new']) {
+    slots[kind] = el('p', { class: 'msg ' + kind, hidden: '' });
+    msgs.append(slots[kind]);
+  }
+  wrap.append(label, input);
+  if (field.suggest) {
+    const list = el('datalist', { id: 'f-' + field.key + '-list' });
+    for (const value of field.suggest) list.append(el('option', { value }));
+    wrap.append(list);
+  }
+  wrap.append(help, msgs);
+  inputs[field.key] = input;
+  parts[field.key] = { slots, isNew: false };
+  return wrap;
+}
+
+function buildForm() {
+  const host = $('groups');
+  for (const group of GROUPS) {
+    const set = el('fieldset', { id: 'g-' + group.id });
+    set.append(el('legend', {}, group.title), el('p', { class: 'intro' }, group.intro));
+    if (group.slot) set.append($(group.slot));
+    for (const field of FIELDS.filter((f) => f.group === group.id)) set.append(buildField(field));
+    host.append(set);
+  }
+}
+
+function setValue(key, value) {
+  const input = inputs[key];
+  if (input.tagName === 'SELECT' && ![...input.options].some((o) => o.value === value)) {
+    // a loaded value the page does not offer stays as it is, so build.sh gets to judge it
+    input.append(el('option', { value, 'data-extra': '' }, value + ' (as loaded)'));
+  }
+  input.value = value;
+}
+
+function dropExtraOptions() {
+  for (const option of document.querySelectorAll('option[data-extra]')) option.remove();
+}
+
+function showMessage(slot, text) {
+  if (slot.textContent !== text) slot.textContent = text;
+  slot.hidden = text === '';
+}
+
+function currentValues() {
+  const values = {};
+  for (const field of FIELDS) values[field.key] = inputs[field.key].value;
+  return values;
+}
+
+function showNameNote(name) {
+  const note = $('name-note');
+  const bad = name !== '' && !/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(name);
+  note.hidden = !bad;
+  note.textContent = bad
+    ? 'Note: build.sh takes letters, digits, - and _ in a profile name, starting with a letter or digit. The file is saved as typed; rename it before you use it.'
+    : '';
+}
+
+function fileName() {
+  return ($('name').value.trim() || 'router') + '.conf';
+}
+
+function refresh() {
+  const values = currentValues();
+  const notes = passwordNotes(values);
+  const lines = [];
+  let problems = 0;
+  for (const field of FIELDS) {
+    const value = values[field.key];
+    const error = roughError(field, value);
+    const slots = parts[field.key].slots;
+    if (error) problems += 1;
+    showMessage(slots.err, error);
+    showMessage(slots.note, notes[field.key] || '');
+    showMessage(slots.new, parts[field.key].isNew ? 'New in this release: your profile had no line for it, so it holds the default.' : '');
+    inputs[field.key].setAttribute('aria-invalid', error ? 'true' : 'false');
+    lines.push(field.key + "='" + value + "'");
+  }
+  showNameNote($('name').value.trim());
+  // R57: a marked value means no text at all, so a text that build.sh must refuse is never handed out
+  $('out').value = problems ? '' : lines.join('\n') + '\n';
+  const status = $('out-status');
+  status.className = problems ? 'msg err' : 'msg';
+  status.textContent = problems
+    ? 'No text yet: fix the ' + problems + ' marked value' + (problems > 1 ? 's' : '') + ' above.'
+    : '';
+  status.hidden = !problems;
+  $('copy-btn').disabled = problems > 0;
+  $('save-btn').disabled = problems > 0;
+}
+
+// R56d, D109: the same line rule as render.py's parse_profile: KEY='value', comments and blank lines skipped.
+function parseProfile(text) {
+  const values = new Map();
+  const skipped = [];
+  const twice = [];
+  text.split(/\r\n|\n|\r/).forEach((raw, index) => {
+    const line = raw.trim();
+    if (line === '' || line.startsWith('#')) return;
+    const match = /^([A-Z][A-Z0-9_]*)='([^']*)'$/.exec(line);
+    if (!match) {
+      skipped.push(index + 1);
+      return;
+    }
+    if (values.has(match[1]) && !twice.includes(match[1])) twice.push(match[1]);
+    values.set(match[1], match[2]);
+  });
+  return { values, skipped, twice };
+}
+
+function reportList(report, intro, items) {
+  if (!items.length) return;
+  report.append(el('p', {}, intro));
+  const list = el('ul');
+  for (const item of items) list.append(el('li', {}, item));
+  report.append(list);
+}
+
+function showReport(lines) {
+  const report = $('load-report');
+  report.replaceChildren();
+  report.className = lines ? 'msg new' : '';
+  if (lines) lines(report);
+}
+
+function loadText(text) {
+  const { values, skipped, twice } = parseProfile(text.replace(/^\uFEFF/, ''));
+  if (values.size === 0) {
+    showReport((report) => {
+      report.append(el('p', {}, "Nothing loaded: the text has no KEY='value' line."));
+      reportList(report, 'Lines that are not comments and not KEY=\'value\' lines:', skipped.map((n) => 'line ' + n));
+    });
+    return;
+  }
+  const known = new Set(FIELDS.map((f) => f.key));
+  const added = [];
+  dropExtraOptions();
+  for (const field of FIELDS) {
+    const has = values.has(field.key);
+    setValue(field.key, has ? values.get(field.key) : field.default);
+    parts[field.key].isNew = !has;
+    if (!has) added.push(field.key);
+  }
+  const left = [...values.keys()].filter((key) => !known.has(key));
+  refresh();
+  showReport((report) => {
+    report.append(el('p', {}, 'Loaded ' + (FIELDS.length - added.length) + ' of ' + FIELDS.length + ' keys.'));
+    reportList(report, 'New in this release, filled with the default (marked at the key):', added);
+    reportList(report, 'Left out, because this release has no such key:', left);
+    reportList(report, 'Written twice, the last value is taken (the text made here has each key once):', twice);
+    reportList(report, "Skipped, neither a comment nor a KEY='value' line:", skipped.map((n) => 'line ' + n));
+  });
+}
+
+function resetForm() {
+  dropExtraOptions();
+  for (const field of FIELDS) {
+    setValue(field.key, field.default);
+    parts[field.key].isNew = false;
+  }
+  $('load-text').value = '';
+  $('load-file').value = '';
+  $('name').value = 'router';
+  $('copy-status').textContent = '';
+  showReport(null);
+  refresh();
+}
+
+function openFile(file) {
+  if (!file) return;
+  if (file.size > 200000) {
+    showReport((report) => report.append(el('p', {}, 'Nothing loaded: that file is too big for a profile.')));
+    return;
+  }
+  file.text().then((text) => {
+    loadText(text);
+    const base = file.name.replace(/\.conf$/, '');
+    if (/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(base)) $('name').value = base;
+    refresh();
+  });
+  // the same file may be opened again after a change
+  $('load-file').value = '';
+}
+
+// R58: a Blob and a download link, no request. Revoked later so the browser keeps the data until saved.
+function saveFile() {
+  const blob = new Blob([$('out').value], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = el('a', { href: url, download: fileName() });
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+
+async function copyText() {
+  const out = $('out');
+  let ok = false;
+  try {
+    await navigator.clipboard.writeText(out.value);
+    ok = true;
+  } catch (error) {
+    // some browsers withhold the async clipboard from a file or an insecure page
+    out.focus();
+    out.select();
+    try { ok = document.execCommand('copy'); } catch (inner) { ok = false; }
+    out.setSelectionRange(0, 0);
+  }
+  $('copy-status').textContent = ok
+    ? 'Copied. Paste it into the secret LW_PROFILE.'
+    : 'Could not copy by itself: select the text above and copy it.';
+}
+
+function start() {
+  $('version').textContent = LW_VERSION;
+  buildForm();
+  $('load-btn').addEventListener('click', () => loadText($('load-text').value));
+  $('load-file').addEventListener('change', (event) => openFile(event.target.files[0]));
+  $('reset-btn').addEventListener('click', resetForm);
+  $('copy-btn').addEventListener('click', copyText);
+  $('save-btn').addEventListener('click', saveFile);
+  $('name').addEventListener('input', refresh);
+  resetForm();
+}
+
+start();
+})();
+</script>
+</body>
+</html>

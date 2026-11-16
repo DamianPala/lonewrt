@@ -1,0 +1,50 @@
+# SPEC R56e, D123: GitHub Pages carries the configurator of the newest release, so the version the
+# page shows is the one a person starts their run with. Only configurator/ of the release tag is
+# published. Every action is pinned to a commit (the tag is in the comment); a pin moves only by hand.
+name: pages
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag whose configurator to publish, for example v0.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; a started one is finished, not cancelled
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # a pre-release is not "the newest release" (D123); a run by hand names its tag itself
+    if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+          persist-credentials: false
+      - name: Check that the tag has a configurator
+        run: |
+          test -f configurator/index.html || {
+            echo "::error::this tag has no configurator/index.html"
+            exit 1
+          }
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: configurator
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
