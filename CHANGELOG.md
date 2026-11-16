@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.0] - 2026-11-16
+
+### Added
+
+- Build your image on GitHub, with no Linux machine: make a private repository from the template [lonewrt-build](https://github.com/DamianPala/lonewrt-build), put the profile into its secret `LW_PROFILE` and start the workflow; the run checks the profile, builds and tests the image and keeps it as a download for 7 days. Such a run needs both passwords set in the profile, so every run gives the same ones
+- Configurator: one web page, hosted at https://damianpala.github.io/lonewrt/ or opened from disk, that writes a profile in the browser and sends nothing anywhere
+- Agent skill for coding agents (`skills/lonewrt/SKILL.md`): it builds the person's image on their machine or on GitHub and flashes it after a backup, without showing a password or token
+- Profile key `SSH_KEYS` for public SSH keys that may log in as root, also settable in the configurator
+
 ## [0.1.0] - 2026-11-15
 
 First public release, experimental: it runs on one router in daily use.
@@ -19,4 +28,5 @@ First public release, experimental: it runs on one router in daily use.
 - Listed phone numbers can text `status` or `reboot` to the SIM, at most 5 restarts a day
 - Optional WireGuard tunnel for remote access, LuCI apps for the modem, the LTE bands and SMS, persistent logs, and the release version in `/etc/lw-build`
 
+[0.2.0]: https://github.com/DamianPala/lonewrt/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/DamianPala/lonewrt/releases/tag/v0.1.0
