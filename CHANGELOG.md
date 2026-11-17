@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.0] - 2026-11-17
+
+### Changed
+
+- Configurator: the time zone is picked from a list, and the page fills in the time zone string the router's clock uses, so the two can no longer disagree
+- Configurator: settings that matter only with another one appear when they apply: the WireGuard settings once WireGuard is on, the APN login once an APN is set, the low-balance alert once the Telegram bot is set, the SMS limits once an admin number is set; the root password and its hash hide each other
+- Configurator: SSH keys go one per line, as in a `.pub` file; the profile text still joins them with `;`
+- Docs: the LuCI flashing steps in `README.md` have been tried on an MF289F
+
 ## [0.2.1] - 2026-11-16
 
 ### Fixed
@@ -35,6 +44,7 @@ First public release, experimental: it runs on one router in daily use.
 - Listed phone numbers can text `status` or `reboot` to the SIM, at most 5 restarts a day
 - Optional WireGuard tunnel for remote access, LuCI apps for the modem, the LTE bands and SMS, persistent logs, and the release version in `/etc/lw-build`
 
+[0.3.0]: https://github.com/DamianPala/lonewrt/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/DamianPala/lonewrt/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/DamianPala/lonewrt/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/DamianPala/lonewrt/releases/tag/v0.1.0
