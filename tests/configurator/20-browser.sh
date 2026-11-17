@@ -44,14 +44,20 @@ wait_for() {
 visible() { js "[...document.querySelectorAll('$1')].filter(e => !e.hidden).length"; }
 at_key() { visible "[data-key=$1] .$2"; }
 expect() { [ "$2" = "$3" ] || fail "$1: expected '$3', got '$2'"; }
-# fill_all FILE: type every value of a profile file into the form, as a person would
+# fill_all FILE: type every value of a profile file into the form, as a person would, in the file's
+# order, so a field shown by an earlier one (WG_ENABLED, SMS_ADMINS) is there when its turn comes; a
+# field that already holds the value is left alone (TIMEZONE follows ZONENAME, and a hidden field
+# holds its default)
 fill_all() {
     local -a args=()
-    local key value selects
+    local key value selects now
     selects=$(js 'JSON.stringify([...document.querySelectorAll("select")].map(s => s.id.slice(2)))')
+    now=$(js 'JSON.stringify(Object.fromEntries([...document.querySelectorAll("[data-key]")].map(e => [e.dataset.key, document.getElementById("f-" + e.dataset.key).value])))')
     while IFS=$'\t' read -r key value; do
         case $value in *\"* | *\\*) fail "test bug: $key needs quoting for batch" ;; esac
-        if grep -q "\"$key\"" <<<"$selects"; then
+        if [ "$(jq -r --arg k "$key" '.[$k]' <<<"$now")" = "$value" ]; then
+            continue
+        elif grep -q "\"$key\"" <<<"$selects"; then
             args+=("select \"#f-$key\" \"$value\"")
         else
             args+=("fill \"#f-$key\" \"$value\"")
@@ -94,7 +100,7 @@ hook_save
 expect "marks on the unchanged form" "$(visible '[data-key] .err')" 0
 expect "WIFI_KEY note" "$(at_key WIFI_KEY note)" 1
 expect "ROOT_PASSWORD note" "$(at_key ROOT_PASSWORD note)" 1
-expect "ROOT_PASSWORD_HASH note" "$(at_key ROOT_PASSWORD_HASH note)" 1
+expect "ROOT_PASSWORD_HASH note (the note stands once, at ROOT_PASSWORD)" "$(at_key ROOT_PASSWORD_HASH note)" 0
 save_to "$P/cfg.conf"
 expect "saved file name" "$(js 'window.__saved.join(",")')" router.conf
 diff <(kv "$FW/profiles/generic.conf") <(kv "$P/cfg.conf") >"$SCRATCH/diff" || fail "R56a: the unchanged form differs from generic.conf: $(head -n 3 "$SCRATCH/diff")"
@@ -114,7 +120,7 @@ expect "WIFI_KEY note after emptying" "$(at_key WIFI_KEY note)" 1
 expect "no mark for an empty WIFI_KEY" "$(visible '[data-key] .err')" 0
 grep -qx "WIFI_KEY=''" <(out_text) || fail "R57a: no text with an empty WIFI_KEY"
 ab fill '#f-ROOT_PASSWORD_HASH' '' >/dev/null
-expect "root notes" "$(( $(at_key ROOT_PASSWORD note) + $(at_key ROOT_PASSWORD_HASH note) ))" 2
+expect "root note" "$(( $(at_key ROOT_PASSWORD note) + $(at_key ROOT_PASSWORD_HASH note) ))" 1
 grep -qx "ROOT_PASSWORD_HASH=''" <(out_text) || fail "R57a: no text with both root keys empty"
 
 # R57: an empty LAN_IP and a ' are marked at their key and give no text; a value build.sh would
@@ -131,9 +137,13 @@ ab fill '#f-WIFI_SSID' "Cafe'" >/dev/null
 expect "quote mark" "$(at_key WIFI_SSID err)" 1
 expect "text with a quote" "$(out_text)" ""
 ab fill '#f-WIFI_SSID' 'Cafe' >/dev/null
-set_raw SSH_KEYS $'ssh-ed25519 AAAA a\nssh-ed25519 BBBB b'
+set_raw SSH_KEYS $'ssh-ed25519 AAAA a ssh-ed25519 BBBB b'
 expect "line break mark" "$(at_key SSH_KEYS err)" 1
 expect "text with a line break" "$(out_text)" ""
+# SSH_KEYS takes one key per line and gives them `;`-separated, blank lines dropped
+set_raw SSH_KEYS $'ssh-ed25519 AAAA a\n\nssh-ed25519 BBBB b\n'
+expect "no mark for keys on lines" "$(at_key SSH_KEYS err)" 0
+grep -qx "SSH_KEYS='ssh-ed25519 AAAA a;ssh-ed25519 BBBB b'" <(out_text) || fail "SSH_KEYS lines were not joined with ;"
 set_raw SSH_KEYS ''
 ab fill '#f-LAN_IP' 'not an address' >/dev/null
 expect "a value only build.sh refuses is not marked" "$(visible '[data-key] .err')" 0
@@ -152,6 +162,7 @@ PY
 for entry in "${EMPTY_OK[@]}"; do
     key=${entry#* }
     [ "$(js "document.getElementById('f-$key').tagName")" = SELECT ] && continue
+    [ "$(js "document.querySelector('[data-key=$key]').hidden")" = true ] && continue
     ab fill "#f-$key" '' >/dev/null
     case $entry in
         may*) expect "empty $key" "$(at_key "$key" err)" 0 ;;
@@ -190,6 +201,57 @@ js "document.getElementById('load-text').value = 'hello'; 'ok'" >/dev/null
 ab click '#load-btn' >/dev/null
 expect "nothing loaded" "$(js 'document.getElementById("f-HOSTNAME").value')" lte-router
 grep -q 'Nothing loaded' <(js 'document.getElementById("load-report").textContent') || fail "R56d: no report for a text without keys"
+
+# A field with `when` appears with its condition and stays while it holds a value of its own; the
+# two root keys hide each other
+ab click '#reset-btn' >/dev/null
+for key in WG_PRIVATE_KEY WG_KEEPALIVE WWAN_AUTH WWAN_PASSWORD LOW_BALANCE SMS_REBOOT_MAX_AGE_MIN ROUTER_NAME; do
+    expect "$key hidden on the defaults" "$(visible "[data-key=$key]")" 0
+done
+ab select '#f-WG_ENABLED' 1 >/dev/null
+expect "WG keys after WG_ENABLED=1" "$(visible '[data-key^=WG_]')" 8
+ab fill '#f-WG_KEEPALIVE' 25 >/dev/null
+ab select '#f-WG_ENABLED' 0 >/dev/null
+expect "WG keys after WG_ENABLED=0" "$(visible '[data-key^=WG_]')" 2
+ab fill '#f-WWAN_APN' internet >/dev/null
+expect "APN login after an APN" "$(visible '[data-key^=WWAN_]')" 4
+ab fill '#f-TG_BOT_TOKEN' 1:x >/dev/null
+expect "LOW_BALANCE with the token only" "$(visible '[data-key=LOW_BALANCE]')" 0
+ab fill '#f-TG_CHAT_ID' 5 >/dev/null
+expect "LOW_BALANCE with token and chat" "$(visible '[data-key=LOW_BALANCE]')" 1
+ab fill '#f-SMS_ADMINS' +48500000001 >/dev/null
+expect "SMS keys after SMS_ADMINS" "$(visible '[data-key^=SMS_],[data-key=ROUTER_NAME]')" 4
+ab fill '#f-ROOT_PASSWORD' 'fake-pass-q7x9' >/dev/null
+expect "hash hidden after a password" "$(visible '[data-key=ROOT_PASSWORD_HASH]')" 0
+ab fill '#f-ROOT_PASSWORD' '' >/dev/null
+ab fill '#f-ROOT_PASSWORD_HASH' 'x' >/dev/null
+expect "password hidden after a hash" "$(visible '[data-key=ROOT_PASSWORD]')" 0
+load_lines() { # load_lines TEXT: load the text into the form
+    js "document.getElementById('load-text').value = $(jq -Rs . <<<"$1"); 'ok'" >/dev/null
+    ab click '#load-btn' >/dev/null
+}
+load_lines "ROOT_PASSWORD='fake-pass-q7x9'"$'\n'"ROOT_PASSWORD_HASH='x'"
+expect "both root keys shown when both set" "$(visible '[data-key^=ROOT_PASSWORD]')" 2
+expect "both root keys noted" "$(( $(at_key ROOT_PASSWORD note) + $(at_key ROOT_PASSWORD_HASH note) ))" 2
+
+# TIMEZONE follows ZONENAME and stays hidden while it holds the listed string; a loaded profile whose
+# TIMEZONE differs, or whose ZONENAME is not listed, shows it with a note and keeps the loaded values
+ab click '#reset-btn' >/dev/null
+expect "TIMEZONE hidden on the defaults" "$(visible '[data-key=TIMEZONE]')" 0
+ab select '#f-ZONENAME' 'America/New_York' >/dev/null
+grep -qx "TIMEZONE='EST5EDT,M3.2.0,M11.1.0'" <(out_text) || fail "TIMEZONE did not follow ZONENAME"
+expect "TIMEZONE hidden after a listed zone" "$(visible '[data-key=TIMEZONE]')" 0
+load_lines "TIMEZONE='UTC0'"$'\n'"ZONENAME='Europe/Warsaw'"
+expect "TIMEZONE shown when it differs" "$(visible '[data-key=TIMEZONE]')" 1
+expect "TIMEZONE note when it differs" "$(at_key TIMEZONE note)" 1
+grep -qx "TIMEZONE='UTC0'" <(out_text) || fail "a loaded TIMEZONE was replaced"
+load_lines "TIMEZONE='XYZ-3'"$'\n'"ZONENAME='Mars/Olympus'"
+expect "TIMEZONE shown for an unlisted zone" "$(visible '[data-key=TIMEZONE]')" 1
+expect "unlisted zone kept" "$(js 'document.getElementById("f-ZONENAME").value')" Mars/Olympus
+grep -qx "ZONENAME='Mars/Olympus'" <(out_text) || fail "an unlisted ZONENAME was not kept"
+ab select '#f-ZONENAME' 'Europe/Podgorica' >/dev/null
+expect "TIMEZONE hidden after picking a zone" "$(visible '[data-key=TIMEZONE]')" 0
+grep -qx "TIMEZONE='CET-1CEST,M3.5.0,M10.5.0/3'" <(out_text) || fail "TIMEZONE did not follow the picked zone"
 
 # Copy: the text lands on the clipboard (pasted into the load box, since a page may not read it back)
 ab click '#reset-btn' >/dev/null

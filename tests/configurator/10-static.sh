@@ -10,8 +10,12 @@ scratch cfgstatic
 PAGE=$FW/configurator/index.html
 GENERIC=$FW/profiles/generic.conf
 check() { python3 -I "$FW/tests/configurator/check_page.py" "$@"; }
+# LuCI's time zone table of the rootfs from ./fetch-deps.sh; without it the table is not compared
+ZONEINFO=$LW_WORK/dl/x86/rootfs/usr/share/ucode/luci/zoneinfo.uc
+zone_arg=()
+[ -f "$ZONEINFO" ] && zone_arg=("$ZONEINFO")
 
-summary=$(check "$PAGE" "$GENERIC" "$FW/src/render.py" "$FW/VERSION") || fail "the page fails: $summary"
+summary=$(check "$PAGE" "$GENERIC" "$FW/src/render.py" "$FW/VERSION" "${zone_arg[@]}") || fail "the page fails: $summary"
 
 # expect_check_fails MESSAGE PAGE GENERIC VERSION: the check fails and its output holds MESSAGE
 expect_check_fails() {
@@ -68,6 +72,15 @@ mutate "the Content-Security-Policy meta lacks" "s/default-src 'none'; //"
 # R56c: browser storage
 mutate "script uses localStorage" "s|start();\$|localStorage.setItem('a','b');start();|"
 mutate "script uses document.cookie" "s|start();\$|document.cookie='a=b';start();|"
+
+# TIMEZONE follows ZONENAME: the default pair must be in the table, and the table must be LuCI's
+mutate "zones: the default ZONENAME" 's|"Europe/Warsaw": "CET-1CEST,M3.5.0,M10.5.0/3"|"Europe/Warsaw": "CET-1"|'
+mutate "TIMEZONE: 'after' names" 's|"after": "ZONENAME"|"after": "ZONE_NAME"|'
+mutate "LOW_BALANCE: 'when' TG_TOKEN!= names no key" 's|"when": \["TG_BOT_TOKEN!=", |"when": ["TG_TOKEN!=", |'
+if [ -f "$ZONEINFO" ]; then
+    sed 's|"Europe/Podgorica": "CET-1CEST,M3.5.0,M10.5.0/3"|"Europe/Podgorica": "CET-1"|' "$PAGE" >"$SCRATCH/page.html"
+    expect_check_fails "differs from LuCI's" "$SCRATCH/page.html" "$GENERIC" "$FW/src/render.py" "$FW/VERSION" "$ZONEINFO"
+fi
 
 # a non-ASCII character in the page (once a line separator in a regex broke the script unseen)
 mutate "non-ASCII" "s|start();\$|const x = '$(printf '\xc3\xa9')';start();|"

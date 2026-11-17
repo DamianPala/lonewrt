@@ -1,10 +1,11 @@
 """Static checks of configurator/index.html, no browser (SPEC R52, R56, R56e, R57, R58, R56c).
 
-    python3 -I check_page.py PAGE GENERIC_CONF RENDER_PY VERSION_FILE
+    python3 -I check_page.py PAGE GENERIC_CONF RENDER_PY VERSION_FILE [ZONEINFO_UC]
 
 Every problem is printed as one line that names the key or the construct; exit status 1 when there is
 one, else the last line is a short summary. The paths are arguments so that a test can run it on a
-scratch copy of generic.conf, of the page or of VERSION and see it fail.
+scratch copy of generic.conf, of the page or of VERSION and see it fail. ZONEINFO_UC is LuCI's
+luci/zoneinfo.uc of the OpenWrt rootfs; with it the page's time zone table must equal it.
 """
 
 import importlib.util
@@ -182,6 +183,44 @@ def check_options(render, f: dict, problems: list[str]) -> None:
         )
 
 
+ZONE_LINE = re.compile(r"\s*'([^']+)': '([^']*)',?\s*")
+WHEN = re.compile(r"([A-Z0-9_]+)!?=.*")
+
+
+def check_links(data: dict, problems: list[str]) -> None:
+    """A field placed `after` another or shown `when` others hold a value must name keys that exist."""
+    keys = [f["key"] for f in data["fields"]]
+    for f in data["fields"]:
+        if "after" in f and f["after"] not in keys:
+            problems.append(f"{f['key']}: 'after' names {f['after']}, which the page lacks")
+        for condition in f.get("when", []):
+            match = WHEN.fullmatch(condition)
+            if not match or match.group(1) not in keys:
+                problems.append(f"{f['key']}: 'when' {condition} names no key of the page")
+
+
+def check_zones(
+    data: dict, defaults: dict[str, str], zoneinfo: Path | None, problems: list[str]
+) -> None:
+    """TIMEZONE follows ZONENAME from the page's table, so the table must hold the defaults' pair
+    (the unchanged form then gives generic.conf) and equal LuCI's table plus OpenWrt's UTC."""
+    zones = data.get("zones", {})
+    if zones.get(defaults.get("ZONENAME")) != defaults.get("TIMEZONE"):
+        problems.append("zones: the default ZONENAME does not give the default TIMEZONE")
+    if zoneinfo is None:
+        return
+    luci = {}
+    for line in zoneinfo.read_text(encoding="utf-8").splitlines():
+        match = ZONE_LINE.fullmatch(line)
+        if match:
+            luci[match.group(1)] = match.group(2)
+    if not luci:
+        problems.append(f"zones: no zone read from {zoneinfo}")
+    if {**luci, "UTC": "UTC"} != zones:
+        diff = sorted((set(luci.items()) ^ set(zones.items())) - {("UTC", "UTC")})
+        problems.append(f"zones: the page's table differs from LuCI's: {diff[:3]}")
+
+
 def check_page(page: Page, problems: list[str]) -> None:
     problems.extend(page.problems)
     code = "\n".join(page.code)
@@ -202,6 +241,7 @@ def check_page(page: Page, problems: list[str]) -> None:
 
 def main(argv: list[str]) -> int:
     page_path, generic_path, render_path, version_path = (Path(a) for a in argv[1:5])
+    zoneinfo = Path(argv[5]) if len(argv) > 5 else None
     render = load_render(render_path)
     defaults = render.parse_profile(generic_path)
     generic = list(defaults)
@@ -218,6 +258,8 @@ def main(argv: list[str]) -> int:
         return 1
     data = json.loads(page.data)
     check_fields(data, generic, defaults, render, problems)
+    check_zones(data, defaults, zoneinfo, problems)
+    check_links(data, problems)
     for group in data["groups"]:
         if "slot" in group and group["slot"] not in page.ids:
             problems.append(
@@ -233,7 +275,8 @@ def main(argv: list[str]) -> int:
         print(f"FAIL: {problem}")
     if problems:
         return 1
-    print(f"{len(generic)} keys, version {version}, no resource loaded")
+    zones = f"{len(data['zones'])} zones" + (" as in LuCI" if zoneinfo else ", LuCI's table not compared")
+    print(f"{len(generic)} keys, version {version}, {zones}, no resource loaded")
     return 0
 
 

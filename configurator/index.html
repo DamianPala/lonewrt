@@ -32,11 +32,13 @@ h2 { font-size: 1.1rem; margin: 0; }
 p { margin: 0.4rem 0; }
 code { font: 0.9em ui-monospace, monospace; overflow-wrap: anywhere; }
 a { color: var(--accent); }
-.version { color: var(--muted); margin: 0; }
+.version { color: var(--muted); font-weight: 400; }
 .privacy { border-left: 4px solid var(--accent); background: var(--card); padding: 0.5rem 0.75rem; margin: 0.75rem 0; }
 .panel, fieldset { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem 1rem; margin: 1rem 0; min-width: 0; }
 legend { font-weight: 600; font-size: 1.1rem; padding: 0 0.4rem; }
-.intro, .help { color: var(--muted); font-size: 0.9rem; }
+.help { color: var(--muted); font-size: 0.9rem; }
+/* a group's intro reads as part of the heading, the help texts as notes to one field */
+.intro { margin: 0 0 0.25rem; padding-bottom: 0.6rem; border-bottom: 1px solid var(--border); }
 .field { padding: 0.75rem 0; border-top: 1px solid var(--border); }
 .field:first-of-type { border-top: 0; }
 label { display: block; font-weight: 600; }
@@ -64,8 +66,7 @@ ol { padding-left: 1.4rem; }
 </head>
 <body>
 <main>
-<h1>lonewrt profile configurator</h1>
-<p class="version">For lonewrt release <strong id="version"></strong>. Start your run on GitHub with this version.</p>
+<h1>lonewrt profile configurator <span class="version">&middot; <span id="version"></span></span></h1>
 <p class="privacy"><strong>Everything stays in this page.</strong> It sends nothing, loads nothing from outside and keeps nothing in the browser: no cookies, no browser storage, so a reload empties the form. The form holds secrets (Wi-Fi password, tokens, keys), so close the tab when you are done.</p>
 <noscript><p class="msg err">This page needs JavaScript to build the profile text. It still sends nothing.</p></noscript>
 
@@ -99,6 +100,7 @@ ol { padding-left: 1.4rem; }
 <section class="panel" aria-labelledby="out-title">
   <h2 id="out-title">Your profile</h2>
   <p class="help">One <code>KEY='value'</code> line per key, in the order of <code>generic.conf</code>. Copy it into the GitHub secret <code>LW_PROFILE</code>, or save it as <code>&lt;name&gt;.conf</code> and keep that file: it holds your passwords, and this page of a later release loads it.</p>
+  <p class="help">Made for lonewrt <strong class="lw-version"></strong>. In the run, type that version, or leave the field empty while it is the newest release.</p>
   <p id="out-status" class="msg" role="status" aria-live="polite"></p>
   <textarea id="out" rows="14" readonly spellcheck="false" autocomplete="off" aria-label="Profile text"></textarea>
   <div class="row">
@@ -117,14 +119,14 @@ ol { padding-left: 1.4rem; }
 <script type="application/json" id="lw-data">
 {
 "groups": [
-  {"id": "basics", "title": "Basics", "intro": "The router's name, its address in your network and its time zone."},
+  {"id": "basics", "title": "Basics"},
   {"id": "wifi", "title": "Wi-Fi", "intro": "One network on both bands, 2.4 and 5 GHz."},
-  {"id": "passwords", "title": "Passwords", "intro": "The root password opens the router's settings page (LuCI) and SSH. Set it in clear text or as a hash, not both."},
+  {"id": "passwords", "title": "Passwords", "intro": "The root password opens the router's settings page (LuCI) and SSH."},
   {"id": "ssh", "title": "SSH keys", "intro": "Public keys of the people who may log in to the router as root. Not a secret."},
-  {"id": "mobile", "title": "Mobile data", "intro": "The SIM card's LTE connection. The defaults let the network assign the settings."},
+  {"id": "mobile", "title": "Mobile data"},
   {"id": "wireguard", "title": "WireGuard", "intro": "A tunnel for remote access to the router. It needs a WireGuard server of your own, which the image never changes."},
-  {"id": "telegram", "title": "Telegram & alerts", "intro": "SMS forwarding, balance alerts and a bot you use from a chat. The bot needs both the token and the chat ID.", "slot": "tg-help"},
-  {"id": "sms", "title": "SMS control", "intro": "Phone numbers that may control the router by SMS, and the name that starts its SMS replies."},
+  {"id": "telegram", "title": "Telegram & alerts", "intro": "SMS forwarding, balance alerts and a bot you use from a chat.", "slot": "tg-help"},
+  {"id": "sms", "title": "SMS control"},
   {"id": "advanced", "title": "Advanced", "intro": "The defaults are right for most routers."}
 ],
 "fields": [
@@ -132,10 +134,10 @@ ol { padding-left: 1.4rem; }
    "help": "The router's name on the network: letters, digits and `-`."},
   {"key": "LAN_IP", "group": "basics", "default": "192.168.1.1", "empty": false,
    "help": "The router's address in its network (a /24 network). The settings page (LuCI) is at `https://` followed by this address."},
-  {"key": "TIMEZONE", "group": "basics", "default": "CET-1CEST,M3.5.0,M10.5.0/3", "empty": false,
-   "help": "The time zone as a POSIX string, for example `CET-1CEST,M3.5.0,M10.5.0/3` for Central Europe. It goes together with `ZONENAME`."},
-  {"key": "ZONENAME", "group": "basics", "default": "Europe/Warsaw", "empty": false,
-   "help": "The name of the time zone, for example `Europe/Warsaw`."},
+  {"key": "TIMEZONE", "group": "basics", "default": "CET-1CEST,M3.5.0,M10.5.0/3", "empty": false, "after": "ZONENAME",
+   "help": "The time zone as the POSIX string the router's clock uses. It is filled from `ZONENAME` and shown only when it holds another string."},
+  {"key": "ZONENAME", "group": "basics", "default": "Europe/Warsaw", "empty": false, "zones": true,
+   "help": "The time zone of the place the router runs in. Type the first letters of the region to jump in the list, for example `Europe/Warsaw`."},
 
   {"key": "WIFI_SSID", "group": "wifi", "default": "OpenWrt-LTE", "empty": false,
    "help": "The name of the Wi-Fi network, 1 to 32 characters."},
@@ -152,66 +154,258 @@ ol { padding-left: 1.4rem; }
   {"key": "WIFI_HTMODE_5G", "group": "wifi", "default": "VHT80", "empty": false, "suggest": ["HT20", "HT40", "VHT20", "VHT40", "VHT80"],
    "help": "The channel width mode of the 5 GHz band: `HT20`, `HT40`, `VHT80`..."},
 
-  {"key": "ROOT_PASSWORD", "group": "passwords", "default": "", "empty": true, "secret": true,
-   "help": "The root password in clear text, 8 to 63 printable ASCII characters. The build hashes it and the image holds only the hash. Set this or `ROOT_PASSWORD_HASH`, not both. With both empty the build draws a password, but a run on GitHub needs one of them."},
-  {"key": "ROOT_PASSWORD_HASH", "group": "passwords", "default": "", "empty": true, "secret": true,
-   "help": "The root password as a crypt(3) hash, for example from `openssl passwd -6`. Set this or `ROOT_PASSWORD`, not both."},
+  {"key": "ROOT_PASSWORD", "group": "passwords", "default": "", "empty": true, "secret": true, "when": ["ROOT_PASSWORD_HASH="],
+   "help": "The root password, 8 to 63 printable ASCII characters. The image holds only its hash."},
+  {"key": "ROOT_PASSWORD_HASH", "group": "passwords", "default": "", "empty": true, "secret": true, "when": ["ROOT_PASSWORD="],
+   "help": "Optional, instead of `ROOT_PASSWORD`: the password as a crypt(3) hash, for example from `openssl passwd -6`."},
 
-  {"key": "SSH_KEYS", "group": "ssh", "default": "", "empty": true, "area": true,
-   "help": "Public SSH keys of the people who may log in as root, separated by `;` on one line. Each is `<type> <base64 data> [comment]` with the type `ssh-ed25519`, `ssh-rsa` or `ecdsa-sha2-nistp256`, for example `ssh-ed25519 AAAAC3...u1x laptop;ssh-ed25519 AAAAC3...Qk2 phone`. An empty entry (`;;`, a trailing `;`) or an entry that is not a key of its type stops the build. Empty: no key login."},
+  {"key": "SSH_KEYS", "group": "ssh", "default": "", "empty": true, "area": true, "lines": true,
+   "help": "One key per line, as in a `.pub` file, for example `ssh-ed25519 AAAAC3...u1x laptop`. Types: `ssh-ed25519`, `ssh-rsa`, `ecdsa-sha2-nistp256`. A line that is not a key stops the build. Empty: no key login."},
 
   {"key": "WWAN_APN", "group": "mobile", "default": "", "empty": true,
    "help": "The operator's APN. Empty lets the network assign one."},
-  {"key": "WWAN_AUTH", "group": "mobile", "default": "", "empty": true, "options": ["", "none", "pap", "chap", "both"],
+  {"key": "WWAN_AUTH", "group": "mobile", "default": "", "empty": true, "options": ["", "none", "pap", "chap", "both"], "when": ["WWAN_APN!="],
    "help": "The login type of the APN: `none`, `pap`, `chap` or `both`. Empty: not set."},
-  {"key": "WWAN_USERNAME", "group": "mobile", "default": "", "empty": true,
+  {"key": "WWAN_USERNAME", "group": "mobile", "default": "", "empty": true, "when": ["WWAN_APN!="],
    "help": "The APN user name, if the operator wants one."},
-  {"key": "WWAN_PASSWORD", "group": "mobile", "default": "", "empty": true, "secret": true,
+  {"key": "WWAN_PASSWORD", "group": "mobile", "default": "", "empty": true, "secret": true, "when": ["WWAN_APN!="],
    "help": "The APN password, if the operator wants one."},
   {"key": "LTE_BANDS", "group": "mobile", "default": "", "empty": true,
    "help": "A comma list of LTE bands to lock, for example `1,3,20`. Empty leaves the modem's bands untouched."},
 
   {"key": "WG_ENABLED", "group": "wireguard", "default": "0", "empty": false, "options": ["0", "1"],
    "labels": {"0": "0 (off)", "1": "1 (on)"},
-   "help": "`1` turns the WireGuard client on and needs the four keys below (`WG_PRIVATE_KEY`, `WG_ADDRESS`, `WG_PEER_PUBLIC_KEY`, `WG_ENDPOINT_HOST`). With `0` the tunnel is prepared but stays off."},
-  {"key": "WG_PRIVATE_KEY", "group": "wireguard", "default": "", "empty": true, "secret": true,
-   "help": "The router's WireGuard private key (44 characters ending in `=`). Required when `WG_ENABLED` is `1`."},
-  {"key": "WG_ADDRESS", "group": "wireguard", "default": "", "empty": true,
-   "help": "The router's address in the tunnel: a space-separated CIDR list, for example `10.0.0.2/32`. Required when `WG_ENABLED` is `1`."},
-  {"key": "WG_PEER_PUBLIC_KEY", "group": "wireguard", "default": "", "empty": true,
-   "help": "The public key of the WireGuard server (44 characters ending in `=`). Required when `WG_ENABLED` is `1`."},
-  {"key": "WG_ENDPOINT_HOST", "group": "wireguard", "default": "", "empty": true,
-   "help": "The host name or address of the WireGuard server. Required when `WG_ENABLED` is `1`."},
-  {"key": "WG_ENDPOINT_PORT", "group": "wireguard", "default": "", "empty": true,
+   "help": "`1` turns the WireGuard client on; its settings appear below. With `0` the tunnel stays off."},
+  {"key": "WG_PRIVATE_KEY", "group": "wireguard", "default": "", "empty": true, "secret": true, "when": ["WG_ENABLED=1"],
+   "help": "The router's WireGuard private key (44 characters ending in `=`). Required."},
+  {"key": "WG_ADDRESS", "group": "wireguard", "default": "", "empty": true, "when": ["WG_ENABLED=1"],
+   "help": "The router's address in the tunnel: a space-separated CIDR list, for example `10.0.0.2/32`. Required."},
+  {"key": "WG_PEER_PUBLIC_KEY", "group": "wireguard", "default": "", "empty": true, "when": ["WG_ENABLED=1"],
+   "help": "The public key of the WireGuard server (44 characters ending in `=`). Required."},
+  {"key": "WG_ENDPOINT_HOST", "group": "wireguard", "default": "", "empty": true, "when": ["WG_ENABLED=1"],
+   "help": "The host name or address of the WireGuard server. Required."},
+  {"key": "WG_ENDPOINT_PORT", "group": "wireguard", "default": "", "empty": true, "when": ["WG_ENABLED=1"],
    "help": "The server's port."},
-  {"key": "WG_ALLOWED_IPS", "group": "wireguard", "default": "", "empty": true,
+  {"key": "WG_ALLOWED_IPS", "group": "wireguard", "default": "", "empty": true, "when": ["WG_ENABLED=1"],
    "help": "A space-separated CIDR list of the networks reached through the tunnel."},
-  {"key": "WG_KEEPALIVE", "group": "wireguard", "default": "", "empty": true,
+  {"key": "WG_KEEPALIVE", "group": "wireguard", "default": "", "empty": true, "when": ["WG_ENABLED=1"],
    "help": "The keepalive interval in seconds."},
 
   {"key": "TG_BOT_TOKEN", "group": "telegram", "default": "", "empty": true, "secret": true,
    "help": "The token of your Telegram bot, from @BotFather (steps above). With the chat ID set, SMS forwarding, alerts and the bot commands are on; both empty means no notifications."},
   {"key": "TG_CHAT_ID", "group": "telegram", "default": "", "empty": true,
    "help": "The ID of your chat or group with the bot (steps above). A group's ID is negative, for example `-1001234567890`."},
-  {"key": "LOW_BALANCE", "group": "telegram", "default": "", "empty": true,
-   "help": "The balance threshold in the currency of the SIM's operator preset, for example `7.50`. It turns on the weekly balance SMS and the low-balance alert, needs the bot, and works only for an operator the image has a preset for."},
+  {"key": "LOW_BALANCE", "group": "telegram", "default": "", "empty": true, "when": ["TG_BOT_TOKEN!=", "TG_CHAT_ID!="],
+   "help": "The balance threshold in the currency of the SIM's operator preset, for example `7.50`. It turns on the weekly balance SMS and the low-balance alert, and works only for an operator the image has a preset for."},
   {"key": "HC_PING_URL", "group": "telegram", "default": "", "empty": true, "secret": true,
    "help": "The https ping address of a check at healthchecks.io, which the router calls every 5 minutes, so that you hear when it stops. Empty: no heartbeat."},
 
   {"key": "SMS_ADMINS", "group": "sms", "default": "", "empty": true, "secret": true,
-   "help": "The phone numbers that may control the router by SMS (`status`, `reboot`, `help`, any case): a comma list, each number with an optional `+` and 6 to 15 digits, no spaces, for example `+15550100123,15550100456`. Write them in international form. Empty: no SMS control."},
-  {"key": "SMS_REBOOT_MAX_AGE_MIN", "group": "sms", "default": "10", "empty": false,
+   "help": "The phone numbers that may control the router by SMS (`status`, `reboot`, `help`, any case): a comma list, each number with an optional `+` and 6 to 15 digits, no spaces, for example `+48500000001,48600000002`. Write them in international form. Empty: no SMS control."},
+  {"key": "SMS_REBOOT_MAX_AGE_MIN", "group": "sms", "default": "10", "empty": false, "when": ["SMS_ADMINS!="],
    "help": "An SMS `reboot` older than this many minutes is refused. A whole number."},
-  {"key": "SMS_REBOOT_MAX_PER_DAY", "group": "sms", "default": "5", "empty": false,
+  {"key": "SMS_REBOOT_MAX_PER_DAY", "group": "sms", "default": "5", "empty": false, "when": ["SMS_ADMINS!="],
    "help": "At most this many restarts by SMS in 24 hours. A whole number."},
-  {"key": "ROUTER_NAME", "group": "sms", "default": "Router", "empty": false,
+  {"key": "ROUTER_NAME", "group": "sms", "default": "Router", "empty": false, "when": ["SMS_ADMINS!="],
    "help": "The router's name at the start of its SMS replies (`<name>: internet OK ...`), so that a reply reaching another router with this image is not answered back. 1 to 20 ASCII characters: letters, digits, space and `-`, starting with a letter or digit."},
 
   {"key": "LINK_RESTART_AFTER_S", "group": "advanced", "default": "120", "empty": false,
    "help": "The seconds without an answer to the pings after which the router restarts its mobile connection. A whole number from `120` to `900`. Shorter heals a dropped data session sooner but restarts on glitches that would pass alone."},
   {"key": "LOG_LEVEL", "group": "advanced", "default": "info", "empty": false, "options": ["info", "debug"],
    "help": "`info` or `debug`. `debug` is for a test period: a longer persistent log with every signal sample and every step of a data session repair. All of it is extra flash writes, so go back to `info` afterwards."}
-]
+],
+"zones": {
+"UTC": "UTC",
+"Africa/Abidjan": "GMT0", "Africa/Accra": "GMT0", "Africa/Addis_Ababa": "EAT-3",
+"Africa/Algiers": "CET-1", "Africa/Asmara": "EAT-3", "Africa/Bamako": "GMT0",
+"Africa/Bangui": "WAT-1", "Africa/Banjul": "GMT0", "Africa/Bissau": "GMT0",
+"Africa/Blantyre": "CAT-2", "Africa/Brazzaville": "WAT-1", "Africa/Bujumbura": "CAT-2",
+"Africa/Cairo": "EET-2EEST,M4.5.5/0,M10.5.4/24", "Africa/Casablanca": "<+00>0",
+"Africa/Ceuta": "CET-1CEST,M3.5.0,M10.5.0/3", "Africa/Conakry": "GMT0", "Africa/Dakar": "GMT0",
+"Africa/Dar_es_Salaam": "EAT-3", "Africa/Djibouti": "EAT-3", "Africa/Douala": "WAT-1",
+"Africa/El_Aaiun": "<+00>0", "Africa/Freetown": "GMT0", "Africa/Gaborone": "CAT-2",
+"Africa/Harare": "CAT-2", "Africa/Johannesburg": "SAST-2", "Africa/Juba": "CAT-2",
+"Africa/Kampala": "EAT-3", "Africa/Khartoum": "CAT-2", "Africa/Kigali": "CAT-2",
+"Africa/Kinshasa": "WAT-1", "Africa/Lagos": "WAT-1", "Africa/Libreville": "WAT-1",
+"Africa/Lome": "GMT0", "Africa/Luanda": "WAT-1", "Africa/Lubumbashi": "CAT-2",
+"Africa/Lusaka": "CAT-2", "Africa/Malabo": "WAT-1", "Africa/Maputo": "CAT-2",
+"Africa/Maseru": "SAST-2", "Africa/Mbabane": "SAST-2", "Africa/Mogadishu": "EAT-3",
+"Africa/Monrovia": "GMT0", "Africa/Nairobi": "EAT-3", "Africa/Ndjamena": "WAT-1",
+"Africa/Niamey": "WAT-1", "Africa/Nouakchott": "GMT0", "Africa/Ouagadougou": "GMT0",
+"Africa/Porto-Novo": "WAT-1", "Africa/Sao_Tome": "GMT0", "Africa/Tripoli": "EET-2",
+"Africa/Tunis": "CET-1", "Africa/Windhoek": "CAT-2", "America/Adak": "HST10HDT,M3.2.0,M11.1.0",
+"America/Anchorage": "AKST9AKDT,M3.2.0,M11.1.0", "America/Anguilla": "AST4",
+"America/Antigua": "AST4", "America/Araguaina": "<-03>3",
+"America/Argentina/Buenos_Aires": "<-03>3", "America/Argentina/Catamarca": "<-03>3",
+"America/Argentina/Cordoba": "<-03>3", "America/Argentina/Jujuy": "<-03>3",
+"America/Argentina/La_Rioja": "<-03>3", "America/Argentina/Mendoza": "<-03>3",
+"America/Argentina/Rio_Gallegos": "<-03>3", "America/Argentina/Salta": "<-03>3",
+"America/Argentina/San_Juan": "<-03>3", "America/Argentina/San_Luis": "<-03>3",
+"America/Argentina/Tucuman": "<-03>3", "America/Argentina/Ushuaia": "<-03>3",
+"America/Aruba": "AST4", "America/Asuncion": "<-03>3", "America/Atikokan": "EST5",
+"America/Bahia": "<-03>3", "America/Bahia_Banderas": "CST6", "America/Barbados": "AST4",
+"America/Belem": "<-03>3", "America/Belize": "CST6", "America/Blanc-Sablon": "AST4",
+"America/Boa_Vista": "<-04>4", "America/Bogota": "<-05>5",
+"America/Boise": "MST7MDT,M3.2.0,M11.1.0", "America/Cambridge_Bay": "MST7MDT,M3.2.0,M11.1.0",
+"America/Campo_Grande": "<-04>4", "America/Cancun": "EST5", "America/Caracas": "<-04>4",
+"America/Cayenne": "<-03>3", "America/Cayman": "EST5", "America/Chicago": "CST6CDT,M3.2.0,M11.1.0",
+"America/Chihuahua": "CST6", "America/Ciudad_Juarez": "MST7MDT,M3.2.0,M11.1.0",
+"America/Costa_Rica": "CST6", "America/Coyhaique": "<-03>3", "America/Creston": "MST7",
+"America/Cuiaba": "<-04>4", "America/Curacao": "AST4", "America/Danmarkshavn": "GMT0",
+"America/Dawson": "MST7", "America/Dawson_Creek": "MST7",
+"America/Denver": "MST7MDT,M3.2.0,M11.1.0", "America/Detroit": "EST5EDT,M3.2.0,M11.1.0",
+"America/Dominica": "AST4", "America/Edmonton": "CST6", "America/Eirunepe": "<-05>5",
+"America/El_Salvador": "CST6", "America/Fort_Nelson": "MST7", "America/Fortaleza": "<-03>3",
+"America/Glace_Bay": "AST4ADT,M3.2.0,M11.1.0", "America/Goose_Bay": "AST4ADT,M3.2.0,M11.1.0",
+"America/Grand_Turk": "EST5EDT,M3.2.0,M11.1.0", "America/Grenada": "AST4",
+"America/Guadeloupe": "AST4", "America/Guatemala": "CST6", "America/Guayaquil": "<-05>5",
+"America/Guyana": "<-04>4", "America/Halifax": "AST4ADT,M3.2.0,M11.1.0",
+"America/Havana": "CST5CDT,M3.2.0/0,M11.1.0/1", "America/Hermosillo": "MST7",
+"America/Indiana/Indianapolis": "EST5EDT,M3.2.0,M11.1.0",
+"America/Indiana/Knox": "CST6CDT,M3.2.0,M11.1.0",
+"America/Indiana/Marengo": "EST5EDT,M3.2.0,M11.1.0",
+"America/Indiana/Petersburg": "EST5EDT,M3.2.0,M11.1.0",
+"America/Indiana/Tell_City": "CST6CDT,M3.2.0,M11.1.0",
+"America/Indiana/Vevay": "EST5EDT,M3.2.0,M11.1.0",
+"America/Indiana/Vincennes": "EST5EDT,M3.2.0,M11.1.0",
+"America/Indiana/Winamac": "EST5EDT,M3.2.0,M11.1.0", "America/Inuvik": "CST6",
+"America/Iqaluit": "EST5EDT,M3.2.0,M11.1.0", "America/Jamaica": "EST5",
+"America/Juneau": "AKST9AKDT,M3.2.0,M11.1.0",
+"America/Kentucky/Louisville": "EST5EDT,M3.2.0,M11.1.0",
+"America/Kentucky/Monticello": "EST5EDT,M3.2.0,M11.1.0", "America/Kralendijk": "AST4",
+"America/La_Paz": "<-04>4", "America/Lima": "<-05>5",
+"America/Los_Angeles": "PST8PDT,M3.2.0,M11.1.0", "America/Lower_Princes": "AST4",
+"America/Maceio": "<-03>3", "America/Managua": "CST6", "America/Manaus": "<-04>4",
+"America/Marigot": "AST4", "America/Martinique": "AST4",
+"America/Matamoros": "CST6CDT,M3.2.0,M11.1.0", "America/Mazatlan": "MST7",
+"America/Menominee": "CST6CDT,M3.2.0,M11.1.0", "America/Merida": "CST6",
+"America/Metlakatla": "AKST9AKDT,M3.2.0,M11.1.0", "America/Mexico_City": "CST6",
+"America/Miquelon": "<-03>3<-02>,M3.2.0,M11.1.0", "America/Moncton": "AST4ADT,M3.2.0,M11.1.0",
+"America/Monterrey": "CST6", "America/Montevideo": "<-03>3", "America/Montserrat": "AST4",
+"America/Nassau": "EST5EDT,M3.2.0,M11.1.0", "America/New_York": "EST5EDT,M3.2.0,M11.1.0",
+"America/Nome": "AKST9AKDT,M3.2.0,M11.1.0", "America/Noronha": "<-02>2",
+"America/North_Dakota/Beulah": "CST6CDT,M3.2.0,M11.1.0",
+"America/North_Dakota/Center": "CST6CDT,M3.2.0,M11.1.0",
+"America/North_Dakota/New_Salem": "CST6CDT,M3.2.0,M11.1.0",
+"America/Nuuk": "<-02>2<-01>,M3.5.0/-1,M10.5.0/0", "America/Ojinaga": "CST6CDT,M3.2.0,M11.1.0",
+"America/Panama": "EST5", "America/Paramaribo": "<-03>3", "America/Phoenix": "MST7",
+"America/Port-au-Prince": "EST5EDT,M3.2.0,M11.1.0", "America/Port_of_Spain": "AST4",
+"America/Porto_Velho": "<-04>4", "America/Puerto_Rico": "AST4", "America/Punta_Arenas": "<-03>3",
+"America/Rankin_Inlet": "CST6CDT,M3.2.0,M11.1.0", "America/Recife": "<-03>3",
+"America/Regina": "CST6", "America/Resolute": "CST6CDT,M3.2.0,M11.1.0",
+"America/Rio_Branco": "<-05>5", "America/Santarem": "<-03>3",
+"America/Santiago": "<-04>4<-03>,M9.1.6/24,M4.1.6/24", "America/Santo_Domingo": "AST4",
+"America/Sao_Paulo": "<-03>3", "America/Scoresbysund": "<-02>2<-01>,M3.5.0/-1,M10.5.0/0",
+"America/Sitka": "AKST9AKDT,M3.2.0,M11.1.0", "America/St_Barthelemy": "AST4",
+"America/St_Johns": "NST3:30NDT,M3.2.0,M11.1.0", "America/St_Kitts": "AST4",
+"America/St_Lucia": "AST4", "America/St_Thomas": "AST4", "America/St_Vincent": "AST4",
+"America/Swift_Current": "CST6", "America/Tegucigalpa": "CST6",
+"America/Thule": "AST4ADT,M3.2.0,M11.1.0", "America/Tijuana": "PST8PDT,M3.2.0,M11.1.0",
+"America/Toronto": "EST5EDT,M3.2.0,M11.1.0", "America/Tortola": "AST4",
+"America/Vancouver": "MST7", "America/Whitehorse": "MST7", "America/Winnipeg": "EST5",
+"America/Yakutat": "AKST9AKDT,M3.2.0,M11.1.0", "Antarctica/Casey": "<+08>-8",
+"Antarctica/Davis": "<+07>-7", "Antarctica/DumontDUrville": "<+10>-10",
+"Antarctica/Macquarie": "AEST-10AEDT,M10.1.0,M4.1.0/3", "Antarctica/Mawson": "<+05>-5",
+"Antarctica/McMurdo": "NZST-12NZDT,M9.5.0,M4.1.0/3", "Antarctica/Palmer": "<-03>3",
+"Antarctica/Rothera": "<-03>3", "Antarctica/Syowa": "<+03>-3",
+"Antarctica/Troll": "<+00>0<+02>-2,M3.5.0/1,M10.5.0/3", "Antarctica/Vostok": "<+05>-5",
+"Arctic/Longyearbyen": "CET-1CEST,M3.5.0,M10.5.0/3", "Asia/Aden": "<+03>-3",
+"Asia/Almaty": "<+05>-5", "Asia/Amman": "<+03>-3", "Asia/Anadyr": "<+12>-12",
+"Asia/Aqtau": "<+05>-5", "Asia/Aqtobe": "<+05>-5", "Asia/Ashgabat": "<+05>-5",
+"Asia/Atyrau": "<+05>-5", "Asia/Baghdad": "<+03>-3", "Asia/Bahrain": "<+03>-3",
+"Asia/Baku": "<+04>-4", "Asia/Bangkok": "<+07>-7", "Asia/Barnaul": "<+07>-7",
+"Asia/Beirut": "EET-2EEST,M3.5.0/0,M10.5.0/0", "Asia/Bishkek": "<+06>-6", "Asia/Brunei": "<+08>-8",
+"Asia/Chita": "<+09>-9", "Asia/Colombo": "<+0530>-5:30", "Asia/Damascus": "<+03>-3",
+"Asia/Dhaka": "<+06>-6", "Asia/Dili": "<+09>-9", "Asia/Dubai": "<+04>-4",
+"Asia/Dushanbe": "<+05>-5", "Asia/Famagusta": "EET-2EEST,M3.5.0/3,M10.5.0/4",
+"Asia/Gaza": "EET-2EEST,M3.4.4/50,M10.4.4/50", "Asia/Hebron": "EET-2EEST,M3.4.4/50,M10.4.4/50",
+"Asia/Ho_Chi_Minh": "<+07>-7", "Asia/Hong_Kong": "HKT-8", "Asia/Hovd": "<+07>-7",
+"Asia/Irkutsk": "<+08>-8", "Asia/Jakarta": "WIB-7", "Asia/Jayapura": "WIT-9",
+"Asia/Jerusalem": "IST-2IDT,M3.4.4/26,M10.5.0", "Asia/Kabul": "<+0430>-4:30",
+"Asia/Kamchatka": "<+12>-12", "Asia/Karachi": "PKT-5", "Asia/Kathmandu": "<+0545>-5:45",
+"Asia/Khandyga": "<+09>-9", "Asia/Kolkata": "IST-5:30", "Asia/Krasnoyarsk": "<+07>-7",
+"Asia/Kuala_Lumpur": "<+08>-8", "Asia/Kuching": "<+08>-8", "Asia/Kuwait": "<+03>-3",
+"Asia/Macau": "CST-8", "Asia/Magadan": "<+11>-11", "Asia/Makassar": "WITA-8",
+"Asia/Manila": "PST-8", "Asia/Muscat": "<+04>-4", "Asia/Nicosia": "EET-2EEST,M3.5.0/3,M10.5.0/4",
+"Asia/Novokuznetsk": "<+07>-7", "Asia/Novosibirsk": "<+07>-7", "Asia/Omsk": "<+06>-6",
+"Asia/Oral": "<+05>-5", "Asia/Phnom_Penh": "<+07>-7", "Asia/Pontianak": "WIB-7",
+"Asia/Pyongyang": "KST-9", "Asia/Qatar": "<+03>-3", "Asia/Qostanay": "<+05>-5",
+"Asia/Qyzylorda": "<+05>-5", "Asia/Riyadh": "<+03>-3", "Asia/Sakhalin": "<+11>-11",
+"Asia/Samarkand": "<+05>-5", "Asia/Seoul": "KST-9", "Asia/Shanghai": "CST-8",
+"Asia/Singapore": "<+08>-8", "Asia/Srednekolymsk": "<+11>-11", "Asia/Taipei": "CST-8",
+"Asia/Tashkent": "<+05>-5", "Asia/Tbilisi": "<+04>-4", "Asia/Tehran": "<+0330>-3:30",
+"Asia/Thimphu": "<+06>-6", "Asia/Tokyo": "JST-9", "Asia/Tomsk": "<+07>-7",
+"Asia/Ulaanbaatar": "<+08>-8", "Asia/Urumqi": "<+06>-6", "Asia/Ust-Nera": "<+10>-10",
+"Asia/Vientiane": "<+07>-7", "Asia/Vladivostok": "<+10>-10", "Asia/Yakutsk": "<+09>-9",
+"Asia/Yangon": "<+0630>-6:30", "Asia/Yekaterinburg": "<+05>-5", "Asia/Yerevan": "<+04>-4",
+"Atlantic/Azores": "<-01>1<+00>,M3.5.0/0,M10.5.0/1", "Atlantic/Bermuda": "AST4ADT,M3.2.0,M11.1.0",
+"Atlantic/Canary": "WET0WEST,M3.5.0/1,M10.5.0", "Atlantic/Cape_Verde": "<-01>1",
+"Atlantic/Faroe": "WET0WEST,M3.5.0/1,M10.5.0", "Atlantic/Madeira": "WET0WEST,M3.5.0/1,M10.5.0",
+"Atlantic/Reykjavik": "GMT0", "Atlantic/South_Georgia": "<-02>2", "Atlantic/St_Helena": "GMT0",
+"Atlantic/Stanley": "<-03>3", "Australia/Adelaide": "ACST-9:30ACDT,M10.1.0,M4.1.0/3",
+"Australia/Brisbane": "AEST-10", "Australia/Broken_Hill": "ACST-9:30ACDT,M10.1.0,M4.1.0/3",
+"Australia/Darwin": "ACST-9:30", "Australia/Eucla": "<+0845>-8:45",
+"Australia/Hobart": "AEST-10AEDT,M10.1.0,M4.1.0/3", "Australia/Lindeman": "AEST-10",
+"Australia/Lord_Howe": "<+1030>-10:30<+11>-11,M10.1.0,M4.1.0",
+"Australia/Melbourne": "AEST-10AEDT,M10.1.0,M4.1.0/3", "Australia/Perth": "AWST-8",
+"Australia/Sydney": "AEST-10AEDT,M10.1.0,M4.1.0/3", "Etc/GMT": "GMT0", "Etc/GMT+1": "<-01>1",
+"Etc/GMT+10": "<-10>10", "Etc/GMT+11": "<-11>11", "Etc/GMT+12": "<-12>12", "Etc/GMT+2": "<-02>2",
+"Etc/GMT+3": "<-03>3", "Etc/GMT+4": "<-04>4", "Etc/GMT+5": "<-05>5", "Etc/GMT+6": "<-06>6",
+"Etc/GMT+7": "<-07>7", "Etc/GMT+8": "<-08>8", "Etc/GMT+9": "<-09>9", "Etc/GMT-1": "<+01>-1",
+"Etc/GMT-10": "<+10>-10", "Etc/GMT-11": "<+11>-11", "Etc/GMT-12": "<+12>-12",
+"Etc/GMT-13": "<+13>-13", "Etc/GMT-14": "<+14>-14", "Etc/GMT-2": "<+02>-2", "Etc/GMT-3": "<+03>-3",
+"Etc/GMT-4": "<+04>-4", "Etc/GMT-5": "<+05>-5", "Etc/GMT-6": "<+06>-6", "Etc/GMT-7": "<+07>-7",
+"Etc/GMT-8": "<+08>-8", "Etc/GMT-9": "<+09>-9", "Europe/Amsterdam": "CET-1CEST,M3.5.0,M10.5.0/3",
+"Europe/Andorra": "CET-1CEST,M3.5.0,M10.5.0/3", "Europe/Astrakhan": "<+04>-4",
+"Europe/Athens": "EET-2EEST,M3.5.0/3,M10.5.0/4", "Europe/Belgrade": "CET-1CEST,M3.5.0,M10.5.0/3",
+"Europe/Berlin": "CET-1CEST,M3.5.0,M10.5.0/3", "Europe/Bratislava": "CET-1CEST,M3.5.0,M10.5.0/3",
+"Europe/Brussels": "CET-1CEST,M3.5.0,M10.5.0/3",
+"Europe/Bucharest": "EET-2EEST,M3.5.0/3,M10.5.0/4",
+"Europe/Budapest": "CET-1CEST,M3.5.0,M10.5.0/3", "Europe/Busingen": "CET-1CEST,M3.5.0,M10.5.0/3",
+"Europe/Chisinau": "EET-2EEST,M3.5.0/3,M10.5.0/4",
+"Europe/Copenhagen": "CET-1CEST,M3.5.0,M10.5.0/3", "Europe/Dublin": "IST-1GMT0,M10.5.0,M3.5.0/1",
+"Europe/Gibraltar": "CET-1CEST,M3.5.0,M10.5.0/3", "Europe/Guernsey": "GMT0BST,M3.5.0/1,M10.5.0",
+"Europe/Helsinki": "EET-2EEST,M3.5.0/3,M10.5.0/4",
+"Europe/Isle_of_Man": "GMT0BST,M3.5.0/1,M10.5.0", "Europe/Istanbul": "<+03>-3",
+"Europe/Jersey": "GMT0BST,M3.5.0/1,M10.5.0", "Europe/Kaliningrad": "EET-2",
+"Europe/Kirov": "MSK-3", "Europe/Kyiv": "EET-2EEST,M3.5.0/3,M10.5.0/4",
+"Europe/Lisbon": "WET0WEST,M3.5.0/1,M10.5.0", "Europe/Ljubljana": "CET-1CEST,M3.5.0,M10.5.0/3",
+"Europe/London": "GMT0BST,M3.5.0/1,M10.5.0", "Europe/Luxembourg": "CET-1CEST,M3.5.0,M10.5.0/3",
+"Europe/Madrid": "CET-1CEST,M3.5.0,M10.5.0/3", "Europe/Malta": "CET-1CEST,M3.5.0,M10.5.0/3",
+"Europe/Mariehamn": "EET-2EEST,M3.5.0/3,M10.5.0/4", "Europe/Minsk": "<+03>-3",
+"Europe/Monaco": "CET-1CEST,M3.5.0,M10.5.0/3", "Europe/Moscow": "MSK-3",
+"Europe/Oslo": "CET-1CEST,M3.5.0,M10.5.0/3", "Europe/Paris": "CET-1CEST,M3.5.0,M10.5.0/3",
+"Europe/Podgorica": "CET-1CEST,M3.5.0,M10.5.0/3", "Europe/Prague": "CET-1CEST,M3.5.0,M10.5.0/3",
+"Europe/Riga": "EET-2EEST,M3.5.0/3,M10.5.0/4", "Europe/Rome": "CET-1CEST,M3.5.0,M10.5.0/3",
+"Europe/Samara": "<+04>-4", "Europe/San_Marino": "CET-1CEST,M3.5.0,M10.5.0/3",
+"Europe/Sarajevo": "CET-1CEST,M3.5.0,M10.5.0/3", "Europe/Saratov": "<+04>-4",
+"Europe/Simferopol": "MSK-3", "Europe/Skopje": "CET-1CEST,M3.5.0,M10.5.0/3",
+"Europe/Sofia": "EET-2EEST,M3.5.0/3,M10.5.0/4", "Europe/Stockholm": "CET-1CEST,M3.5.0,M10.5.0/3",
+"Europe/Tallinn": "EET-2EEST,M3.5.0/3,M10.5.0/4", "Europe/Tirane": "CET-1CEST,M3.5.0,M10.5.0/3",
+"Europe/Ulyanovsk": "<+04>-4", "Europe/Vaduz": "CET-1CEST,M3.5.0,M10.5.0/3",
+"Europe/Vatican": "CET-1CEST,M3.5.0,M10.5.0/3", "Europe/Vienna": "CET-1CEST,M3.5.0,M10.5.0/3",
+"Europe/Vilnius": "EET-2EEST,M3.5.0/3,M10.5.0/4", "Europe/Volgograd": "MSK-3",
+"Europe/Warsaw": "CET-1CEST,M3.5.0,M10.5.0/3", "Europe/Zagreb": "CET-1CEST,M3.5.0,M10.5.0/3",
+"Europe/Zurich": "CET-1CEST,M3.5.0,M10.5.0/3", "Indian/Antananarivo": "EAT-3",
+"Indian/Chagos": "<+06>-6", "Indian/Christmas": "<+07>-7", "Indian/Cocos": "<+0630>-6:30",
+"Indian/Comoro": "EAT-3", "Indian/Kerguelen": "<+05>-5", "Indian/Mahe": "<+04>-4",
+"Indian/Maldives": "<+05>-5", "Indian/Mauritius": "<+04>-4", "Indian/Mayotte": "EAT-3",
+"Indian/Reunion": "<+04>-4", "Pacific/Apia": "<+13>-13",
+"Pacific/Auckland": "NZST-12NZDT,M9.5.0,M4.1.0/3", "Pacific/Bougainville": "<+11>-11",
+"Pacific/Chatham": "<+1245>-12:45<+1345>,M9.5.0/2:45,M4.1.0/3:45", "Pacific/Chuuk": "<+10>-10",
+"Pacific/Easter": "<-06>6<-05>,M9.1.6/22,M4.1.6/22", "Pacific/Efate": "<+11>-11",
+"Pacific/Fakaofo": "<+13>-13", "Pacific/Fiji": "<+12>-12", "Pacific/Funafuti": "<+12>-12",
+"Pacific/Galapagos": "<-06>6", "Pacific/Gambier": "<-09>9", "Pacific/Guadalcanal": "<+11>-11",
+"Pacific/Guam": "ChST-10", "Pacific/Honolulu": "HST10", "Pacific/Kanton": "<+13>-13",
+"Pacific/Kiritimati": "<+14>-14", "Pacific/Kosrae": "<+11>-11", "Pacific/Kwajalein": "<+12>-12",
+"Pacific/Majuro": "<+12>-12", "Pacific/Marquesas": "<-0930>9:30", "Pacific/Midway": "SST11",
+"Pacific/Nauru": "<+12>-12", "Pacific/Niue": "<-11>11",
+"Pacific/Norfolk": "<+11>-11<+12>,M10.1.0,M4.1.0/3", "Pacific/Noumea": "<+11>-11",
+"Pacific/Pago_Pago": "SST11", "Pacific/Palau": "<+09>-9", "Pacific/Pitcairn": "<-08>8",
+"Pacific/Pohnpei": "<+11>-11", "Pacific/Port_Moresby": "<+10>-10", "Pacific/Rarotonga": "<-10>10",
+"Pacific/Saipan": "ChST-10", "Pacific/Tahiti": "<-10>10", "Pacific/Tarawa": "<+12>-12",
+"Pacific/Tongatapu": "<+13>-13", "Pacific/Wake": "<+12>-12", "Pacific/Wallis": "<+12>-12"
+}
 }
 </script>
 
@@ -225,6 +419,9 @@ const LW_VERSION = '0.2.1';
 const DATA = JSON.parse(document.getElementById('lw-data').textContent);
 const GROUPS = DATA.groups;
 const FIELDS = DATA.fields;
+// LuCI's table of OpenWrt 25.12.6 (luci/zoneinfo.uc), zone name to POSIX string, plus OpenWrt's own
+// default UTC; tests/configurator/check_page.py compares it with the rootfs.
+const ZONES = DATA.zones;
 const $ = (id) => document.getElementById(id);
 const inputs = {};
 const parts = {};
@@ -244,12 +441,55 @@ const RUN_NOTE = 'A run on GitHub refuses a profile with this empty (R53i), beca
 function passwordNotes(values) {
   const notes = {};
   if (values.WIFI_KEY === '') notes.WIFI_KEY = 'WIFI_KEY is empty. ' + RUN_NOTE;
+  // once, at the first of the two fields that sit one below the other
   if (values.ROOT_PASSWORD === '' && values.ROOT_PASSWORD_HASH === '') {
-    const text = 'ROOT_PASSWORD and ROOT_PASSWORD_HASH are both empty. ' + RUN_NOTE;
+    notes.ROOT_PASSWORD = 'ROOT_PASSWORD and ROOT_PASSWORD_HASH are both empty. ' + RUN_NOTE;
+  }
+  if (values.ROOT_PASSWORD !== '' && values.ROOT_PASSWORD_HASH !== '') {
+    const text = 'Both ROOT_PASSWORD and ROOT_PASSWORD_HASH are set: build.sh refuses that, so empty one of them.';
     notes.ROOT_PASSWORD = text;
     notes.ROOT_PASSWORD_HASH = text;
   }
   return notes;
+}
+
+// A field with `when` is shown while every condition holds (`KEY=value`, `KEY!=value`), or while it
+// holds something else than its default, so a value in the text is never out of sight.
+function shown(field, values) {
+  if (!field.when || values[field.key] !== field.default) return true;
+  return field.when.every((condition) => {
+    const [, key, op, value] = /^([A-Z0-9_]+)(!?=)(.*)$/.exec(condition);
+    return (values[key] === value) === (op === '=');
+  });
+}
+
+// TIMEZONE follows ZONENAME, as in LuCI. It is shown only when it holds another string (a loaded
+// profile, a zone the list lacks), so the router's clock never changes without the person seeing it.
+function zoneNote(values) {
+  const listed = ZONES[values.ZONENAME];
+  if (listed === values.TIMEZONE) return '';
+  if (listed === undefined) return 'ZONENAME is not on the list, so this string is not filled from it.';
+  return 'Differs from the string of ' + values.ZONENAME + ' (' + listed + '). The router uses this one; pick the time zone again to take the listed one.';
+}
+
+function followZone() {
+  const listed = ZONES[inputs.ZONENAME.value];
+  if (listed !== undefined) inputs.TIMEZONE.value = listed;
+}
+
+function zoneSelect(id) {
+  const input = el('select', { id });
+  const regions = {};
+  for (const name of Object.keys(ZONES)) {
+    const region = name.includes('/') ? name.split('/')[0] : '';
+    if (!region) {
+      input.append(el('option', { value: name }, name));
+      continue;
+    }
+    if (!regions[region]) regions[region] = input.appendChild(el('optgroup', { label: region }));
+    regions[region].append(el('option', { value: name }, name));
+  }
+  return input;
 }
 
 function el(tag, attrs, text) {
@@ -270,7 +510,12 @@ function richText(parent, text) {
 function buildInput(field) {
   const id = 'f-' + field.key;
   let input;
-  if (field.options) {
+  if (field.zones) {
+    // a list, not free text: the build takes any name, but only a listed one gives TIMEZONE
+    input = zoneSelect(id);
+    input.addEventListener('input', followZone);
+    input.addEventListener('change', followZone);
+  } else if (field.options) {
     input = el('select', { id });
     for (const value of field.options) {
       const label = (field.labels && field.labels[value]) || value || '(empty)';
@@ -317,23 +562,41 @@ function buildField(field) {
   }
   wrap.append(help, msgs);
   inputs[field.key] = input;
-  parts[field.key] = { slots, isNew: false };
+  parts[field.key] = { wrap, slots, isNew: false };
   return wrap;
+}
+
+// The fields of a group in the order of generic.conf, except that one with `after` is shown right
+// below the field it names (TIMEZONE below ZONENAME, which fills it).
+function groupFields(id) {
+  const list = FIELDS.filter((f) => f.group === id && !f.after);
+  for (const field of FIELDS.filter((f) => f.group === id && f.after)) {
+    list.splice(list.findIndex((f) => f.key === field.after) + 1, 0, field);
+  }
+  return list;
 }
 
 function buildForm() {
   const host = $('groups');
   for (const group of GROUPS) {
     const set = el('fieldset', { id: 'g-' + group.id });
-    set.append(el('legend', {}, group.title), el('p', { class: 'intro' }, group.intro));
+    set.append(el('legend', {}, group.title));
+    if (group.intro) set.append(el('p', { class: 'intro' }, group.intro));
     if (group.slot) set.append($(group.slot));
-    for (const field of FIELDS.filter((f) => f.group === group.id)) set.append(buildField(field));
+    for (const field of groupFields(group.id)) set.append(buildField(field));
     host.append(set);
   }
 }
 
+// SSH_KEYS is one line of `;`-separated keys in the profile and one key per line in the form; blank
+// lines are dropped, since an empty entry would only stop the build.
+function fromLines(text) {
+  return text.split(/\r\n|\n|\r/).map((line) => line.trim()).filter((line) => line !== '').join(';');
+}
+
 function setValue(key, value) {
   const input = inputs[key];
+  if (FIELDS.find((f) => f.key === key).lines) value = value.split(';').join('\n');
   if (input.tagName === 'SELECT' && ![...input.options].some((o) => o.value === value)) {
     // a loaded value the page does not offer stays as it is, so build.sh gets to judge it
     input.append(el('option', { value, 'data-extra': '' }, value + ' (as loaded)'));
@@ -352,7 +615,10 @@ function showMessage(slot, text) {
 
 function currentValues() {
   const values = {};
-  for (const field of FIELDS) values[field.key] = inputs[field.key].value;
+  for (const field of FIELDS) {
+    const value = inputs[field.key].value;
+    values[field.key] = field.lines ? fromLines(value) : value;
+  }
   return values;
 }
 
@@ -372,6 +638,9 @@ function fileName() {
 function refresh() {
   const values = currentValues();
   const notes = passwordNotes(values);
+  notes.TIMEZONE = zoneNote(values);
+  for (const field of FIELDS) parts[field.key].wrap.hidden = !shown(field, values);
+  parts.TIMEZONE.wrap.hidden = notes.TIMEZONE === '';
   const lines = [];
   let problems = 0;
   for (const field of FIELDS) {
@@ -522,6 +791,7 @@ async function copyText() {
 
 function start() {
   $('version').textContent = LW_VERSION;
+  for (const node of document.querySelectorAll('.lw-version')) node.textContent = LW_VERSION;
   buildForm();
   $('load-btn').addEventListener('click', () => loadText($('load-text').value));
   $('load-file').addEventListener('change', (event) => openFile(event.target.files[0]));
