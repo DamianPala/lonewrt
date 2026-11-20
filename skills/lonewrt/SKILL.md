@@ -1,6 +1,6 @@
 ---
 name: lonewrt
-description: "Build, check and flash a lonewrt OpenWrt image for a ZTE MF289F LTE router from a profile file made in the lonewrt configurator, on the person's Linux machine or in their own private GitHub repository, without ever showing a secret of the profile in the chat. Flashes only after the person's explicit yes, with a backup first. Use when someone says 'build my lonewrt image', 'I have a profile from the configurator', 'build it on GitHub', 'flash the image to my router', 'lonewrt', 'MF289F firmware', or asks to update a router that runs lonewrt. Do not use for editing lonewrt's code (read AGENTS.md instead) or for routers other than the MF289F."
+description: "Build, check and flash a lonewrt OpenWrt image for a ZTE MF289F LTE router from a profile file made in the lonewrt configurator, on the person's Linux machine or in their own private GitHub repository, without ever showing a secret of the profile in the chat. Flashes only after the person's explicit yes, with a backup first. Use when someone says 'build my lonewrt image', 'I have a profile from the configurator', 'build it on GitHub', 'flash the image to my router', 'lonewrt', 'MF289F firmware', or asks to update a router that runs lonewrt. Do not use for editing lonewrt's code (read AGENTS.md instead) or for routers other than the MF289F (a port to another router follows docs/porting.md)."
 ---
 
 # lonewrt: build and flash an image from a profile

@@ -2,7 +2,8 @@
 # SPEC R59d, R59f, R59: the agent skill is skills/lonewrt/SKILL.md with the frontmatter name lonewrt
 # and a description, README.md and AGENTS.md link to it, and it keeps the commands and rules the
 # spec asks for (the gates of a flash, the secret handed to GitHub on stdin, the 0600 copy). The check
-# is also run on damaged scratch copies and must fail naming the culprit.
+# is also run on damaged scratch copies and must fail naming the culprit. R62: the porting guide
+# docs/porting.md exists and README.md and AGENTS.md link to it.
 # shellcheck source=tests/build/lib.bash
 source "$(dirname "$0")/../build/lib.bash"
 scratch skilllinks
@@ -34,6 +35,12 @@ check_tree() {
 }
 
 out=$(check_tree "$FW") || fail "$out"
+
+# R62: the porting guide exists, and README.md and AGENTS.md link to it
+[ -f "$FW/docs/porting.md" ] || fail "R62: docs/porting.md is missing"
+for f in README.md AGENTS.md; do
+    grep -qF '](docs/porting.md)' "$FW/$f" || fail "R62: $f does not link to docs/porting.md"
+done
 
 # expect_refused TREE-CHANGE MESSAGE: a copy of the three files with one change must fail the check
 mkdir -p "$SCRATCH/t/skills/lonewrt"

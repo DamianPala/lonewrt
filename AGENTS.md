@@ -11,6 +11,7 @@ When code and spec disagree, say so; do not silently change either.
 
 Layout, tests and the upgrade path: `docs/development.md`. The agent skill for building and flashing a person's image: [`skills/lonewrt/SKILL.md`](skills/lonewrt/SKILL.md).
 Profile keys: `docs/profile.md`. Operator presets and how to write one: `docs/operators.md`.
+Moving lonewrt to another router: [`docs/porting.md`](docs/porting.md); a port is done in a fork, this repository builds only the MF289F.
 
 ## Commands
 

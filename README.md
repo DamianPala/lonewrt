@@ -24,7 +24,7 @@ The full behaviour, with reasons, is in [SPEC.md](SPEC.md).
 
 ## What you need
 
-- A ZTE MF289F that already runs OpenWrt. Installing OpenWrt over the stock firmware is not covered here.
+- A ZTE MF289F that already runs OpenWrt. Installing OpenWrt over the stock firmware is not covered here. Another LTE router that runs OpenWrt can be a starting point too, with a fork and some work: see [docs/porting.md](docs/porting.md).
 - Either a Linux x86_64 build host, or no Linux at all: a web browser, a GitHub account and the router's web page (LuCI), see [Build without Linux](#build-without-linux). The Linux host needs `bash`, `python3`, `openssl`, `curl`, `tar`, `zstd`, `make`, `flock` and GNU awk. The tests also want `bubblewrap`, `squashfs-tools`, `qrencode` and `zbar-tools`. Details in [docs/development.md](docs/development.md).
 - For the notifications, a Telegram bot token and a chat. For remote access, a WireGuard server. For the heartbeat, a healthchecks.io check. Each is optional.
 
@@ -155,5 +155,6 @@ The build targets OpenWrt 25.12.6; another release means updating the pins, also
 - Security: use "Report a vulnerability" on the Security tab, not a public issue.
 - Pull requests for bug fixes are welcome; open an issue first for anything larger.
 - Working on the code: [docs/development.md](docs/development.md) for layout and tests, [AGENTS.md](AGENTS.md) if a coding agent does the typing.
+- Another router: [docs/porting.md](docs/porting.md) lists what stays, what changes and what to measure again; it is written for a coding agent that does the port with you, in a fork.
 
 Licence: MIT, see [LICENSE](LICENSE). The packages the ImageBuilder puts into the image keep their own licences.
