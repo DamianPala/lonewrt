@@ -89,5 +89,5 @@ This is why images are flashed only after `sysupgrade -T` passes, and why the ke
 1. Change the version in `build.sh` and `tests/vm/build-image.sh` (`IB_TAR`), `fetch-deps.sh` (file names in `unpack_rootfs`) and `deps.lst` (URLs and sha256 from the `sha256sums` file of each download directory).
 2. Fetch the third-party `.apk` files again for that version: the feed `dl.eko.one.pl/openwrt-<release>/packages/<arch>/base/` for `modemband` and `modemdata`, the GitHub releases of 4IceG for the `luci-app-*`.
 3. Compare the default configuration with what `zz-lw-config` changes (it sets only the differences).
-4. Refresh the x86 rootfs for the tests.
+4. Refresh the x86 rootfs for the tests. Then `tests/configurator/run.sh` compares the configurator's zone table with LuCI's `zoneinfo.uc` of that rootfs; copy the new table into `configurator/index.html` when they differ (the build fills an empty `TIMEZONE` from it, SPEC R3c).
 5. Read `/lib/netifd/proto/qmi.sh` of the new `uqmi` package. The build stops, naming the file, when the `--network-scan` line is not there exactly once; check that the new handler still scans only after the mode set, change `qmi-handler.sh` if it does not, and time `ifup wwan` on the router again (SPEC D82: about 15 s to the first ping, 40 s with the scan).

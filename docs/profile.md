@@ -10,7 +10,8 @@ Public SSH keys for root's key login go in the profile key `SSH_KEYS`, so a prof
 
 | Key | Meaning | May be empty |
 |---|---|---|
-| `HOSTNAME`, `LAN_IP`, `TIMEZONE`, `ZONENAME` | name, LAN address (/24) and time zone (POSIX string and zone name; the configurator fills the string from the zone picked from its list) | no |
+| `HOSTNAME`, `LAN_IP`, `ZONENAME` | name, LAN address (/24) and time zone name, e.g. `Europe/Warsaw` (the configurator offers LuCI's list) | no |
+| `TIMEZONE` | the time zone as the POSIX string the router's clock uses, e.g. `CET-1CEST,M3.5.0,M10.5.0/3` | yes: the build takes the string of `ZONENAME` from the configurator's list, and stops when the zone is not on it |
 | `WIFI_SSID`, `WIFI_KEY` | one network on both bands; key 8 to 63 characters | key: drawn |
 | `WIFI_COUNTRY` | two-letter regulatory country, set it before building | no |
 | `WIFI_CHANNEL_2G`, `WIFI_HTMODE_2G`, `WIFI_CHANNEL_5G`, `WIFI_HTMODE_5G` | `auto` or a channel, and `HT20`, `HT40`, `VHT80`... | no |

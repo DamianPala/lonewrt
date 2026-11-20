@@ -5,7 +5,8 @@ Run by build.sh as `python3 -I src/render.py ...`. Parses profiles/<name>.conf w
 src/files, fills in the @KEY@ placeholders, adds the weekly balance cron job when the profile has
 notifications and a balance threshold (SPEC R35) and the heartbeat job when the profile has a ping
 address (SPEC R42), the profile's SSH key files merged with its SSH_KEYS (SPEC R61) and
-/etc/lw-build with the release version of the VERSION file (SPEC R3b, R7b), sets file modes and
+/etc/lw-build with the release version of the VERSION file (SPEC R3b, R7b), fills an empty TIMEZONE
+from ZONENAME with the configurator's zone table (SPEC R3c), sets file modes and
 checks every shell script with busybox `sh -n` (SPEC R6).
 Errors name the key, line or file, never a profile value.
 """
@@ -13,6 +14,7 @@ Errors name the key, line or file, never a profile value.
 import argparse
 import base64
 import hashlib
+import json
 import re
 import secrets
 import shutil
@@ -44,6 +46,7 @@ MAY_BE_EMPTY = {
     "HC_PING_URL",
     "SMS_ADMINS",
     "SSH_KEYS",
+    "TIMEZONE",
 }
 NOTIFY_KEYS = ("TG_BOT_TOKEN", "TG_CHAT_ID")
 # Weekly balance check (SPEC R35), only in images with notifications and a threshold
@@ -125,6 +128,9 @@ SSH_COMMENT = re.compile(r"[^\x00-\x1f\x7f]*")
 # Script locations whose files may lack a shebang because they are sourced
 SOURCED_DIRS = ("etc/uci-defaults/", "etc/hotplug.d/", "usr/lib/lw/")
 PASSWORD_ALPHABET = "abcdefghijkmnpqrstuvwxyz23456789"  # gitleaks:allow (an alphabet, not a key)
+# The data block of configurator/index.html, whose "zones" table (LuCI's, R56f) fills an empty
+# TIMEZONE (R3c)
+PAGE_DATA = re.compile(r'<script type="application/json" id="lw-data">(.*?)</script>', re.DOTALL)
 
 
 class RenderError(Exception):
@@ -246,6 +252,34 @@ def validate(values: dict[str, str], required: list[str], name: str) -> None:
         for key in REQUIRED_WHEN_WG_ENABLED:
             if not values[key]:
                 raise RenderError(f"profile {name}: key {key} is empty but WG_ENABLED is 1")
+
+
+def read_zones(page: Path | None) -> dict[str, str]:
+    if page is None or not page.is_file():
+        raise RenderError(f"no zone list: the configurator page {page} is missing")
+    match = PAGE_DATA.search(page.read_text(encoding="utf-8"))
+    zones = json.loads(match.group(1)).get("zones") if match else None
+    if not isinstance(zones, dict) or not zones:
+        raise RenderError(f"no zone list in {page}")
+    return zones
+
+
+def fill_timezone(values: dict[str, str], page: Path | None, name: str) -> bool:
+    """An empty TIMEZONE takes the string of ZONENAME from the configurator's table (R3c, D127).
+
+    The page is read only then, so a profile with its own TIMEZONE builds without it. True when
+    the string came from the table.
+    """
+    if values["TIMEZONE"]:
+        return False
+    zones = read_zones(page)
+    if values["ZONENAME"] not in zones:
+        raise RenderError(
+            f"profile {name}: key TIMEZONE is empty and ZONENAME is not in the configurator's "
+            "list of time zones; set TIMEZONE"
+        )
+    values["TIMEZONE"] = zones[values["ZONENAME"]]
+    return True
 
 
 def notify_state(values: dict[str, str]) -> str:
@@ -547,6 +581,7 @@ def render(args: argparse.Namespace) -> None:
     template = parse_profile(args.profiles / "generic.conf")
     values = parse_profile(args.profiles / f"{args.name}.conf")
     validate(values, list(template), args.name)
+    zone_filled = fill_timezone(values, args.zones, args.name)
     version = read_version(args.version_file)
     card = resolve_passwords(values, args.card_in)
     shell = shell_command(args.rootfs)
@@ -574,6 +609,7 @@ def render(args: argparse.Namespace) -> None:
         f"SSH_KEYS: {len(ssh_keys)} keys",
         f"notifications: {notify_state(values)}" + (", weekly balance check" if balance else ""),
         f"heartbeat: {'on' if heartbeat else 'off'}",
+        f"TIMEZONE: {'from ZONENAME' if zone_filled else 'from the profile'}",
     ]
     if card and args.card_out:
         args.card_out.write_text(card[0], encoding="utf-8")
@@ -593,6 +629,7 @@ def main() -> int:
     parser.add_argument("--card-in", type=Path, help="existing password card to reuse")
     parser.add_argument("--card-out", type=Path, help="where to write the password card")
     parser.add_argument("--rootfs", type=Path, help="OpenWrt rootfs whose busybox checks syntax")
+    parser.add_argument("--zones", type=Path, help="configurator page whose zones fill TIMEZONE")
     args = parser.parse_args()
     try:
         render(args)

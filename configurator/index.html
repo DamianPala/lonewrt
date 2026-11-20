@@ -134,8 +134,8 @@ ol { padding-left: 1.4rem; }
    "help": "The router's name on the network: letters, digits and `-`."},
   {"key": "LAN_IP", "group": "basics", "default": "192.168.1.1", "empty": false,
    "help": "The router's address in its network (a /24 network). The settings page (LuCI) is at `https://` followed by this address."},
-  {"key": "TIMEZONE", "group": "basics", "default": "CET-1CEST,M3.5.0,M10.5.0/3", "empty": false, "after": "ZONENAME",
-   "help": "The time zone as the POSIX string the router's clock uses. It is filled from `ZONENAME` and shown only when it holds another string."},
+  {"key": "TIMEZONE", "group": "basics", "default": "CET-1CEST,M3.5.0,M10.5.0/3", "empty": true, "after": "ZONENAME",
+   "help": "The time zone as the POSIX string the router's clock uses. It is filled from `ZONENAME` and shown only when it holds another string. Left empty, the build fills it from `ZONENAME` the same way."},
   {"key": "ZONENAME", "group": "basics", "default": "Europe/Warsaw", "empty": false, "zones": true,
    "help": "The time zone of the place the router runs in. Type the first letters of the region to jump in the list, for example `Europe/Warsaw`."},
 
@@ -465,9 +465,11 @@ function shown(field, values) {
 
 // TIMEZONE follows ZONENAME, as in LuCI. It is shown only when it holds another string (a loaded
 // profile, a zone the list lacks), so the router's clock never changes without the person seeing it.
+// An empty one with a listed zone is the same string, since the build fills it from this table (R3c).
 function zoneNote(values) {
   const listed = ZONES[values.ZONENAME];
-  if (listed === values.TIMEZONE) return '';
+  if (listed === values.TIMEZONE || (listed !== undefined && values.TIMEZONE === '')) return '';
+  if (listed === undefined && values.TIMEZONE === '') return 'ZONENAME is not on the list, so the build cannot fill this string; type it.';
   if (listed === undefined) return 'ZONENAME is not on the list, so this string is not filled from it.';
   return 'Differs from the string of ' + values.ZONENAME + ' (' + listed + '). The router uses this one; pick the time zone again to take the listed one.';
 }

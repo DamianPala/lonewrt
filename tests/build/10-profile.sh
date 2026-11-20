@@ -376,5 +376,20 @@ vbuild "$SCRATCH/no-newline-version" --render-only generic "$SCRATCH/no-newline-
     fail "VERSION without a trailing newline was rejected"
 grep -qx "version=0.9.9" "$SCRATCH/no-newline-out/etc/lw-build" || fail "VERSION without newline not in lw-build"
 
+# R3c: an empty TIMEZONE takes the string of ZONENAME from the configurator's zone table; a zone the
+# table lacks stops the build, a TIMEZONE of the profile is kept, and only an empty one needs the page
+zz=etc/uci-defaults/zz-lw-config
+variant tz-ny "s/^TIMEZONE=.*/TIMEZONE=''/; s|^ZONENAME=.*|ZONENAME='America/New_York'|"
+build --render-only tz-ny "$SCRATCH/tz-ny-out" 2>/dev/null || fail "an empty TIMEZONE was refused"
+grep -qx "P_TIMEZONE='EST5EDT,M3.2.0,M11.1.0'" "$SCRATCH/tz-ny-out/$zz" ||
+    fail "an empty TIMEZONE did not take the string of ZONENAME"
+variant tz-mars "s/^TIMEZONE=.*/TIMEZONE=''/; s|^ZONENAME=.*|ZONENAME='Mars/Olympus'|"
+expect_fail_with "key TIMEZONE is empty and ZONENAME is not in the configurator's list" build tz-mars
+variant tz-own "s/^TIMEZONE=.*/TIMEZONE='XYZ-3'/; s|^ZONENAME=.*|ZONENAME='Mars/Olympus'|"
+LW_ZONES_PAGE=$SCRATCH/no-page.html build --render-only tz-own "$SCRATCH/tz-own-out" 2>/dev/null ||
+    fail "a profile with its own TIMEZONE needed the configurator page"
+grep -qx "P_TIMEZONE='XYZ-3'" "$SCRATCH/tz-own-out/$zz" || fail "the profile's TIMEZONE was replaced"
+LW_ZONES_PAGE=$SCRATCH/no-page.html expect_fail_with "no zone list" build tz-ny
+
 [ "$(listing "$I")" = "$before" ] || fail "a failed build changed image/: $(listing "$I")"
 echo ok

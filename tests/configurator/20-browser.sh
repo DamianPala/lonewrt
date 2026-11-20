@@ -252,6 +252,14 @@ grep -qx "ZONENAME='Mars/Olympus'" <(out_text) || fail "an unlisted ZONENAME was
 ab select '#f-ZONENAME' 'Europe/Podgorica' >/dev/null
 expect "TIMEZONE hidden after picking a zone" "$(visible '[data-key=TIMEZONE]')" 0
 grep -qx "TIMEZONE='CET-1CEST,M3.5.0,M10.5.0/3'" <(out_text) || fail "TIMEZONE did not follow the picked zone"
+# R3c: an empty TIMEZONE is filled by the build from a listed zone, so it stays hidden; with an
+# unlisted zone the build cannot fill it, so it is shown with a note
+load_lines "TIMEZONE=''"$'\n'"ZONENAME='Europe/Warsaw'"
+expect "empty TIMEZONE hidden for a listed zone" "$(visible '[data-key=TIMEZONE]')" 0
+grep -qx "TIMEZONE=''" <(out_text) || fail "a loaded empty TIMEZONE was changed"
+load_lines "TIMEZONE=''"$'\n'"ZONENAME='Mars/Olympus'"
+expect "empty TIMEZONE shown for an unlisted zone" "$(visible '[data-key=TIMEZONE]')" 1
+expect "empty TIMEZONE note for an unlisted zone" "$(at_key TIMEZONE note)" 1
 
 # Copy: the text lands on the clipboard (pasted into the load box, since a page may not read it back)
 ab click '#reset-btn' >/dev/null
