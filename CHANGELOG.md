@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.0] - 2026-11-20
+
+### Added
+
+- Profile: `TIMEZONE` may be left empty; the build then takes the time zone string for `ZONENAME` from the configurator's list, and stops when the zone is not on it
+- Docs: `docs/porting.md`, a guide for moving lonewrt to another OpenWrt router with an LTE modem, written for a coding agent that does the port with you in a fork
+
+### Changed
+
+- Configurator: a profile loaded with an empty `TIMEZONE` keeps it empty, and the field appears with a note only when the build could not fill it (a zone not on the list)
+
 ## [0.3.0] - 2026-11-17
 
 ### Changed
@@ -44,6 +55,7 @@ First public release, experimental: it runs on one router in daily use.
 - Listed phone numbers can text `status` or `reboot` to the SIM, at most 5 restarts a day
 - Optional WireGuard tunnel for remote access, LuCI apps for the modem, the LTE bands and SMS, persistent logs, and the release version in `/etc/lw-build`
 
+[0.4.0]: https://github.com/DamianPala/lonewrt/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/DamianPala/lonewrt/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/DamianPala/lonewrt/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/DamianPala/lonewrt/compare/v0.1.0...v0.2.0
