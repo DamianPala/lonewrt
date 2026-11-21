@@ -410,8 +410,8 @@ LTE router with OpenWrt (ZTE MF289F): passwords and hints
   Network > Interfaces > WWAN > Edit > PIN.
 - No internet 5 minutes after boot: enter the operator's APN in LuCI:
   Network > Interfaces > WWAN > Edit > APN, then Save & Apply.
-- The router works on LTE only. The network mode (2G/3G/LTE) cannot be changed in LuCI:
-  the router sets LTE again at every boot.
+- The router works on LTE and sets LTE again at every boot. Only when LTE stays dead after a restart
+  does it switch to 2G (EDGE) for a while. A network mode set in LuCI lasts until the next boot.
 - When the internet fails, the router first restarts the connection by itself, then, if that does not help, the whole router.
   To turn off the router restarts in LuCI: System > Scheduled Tasks, delete the line with /usr/sbin/wwan-recover.
 - SMS: when the modem holds more than 30 messages, the router saves all of them to

@@ -136,7 +136,7 @@ salt=$(cut -d'$' -f3 <<<"$hash")
 [ "$(openssl passwd -6 -salt "$salt" "$root")" = "$hash" ] || fail "root hash does not match the card"
 
 # R33a: hints under the passwords
-for hint in 'https://192.168.1.1' certificate 'A reset with the button' PIN APN 'LTE only' \
+for hint in 'https://192.168.1.1' certificate 'A reset with the button' PIN APN 'LTE again at every boot' '2G (EDGE)' \
     'Scheduled Tasks' /root/sms-archive/ 'Country Code'; do
     grep -qF -- "$hint" "$card" || fail "card lacks the hint '$hint'"
 done
