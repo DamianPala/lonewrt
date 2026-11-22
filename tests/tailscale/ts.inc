@@ -19,6 +19,9 @@ BASE=1900000000
 # router with Tailscale on and no key. Does not touch what lw_setup built.
 ts_world() {
     rm -rf "$D" /etc/tailscale /tmp/lw-tailscale
+    # R63: the service ships only in a tailscale image, from src/files-tailscale
+    cp -a /fw/src/files-tailscale/. /
+    rm -f /etc/tailscale/lw-authkey
     mkdir -p "$D" /etc/tailscale
     touch /etc/config/lonewrt
     uci set lonewrt.tailscale=tailscale

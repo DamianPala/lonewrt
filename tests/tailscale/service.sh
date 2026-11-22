@@ -10,7 +10,7 @@ procd_set_param() { echo "$*" >>"$T/procd"; }
 procd_close_instance() { echo close >>"$T/procd"; }
 : >"$T/procd"
 (
-    # shellcheck source=src/files/etc/init.d/lw-tailscale
+    # shellcheck source=src/files-tailscale/etc/init.d/lw-tailscale
     . /etc/init.d/lw-tailscale
     start_service
     lw_expect_eq "$START" 81 "start order (after the package's init at 80)"
