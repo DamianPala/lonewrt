@@ -6,6 +6,8 @@
 # then the fake full profile into another scratch image/ whose rootfs carries the profile's values
 # and SSH keys (R7, R31), the heartbeat line (R42) and the nlbwmon hotplug script (R44a). In both
 # images qmi.sh is the uqmi package's file of that build minus its network-scan line (R12d, D82).
+# The generic image has no Tailscale, the fake one is a tailscale image (R63 to R64b): the packages
+# in its manifest, the version in /etc/lw-build, the key file and the size of the root.
 # shellcheck source=tests/build/lib.bash
 source "$(dirname "$0")/lib.bash"
 scratch images
@@ -15,20 +17,39 @@ die() { fail "$*"; }
 source "$FW/qmi-handler.sh"
 LW_ROOTFS=${LW_ROOTFS:-$LW_WORK/dl/x86/rootfs}
 
-# packages_in TABLE: backticked package names in the first column of a packages.md table (names
-# inside parentheses are dependencies pulled in, not packages to ask for)
-packages_in() {
+# The note that marks an "Included" row as a tailscale image's only (SPEC R2, R63)
+TS_NOTE="only with \`TS_ENABLED='1'\`"
+
+# rows_in TABLE: the package rows of a packages.md table
+rows_in() {
     # shellcheck disable=SC2016  # literal backticks of the markdown table
-    awk -v want="$1" '/^## /{on = index($0, want) > 0; next} on && /^\| `/' "$FW/packages.md" |
-        cut -d'|' -f2 | sed 's/([^)]*)//g' | grep -o '`[^`]*`' | tr -d '`'
+    awk -v want="$1" '/^## /{on = index($0, want) > 0; next} on && /^\| `/' "$FW/packages.md"
 }
 
-# check_manifest FILE: every "Included" package installed, none of "Left out" (SPEC R2)
+# names_of: the backticked package names in the first column of the rows on stdin (names inside
+# parentheses are dependencies pulled in, not packages to ask for)
+names_of() {
+    # shellcheck disable=SC2016  # literal backticks of the markdown table
+    cut -d'|' -f2 | sed 's/([^)]*)//g' | grep -o '`[^`]*`' | tr -d '`'
+}
+
+packages_in() { rows_in "$1" | names_of; }
+
+# ts_packages_in: the "Included" rows marked as a tailscale image's only
+ts_packages_in() { rows_in Included | grep -F "$TS_NOTE" | names_of; }
+
+# check_manifest FILE [ts]: every "Included" package installed, none of "Left out" (SPEC R2); the rows
+# marked "only with TS_ENABLED='1'" only in a tailscale image (R63), which is the argument ts
 check_manifest() {
-    local installed pkg
+    local installed pkg ts_only
     installed=$(cut -d' ' -f1 "$1")
+    ts_only=$(ts_packages_in)
     while read -r pkg; do
-        grep -qx -- "$pkg" <<<"$installed" || fail "manifest lacks $pkg"
+        if [ "${2:-}" != ts ] && grep -qxF -- "$pkg" <<<"$ts_only"; then
+            ! grep -qx -- "$pkg" <<<"$installed" || fail "R63: the manifest of an image without Tailscale has $pkg"
+        else
+            grep -qx -- "$pkg" <<<"$installed" || fail "manifest lacks $pkg"
+        fi
     done < <(packages_in Included)
     while read -r pkg; do
         while read -r name; do
@@ -66,12 +87,17 @@ stray=$(awk '/^## /{on = /Included|Left out/; next}
     on && /^\|/ && !/^\| `/ && !/^\| Package / && !/^\|---/' "$FW/packages.md")
 [ -z "$stray" ] || fail "packages.md: a table row does not start with a package name in backticks: ${stray:0:60}"
 
-# build.sh installs exactly the "Included" table minus the default-set row
+# build.sh installs exactly the "Included" table minus the default-set row and the rows marked as a
+# tailscale image's only, which it adds as TS_PACKAGES for a tailscale profile (R63)
 DEFAULT_SET='uqmi|kmod-.*|wpad-basic-mbedtls|firewall4|dnsmasq|dropbear'
 packages_in Included | grep -qxE "$DEFAULT_SET" || fail "packages.md \"Included\" has no row of the default set"
-want=$(packages_in Included | grep -vxE "$DEFAULT_SET" | sort)
+ts_want=$(ts_packages_in | sort)
+[ -n "$ts_want" ] || fail "packages.md \"Included\" has no row marked $TS_NOTE"
+want=$(packages_in Included | grep -vxE "$DEFAULT_SET" | grep -vxFf <(echo "$ts_want") | sort)
 have=$(packages_of "$FW/build.sh")
 [ "$want" = "$have" ] || fail "build.sh PACKAGES differ from packages.md: $(diff <(echo "$want") <(echo "$have") | tr '\n' ' ')"
+ts_have=$(sed -n 's/^TS_PACKAGES=(\(.*\))$/\1/p' "$FW/build.sh" | tr ' ' '\n' | sort)
+[ "$ts_want" = "$ts_have" ] || fail "build.sh TS_PACKAGES differ from packages.md: $(diff <(echo "$ts_want") <(echo "$ts_have") | tr '\n' ' ')"
 
 # The VM bench installs the same list without the packages no VM test uses, plus the device
 # defaults that the x86 profile does not bring (tests/vm/README.md)
@@ -99,6 +125,11 @@ unpack_image "$DI/generic-sysupgrade.bin" "$SCRATCH/generic"
 R=$SCRATCH/generic/rootfs
 check_qmi "$R"
 assert_absent "$R" "${LW_VALUES[@]}" "${FAKE_VALUES[@]}"
+# R63: no Tailscale in an image without it: no package file, config or state directory, and no line in /etc/lw-build
+for f in usr/sbin/tailscaled usr/sbin/tailscale etc/config/tailscale etc/tailscale; do
+    [ ! -e "$R/$f" ] || fail "R63: the generic image has /$f"
+done
+! grep -q '^tailscale=' "$R/etc/lw-build" || fail "R63b: the generic image has a tailscale= line"
 [ -z "$(ls -A "$R/etc/dropbear")" ] || fail "generic image has files in /etc/dropbear"
 [ "$(stat -c %a "$R" "$R/etc" "$R/usr/sbin" | sort -u)" = 755 ] || fail "/, /etc or /usr/sbin not 0755"
 for f in "$UD" etc/init.d/lw-firstboot etc/lw-build etc/config/lonewrt etc/config/watchcat \
@@ -130,11 +161,13 @@ hash=$(sed -n "s/^P_ROOT_PASSWORD_HASH='\(.*\)'$/\1/p" "$R/$UD")
 P=$SCRATCH/profiles
 I=$SCRATCH/image
 make_profiles "$P"
-LW_PROFILES=$P LW_IMAGE=$I "$FW/build.sh" fake-full >/dev/null
+LW_PROFILES=$P LW_IMAGE=$I "$FW/build.sh" fake-full >/dev/null 2>"$SCRATCH/fake-full.err"
+! grep -q 'warning: the tailscale package' "$SCRATCH/fake-full.err" ||
+    fail "R63g: the build warned about the tailscale package: $(grep 'warning: the tailscale' "$SCRATCH/fake-full.err")"
 [ ! -e "$I/fake-full-passwords.txt" ] || fail "a profile with both passwords got a card"
 # ImageBuilder's build_dir keeps no copy of the profile's rootfs or image (SPEC D15)
 assert_absent "$LW_WORK/ib" "${FAKE_VALUES[@]}"
-check_manifest "$I/fake-full.manifest"
+check_manifest "$I/fake-full.manifest" ts
 mkdir -p "$SCRATCH/fake"
 unpack_image "$I/fake-full-sysupgrade.bin" "$SCRATCH/fake"
 R=$SCRATCH/fake/rootfs
@@ -155,4 +188,21 @@ done
 cmp -s "$R/etc/dropbear/authorized_keys" "$FIX/fake-full-authorized_keys" ||
     fail "R61: image authorized_keys is not SSH_KEYS plus the profile's file"
 [ "$(stat -c %a "$I/fake-full-sysupgrade.bin")" = 600 ] || fail "image file is not 0600"
+# R63, R63a, R63b, R64b: the fake profile is a tailscale image: the package's files, the version of
+# the manifest in /etc/lw-build, the profile's settings over the package's, the auth key in one
+# file of mode 0600, and a root file system within the limit
+for f in usr/sbin/tailscaled usr/sbin/tailscale etc/init.d/tailscale; do
+    [ -e "$R/$f" ] || fail "R63: the tailscale image lacks /$f"
+done
+ts_version=$(awk '$1 == "tailscale" {print $3}' "$I/fake-full.manifest")
+[ -n "$ts_version" ] || fail "R63: the manifest has no tailscale version"
+[ "$(tail -n 1 "$R/etc/lw-build")" = "tailscale=$ts_version" ] ||
+    fail "R63b: /etc/lw-build does not end with tailscale=$ts_version: $(tail -n 1 "$R/etc/lw-build")"
+grep -qF "option log_stdout '0'" "$R/etc/config/tailscale" || fail "R63h: the image has the package's etc/config/tailscale, not ours"
+[ "$(stat -c %a "$R/etc/tailscale/lw-authkey")" = 600 ] || fail "R64b: /etc/tailscale/lw-authkey is not 0600 in the image"
+[ "$(grep -rlaF "$FAKE_TS_AUTHKEY" "$R")" = "$R/etc/tailscale/lw-authkey" ] ||
+    fail "R64b: the auth key is in other files than lw-authkey"
+root_bytes=$(tar -tvf "$I/fake-full-sysupgrade.bin" --wildcards '*/root' | awk '{print $3}')
+[ "$root_bytes" -le 15000000 ] || fail "R63a: the root of the tailscale image is $root_bytes bytes"
+echo "tailscale image: tailscale $ts_version, root $root_bytes bytes" >&2
 echo "ok: $(stat -c %s "$DI/generic-sysupgrade.bin") bytes (scratch image, removed with the test)"

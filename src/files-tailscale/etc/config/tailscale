@@ -1,0 +1,7 @@
+# R63h, D156: Tailscale's own output stays out of syslog; the rest is the file of package 1.104.1-r1
+config settings 'settings'
+	option log_stderr '0'
+	option log_stdout '0'
+	option port '41641'
+	option state_file '/etc/tailscale/tailscaled.state'
+	option fw_mode 'nftables'

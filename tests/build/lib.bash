@@ -20,6 +20,8 @@ fi
 # The fake WireGuard private key is joined from two parts here and put into the fixture by
 # make_profiles, so no file holds a whole private-key-shaped string for secret scanners to flag.
 FAKE_WG_PRIVATE_KEY="RkFLRS13Zy1wcml2YXRl""LWtleS1xN3g5LTAxMjM0NTY=" # gitleaks:allow (synthetic)
+# The fake Tailscale auth key (SPEC R66) is joined from two parts for the same reason
+FAKE_TS_AUTHKEY="tskey-auth-""kTESTq7x9CNTRL-q7x9fakeauthkeyq7x9" # gitleaks:allow (synthetic)
 # Made-up public keys (SPEC R61), generated with ssh-keygen for these tests and thrown away: A and E
 # are the SSH_KEYS of fixtures/fake-full.conf, B, C and R only for the cases that build their own
 # profile. Fields of a key: type, base64 data, comment.
@@ -38,7 +40,7 @@ FAKE_VALUES=(
     RkFLRS13Zy1wZWVyLXB1YmxpYy1rZXktcTd4OS0wMTI= 10.99.77. vpn.fake-q7x9.example
     FAKEauthorizedKEYq7x9 FAKE-dropbear-ed25519-host-key-q7x9 FAKE-dropbear-rsa-host-key-q7x9
     FAKEtgtokenq7x9 -1009977001977 hc-ping.fake-q7x9.example FAKEhcping-q7x9-0001
-    +15550100123 15550100456 fake-a-q7x9 fake-e-q7x9 Acme-q7x9
+    +15550100123 15550100456 fake-a-q7x9 fake-e-q7x9 Acme-q7x9 "$FAKE_TS_AUTHKEY"
 )
 
 fail() {
@@ -59,7 +61,8 @@ make_profiles() {
     mkdir -p "$1"
     cp "$FW/profiles/generic.conf" "$1/"
     cp -r "$FIX/fake-full.conf" "$FIX/fake-full" "$1/"
-    sed -i "s|@FAKE_WG_PRIVATE_KEY@|$FAKE_WG_PRIVATE_KEY|" "$1/fake-full.conf"
+    sed -i -e "s|@FAKE_WG_PRIVATE_KEY@|$FAKE_WG_PRIVATE_KEY|" \
+        -e "s|@FAKE_TS_AUTHKEY@|$FAKE_TS_AUTHKEY|" "$1/fake-full.conf"
 }
 
 # listing DIR: every entry under DIR, hidden ones too, to prove a failed build added nothing

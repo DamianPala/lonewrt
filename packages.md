@@ -11,6 +11,7 @@ Both tables are binding (SPEC R2): the full build test compares them with the pa
 | `luci`, `luci-proto-qmi` | web panel, LTE interface in LuCI | official |
 | `luci-ssl` | HTTPS in LuCI (pulls in `px5g-mbedtls` for the certificate); without it the router's https:// address does not work | official |
 | `wireguard-tools`, `luci-proto-wireguard` | remote access through a WireGuard server | official |
+| `tailscale`, `kmod-tun` | remote access through the owner's Tailscale account (R63, D133); only with `TS_ENABLED='1'`, so images without Tailscale keep their flash (D134) | official |
 | `watchcat`, `luci-app-watchcat` | soft link repair (restarts `wwan` after `LINK_RESTART_AFTER_S`, 120 s by default) | official |
 | `sms-tool` | AT commands and SMS from the console; every script of the image that talks to the modem uses it | official |
 | `comgt` | required by `modemdata`, `luci-app-modemdata` and `luci-app-sms-tool-js` (apk dependency); the image does not use it directly | official |
@@ -46,6 +47,7 @@ They are the only packages in the image that do not come from OpenWrt's signed f
 
 An image is about 9.9 MB.
 What it does not take of the router's system partition (29 MiB) holds the settings, the persistent log, the data counters and the SMS archive: about 12.5 MiB with this package set, measured on release 0.2.1.
+An image with `TS_ENABLED='1'` has a root file system about 8 MB larger (D134), and `build.sh` stops above 15 000 000 bytes of it (R63a).
 
 ## Changing the list
 

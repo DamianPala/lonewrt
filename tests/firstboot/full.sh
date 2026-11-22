@@ -2,6 +2,8 @@
 # full-profile column, R11c band target, R31 tunnel, R13 APN from the profile, SSH keys).
 # shellcheck source=tests/firstboot/fb-lib
 . /fw/tests/firstboot/fb-lib
+# shellcheck source=tests/firstboot/ts-lib
+. /fw/tests/firstboot/ts-lib
 fb_prepare fake-full
 fb_uci_defaults
 
@@ -48,11 +50,16 @@ lw_expect_eq "$(grep -c lw-heartbeat /etc/crontabs/root)" 1 "heartbeat lines in 
 grep -qxF '*/5 * * * * /usr/sbin/lw-heartbeat' /etc/crontabs/root || lw_fail "no heartbeat cron line"
 ! grep -q 'hc-ping' /etc/crontabs/root || lw_fail "the heartbeat address is in the crontab"
 
-# R29c: the debug level of the profile: the level in uci and a persistent log of 2 MB before it rotates
+# R29c, D147: the debug level of the profile is in uci; this profile is a tailscale image, so the
+# persistent log stays at 1 MB (tests/firstboot/debug.sh has 2 MB for an image without Tailscale)
 fb_expect lonewrt.log.level debug
-fb_expect system.@system[0].log_size 2048
+fb_expect system.@system[0].log_size 1024
 fb_expect system.@system[0].log_buffer_size 1024
 fb_expect system.@system[0].log_file /root/openwrt.log
+
+# R63, R64a, R64b, R67: the fake profile is a tailscale image with the route and an auth key; the
+# key is joined from parts like tests/build/lib.bash does
+ts_expect_image 1 192.168.77.0/24 "tskey-auth-""kTESTq7x9CNTRL-q7x9fakeauthkeyq7x9"
 
 # R14a: the profile's delay is the period of the soft restart of wwan
 fb_expect watchcat.wwan_soft.period 180

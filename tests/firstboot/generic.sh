@@ -1,6 +1,8 @@
 # First boot of the generic image (SPEC R7a table column "With `generic.conf`", R32, R7b, R8a).
 # shellcheck source=tests/firstboot/fb-lib
 . /fw/tests/firstboot/fb-lib
+# shellcheck source=tests/firstboot/ts-lib
+. /fw/tests/firstboot/ts-lib
 fb_prepare generic
 SYSLOG=$LW_TEST/syslog
 card=$RENDER/generic-passwords.txt
@@ -58,6 +60,8 @@ fb_expect firewall.vpn.forward REJECT
 fb_expect firewall.vpn_lan.src vpn
 fb_expect firewall.vpn_lan.dest lan
 uci show firewall | grep -q "dest='vpn'" && lw_fail "a forwarding leads into the vpn zone"
+# R63: nothing of Tailscale in the generic image: no file, interface, zone, forwarding or section
+ts_expect_absent
 
 # LuCI answers on port 80 only with a redirect to HTTPS, so the root password never crosses the Wi-Fi
 # in clear text (R30, D19); the rest of the uhttpd section stays as the package has it

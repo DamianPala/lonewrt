@@ -415,6 +415,91 @@ for pair in 'WIFI_CHANNEL_2G=１１' 'WIFI_CHANNEL_5G=٣٦' 'LTE_BANDS=３,２�
     ! grep -qF -- "$val" <<<"$err" || fail "error message echoes the $key value '$val'"
 done
 
+# R3, R66: the Tailscale keys are keys every profile must have. TS_ENABLED and TS_ADVERTISE_LAN are
+# exactly 0 or 1, TS_AUTHKEY is empty or tskey-auth- and ASCII letters, digits and -; an API token or
+# an OAuth client secret stops the build with its own words. No error shows a value.
+variant no-ts-enabled '/^TS_ENABLED=/d'
+expect_fail_with "key TS_ENABLED is missing; copy it from generic.conf" build no-ts-enabled
+variant no-ts-lan '/^TS_ADVERTISE_LAN=/d'
+expect_fail_with "key TS_ADVERTISE_LAN is missing; copy it from generic.conf" build no-ts-lan
+variant no-ts-key '/^TS_AUTHKEY=/d'
+expect_fail_with "key TS_AUTHKEY is missing; add the line TS_AUTHKEY=''" build no-ts-key
+for key in TS_ENABLED TS_ADVERTISE_LAN; do
+    variant "empty-$key" "s/^$key=.*/$key=''/"
+    expect_fail_with "key $key is empty" build "empty-$key"
+    i=0
+    for bad in 2 true yes 01 11 ' 1' '1 ' '１' 'x1'; do
+        i=$((i + 1))
+        variant "bad-$key-$i" "s|^$key=.*|$key='$bad'|"
+        expect_fail_with "key $key has an invalid value" build "bad-$key-$i"
+        err=$(build "bad-$key-$i" 2>&1 || true)
+        ! grep -qF -- "'$bad'" <<<"$err" || fail "error message echoes the $key value '$bad'"
+    done
+done
+i=0
+for bad in 'tskey-auth-' 'tskey-auth-abc def' 'tskey-auth-abc_def' 'tskey-auth-ab+c' 'tskey-auth-ab.c' \
+    'TSKEY-AUTH-abc' 'tskey-authabc' 'abc' 'tskey-auth-ａｂｃ' 'tskey-auth-kTESTq7x9-ü' ' tskey-auth-abc' \
+    'tskey-auth-abc ' 'tskey-key-abc'; do
+    i=$((i + 1))
+    variant "bad-ts-key-$i" "s|^TS_AUTHKEY=.*|TS_AUTHKEY='$bad'|"
+    expect_fail_with "key TS_AUTHKEY has an invalid value" build "bad-ts-key-$i"
+    err=$(build "bad-ts-key-$i" 2>&1 || true)
+    ! grep -qF -- "$bad" <<<"$err" || fail "error message echoes the TS_AUTHKEY value '$bad'"
+done
+i=0
+for prefix in tskey-api- tskey-client-; do
+    i=$((i + 1))
+    variant "refused-ts-key-$i" "s|^TS_AUTHKEY=.*|TS_AUTHKEY='${prefix}kTESTq7x9CNTRL-q7x9fakerefusedq7x9'|"
+    expect_fail_with "key TS_AUTHKEY has an invalid value; an API token or an OAuth client secret is not supported" \
+        build "refused-ts-key-$i"
+    err=$(build "refused-ts-key-$i" 2>&1 || true)
+    ! grep -qF fakerefusedq7x9 <<<"$err" || fail "error message echoes the refused $prefix key"
+    # the refusal holds with Tailscale off too: the format comes before the R63f rule
+    variant "refused-ts-off-$i" "s|^TS_ENABLED=.*|TS_ENABLED='0'|;s|^TS_AUTHKEY=.*|TS_AUTHKEY='${prefix}kTESTq7x9CNTRL-q7x9fakerefusedq7x9'|"
+    expect_fail_with "key TS_AUTHKEY has an invalid value" build "refused-ts-off-$i"
+done
+i=0
+for good in "$FAKE_TS_AUTHKEY" tskey-auth-a tskey-auth-k1-2-3 tskey-auth-ABC-xyz-0 \
+    "tskey-auth-$(printf 'a%.0s' {1..200})" ''; do
+    i=$((i + 1))
+    variant "good-ts-key-$i" "s|^TS_AUTHKEY=.*|TS_AUTHKEY='$good'|"
+    build --render-only "good-ts-key-$i" "$SCRATCH/good-ts-key-$i" 2>/dev/null ||
+        fail "TS_AUTHKEY case $i was rejected"
+done
+
+# R63f, D150: Tailscale keys with TS_ENABLED='0' stop the build, naming the key that is set (the key
+# first when both are), and never show a value. Without them TS_ENABLED='0' builds as before.
+variant off-with-key "s/^TS_ENABLED=.*/TS_ENABLED='0'/"
+expect_fail_with "key TS_AUTHKEY is set but TS_ENABLED is 0" build off-with-key
+variant off-with-lan "s/^TS_ENABLED=.*/TS_ENABLED='0'/; s/^TS_AUTHKEY=.*/TS_AUTHKEY=''/"
+expect_fail_with "key TS_ADVERTISE_LAN is set but TS_ENABLED is 0" build off-with-lan
+err=$(build off-with-key 2>&1 || true)
+! grep -qF "$FAKE_TS_AUTHKEY" <<<"$err" || fail "error message of R63f echoes the auth key"
+variant off-clean "s/^TS_ENABLED=.*/TS_ENABLED='0'/; s/^TS_AUTHKEY=.*/TS_AUTHKEY=''/; s/^TS_ADVERTISE_LAN=.*/TS_ADVERTISE_LAN='0'/"
+build --render-only off-clean "$SCRATCH/off-clean" 2>/dev/null || fail "TS_ENABLED 0 with the other keys off was refused"
+# with Tailscale on, the empty key and the LAN off are fine
+variant on-plain "s/^TS_AUTHKEY=.*/TS_AUTHKEY=''/; s/^TS_ADVERTISE_LAN=.*/TS_ADVERTISE_LAN='0'/"
+build --render-only on-plain "$SCRATCH/on-plain" 2>/dev/null || fail "TS_ENABLED 1 with no key and no LAN was refused"
+
+# R67b, D142: the LAN of many homes with TS_ADVERTISE_LAN='1' is a warning that names the keys, and
+# the build goes on; another LAN, or the route off, gets none. The prefix is the /24 of LAN_IP (R67).
+lan_warning() {
+    variant "$1" "s/^LAN_IP=.*/LAN_IP='$2'/; s/^TS_ADVERTISE_LAN=.*/TS_ADVERTISE_LAN='$3'/"
+    build --render-only "$1" "$SCRATCH/$1-out" 2>&1 >/dev/null | grep -c '^render: warning: .*TS_ADVERTISE_LAN.*LAN_IP' || true
+}
+for lan in 192.168.0.1 192.168.1.1 192.168.1.77 192.168.0.254 192.168.01.1; do
+    n=${lan//./_}
+    [ "$(lan_warning "lan-warn-$n" "$lan" 1)" = 1 ] || fail "no warning for LAN_IP $lan with the route"
+    [ -f "$SCRATCH/lan-warn-$n-out/etc/lw-build" ] || fail "the build did not go on for LAN_IP $lan"
+    [ "$(lan_warning "lan-quiet-$n" "$lan" 0)" = 0 ] || fail "a warning for LAN_IP $lan without the route"
+done
+for lan in 192.168.2.1 192.168.77.1 192.168.10.1 10.0.0.1 192.168.11.1 172.16.0.1; do
+    [ "$(lan_warning "lan-fine-${lan//./_}" "$lan" 1)" = 0 ] || fail "a warning for LAN_IP $lan"
+done
+err=$(build --render-only lan-warn-192_168_1_1 "$SCRATCH/lan-warn-again" 2>&1 >/dev/null)
+grep -qF "192.168.1.0/24" <<<"$err" || fail "the LAN warning does not name the network"
+! grep -qF "$FAKE_TS_AUTHKEY" <<<"$err" || fail "the LAN warning shows the auth key"
+
 # The same checks guard --render-only
 expect_fail_with "key LAN_IP is missing" build --render-only no-lan "$SCRATCH/render"
 [ ! -e "$SCRATCH/render" ] || fail "--render-only left output after a profile error"
@@ -424,6 +509,7 @@ sed -e "s/^\(WWAN_[A-Z]*\)=.*/\1=''/" -e "s/^LTE_BANDS=.*/LTE_BANDS=''/" \
     -e "s/^\(WG_[A-Z_]*\)=.*/\1=''/" -e "s/^WG_ENABLED=''/WG_ENABLED='0'/" \
     -e "s/^\(TG_[A-Z_]*\)=.*/\1=''/" -e "s/^LOW_BALANCE=.*/LOW_BALANCE=''/" \
     -e "s/^HC_PING_URL=.*/HC_PING_URL=''/" -e "s/^SMS_ADMINS=.*/SMS_ADMINS=''/" \
+    -e "s/^TS_AUTHKEY=.*/TS_AUTHKEY=''/" \
     -e "s/^SSH_KEYS=.*/SSH_KEYS=''/" -e "s/^\(OP_[A-Z_]*\)=.*/\1=''/" \
     "$P/fake-full.conf" >"$P/blanks.conf"
 build --render-only blanks "$SCRATCH/blanks" 2>/dev/null || fail "allowed empty values were rejected"

@@ -1,0 +1,151 @@
+# Helpers for the Tailscale first-boot tests (SPEC R7 table, R63, R64a, R64b, R67, D149, D155),
+# sourced after fb-lib inside the rootfs sandbox.
+# shellcheck shell=sh
+
+# ts_zone_id NAME: the uci section id of the firewall zone with that name
+ts_zone_id() {
+    uci show firewall | sed -n "s/^firewall\.\([^.]*\)\.name='$1'$/\1/p" | head -n1
+}
+
+# ts_zone_names: the names of all firewall zones, sorted, each followed by a space
+ts_zone_names() {
+    for z in $(uci show firewall | sed -n 's/^firewall\.\([^.=]*\)=zone$/\1/p'); do
+        uci get "firewall.$z.name"
+    done | sort | tr '\n' ' '
+}
+
+# ts_chain RULESET NAME: the lines of one chain of a `fw4 print` ruleset
+ts_chain() {
+    printf '%s\n' "$1" | awk -v c="chain $2 {" '$0 ~ "^\t" c "$" {on = 1; next} on && /^\t}$/ {exit} on'
+}
+
+# ts_expect_nft ADVERTISE_LAN: what fw4 makes of the config, the rules themselves (R64a, D149, D155)
+ts_expect_nft() {
+    nft_rules=$(fw4 print 2>&1) || lw_fail "fw4 print failed: $nft_rules"
+    lw_expect_eq "$(ts_chain "$nft_rules" input_tailscale)" "$(printf '\t\tjump accept_from_tailscale')" "input of the zone"
+    lw_expect_eq "$(ts_chain "$nft_rules" output_tailscale)" "$(printf '\t\tjump reject_to_tailscale')" "output of the zone"
+    # no way from lan, wan or the tunnel into the zone: nothing accepts to it
+    ! printf '%s\n' "$nft_rules" | grep -q 'accept_to_tailscale' || lw_fail "something accepts to the zone"
+    for c in forward_lan forward_wan forward_vpn input_lan input_wan; do
+        ! ts_chain "$nft_rules" "$c" | grep -q tailscale || lw_fail "$c mentions the zone"
+    done
+    # the lan zone is not masqueraded as a whole (D155)
+    ! printf '%s\n' "$nft_rules" | grep -q 'Masquerade IPv4 lan' || lw_fail "the lan zone is masqueraded"
+    if [ "$1" = 1 ]; then
+        ts_chain "$nft_rules" forward_tailscale | grep -q 'jump accept_to_lan' || lw_fail "the zone does not forward to lan"
+        lw_expect_eq "$(ts_chain "$nft_rules" srcnat_lan)" \
+            "$(printf '\t\tip saddr 100.64.0.0/10 counter masquerade comment "!fw4: tailscale-lan-masquerade"')" \
+            "the translation of the lan zone"
+    else
+        ! ts_chain "$nft_rules" forward_tailscale | grep -q accept || lw_fail "the zone forwards without the route"
+        ! printf '%s\n' "$nft_rules" | grep -q 'chain srcnat_lan' || lw_fail "a translation for lan without the route"
+    fi
+}
+
+# ts_count PATTERN: lines of `uci show firewall` that match the pattern
+ts_count() {
+    uci show firewall | grep -c -- "$1" || true
+}
+
+# ts_expect_image ADVERTISE_LAN LAN_PREFIX AUTHKEY: what zz-lw-config leaves in a tailscale image
+# built with TS_ADVERTISE_LAN=ADVERTISE_LAN, a LAN of LAN_PREFIX and TS_AUTHKEY=AUTHKEY (may be empty)
+ts_expect_image() {
+    lan=$1
+    prefix=$2
+    key=$3
+
+    # netifd: an interface with no protocol that gives the firewall a name for tailscale0
+    fb_expect network.tailscale interface
+    fb_expect network.tailscale.proto none
+    fb_expect network.tailscale.device tailscale0
+    fb_expect network.wg0.proto wireguard
+
+    # R64a: input accepted, output and forward rejected, MSS clamping, and no masquerading of the zone
+    fb_expect firewall.tailscale zone
+    fb_expect firewall.tailscale.name tailscale
+    fb_expect firewall.tailscale.input ACCEPT
+    fb_expect firewall.tailscale.output REJECT
+    fb_expect firewall.tailscale.forward REJECT
+    fb_expect firewall.tailscale.mtu_fix 1
+    fb_expect firewall.tailscale.network tailscale
+    fb_expect firewall.tailscale.masq "<unset>"
+    # nothing leads from lan or wan into the zone, and the lan zone gained no masquerading (D155)
+    lan_zone=$(ts_zone_id lan)
+    [ -n "$lan_zone" ] || lw_fail "no lan zone"
+    fb_expect "firewall.$lan_zone.masq" "<unset>"
+    fb_expect "firewall.$lan_zone.masq_src" "<unset>"
+    lw_expect_eq "$(ts_count "dest='tailscale'")" 0 "forwardings and rules that lead into the zone"
+    lw_expect_eq "$(ts_count "src='tailscale'")" "$lan" "uses of the zone as a source"
+    # the tunnel stays as it was (R31a)
+    fb_expect firewall.vpn.network wg0
+    fb_expect firewall.vpn_lan.src vpn
+    fb_expect firewall.vpn_lan.dest lan
+
+    if [ "$lan" = 1 ]; then
+        # R64a, D155: one forwarding to lan, and one translation: only what comes from Tailscale's
+        # own addresses and leaves through the lan zone
+        fb_expect firewall.tailscale_lan forwarding
+        fb_expect firewall.tailscale_lan.src tailscale
+        fb_expect firewall.tailscale_lan.dest lan
+        fb_expect firewall.tailscale_lan_masq nat
+        fb_expect firewall.tailscale_lan_masq.src lan
+        fb_expect firewall.tailscale_lan_masq.src_ip 100.64.0.0/10
+        fb_expect firewall.tailscale_lan_masq.family ipv4
+        fb_expect firewall.tailscale_lan_masq.target MASQUERADE
+        lw_expect_eq "$(ts_count '=nat$')" 1 "nat sections"
+        lw_expect_eq "$(ts_count "=forwarding$")" 3 "forwardings (lan to wan, vpn to lan, tailscale to lan)"
+    else
+        fb_expect firewall.tailscale_lan "<unset>"
+        fb_expect firewall.tailscale_lan_masq "<unset>"
+        lw_expect_eq "$(ts_count '=nat$')" 0 "nat sections"
+        lw_expect_eq "$(ts_count "=forwarding$")" 2 "forwardings (lan to wan, vpn to lan)"
+    fi
+
+    # R67: what lw-tailscale reads; the name is the system host name, not a second option
+    fb_expect lonewrt.tailscale tailscale
+    fb_expect lonewrt.tailscale.enabled 1
+    fb_expect lonewrt.tailscale.advertise_lan "$lan"
+    fb_expect lonewrt.tailscale.lan_prefix "$prefix"
+    fb_expect lonewrt.tailscale.hostname "<unset>"
+    lw_expect_eq "$(find /etc/config/lonewrt -perm 600)" /etc/config/lonewrt "mode of /etc/config/lonewrt"
+
+    # R63h, D156: Tailscale's output stays out of syslog; the rest is the package's file
+    fb_expect tailscale.settings.log_stdout 0
+    fb_expect tailscale.settings.log_stderr 0
+    fb_expect tailscale.settings.port 41641
+    fb_expect tailscale.settings.state_file /etc/tailscale/tailscaled.state
+
+    ts_expect_nft "$lan"
+
+    # R64b: the auth key is in one file readable by root only, and only when the profile has one
+    if [ -n "$key" ]; then
+        lw_expect_eq "$(cat /etc/tailscale/lw-authkey)" "$key" "the auth key file"
+        lw_expect_eq "$(find /etc/tailscale -type f -perm 600 -name lw-authkey)" \
+            /etc/tailscale/lw-authkey "mode of the auth key file"
+        lw_expect_eq "$(find /etc/tailscale -type d -perm 700)" /etc/tailscale "mode of /etc/tailscale"
+        lw_expect_eq "$(grep -rlaF -- "$key" /etc /root /tmp 2>/dev/null)" /etc/tailscale/lw-authkey \
+            "files that hold the auth key"
+    else
+        [ ! -e /etc/tailscale ] || lw_fail "no auth key, but /etc/tailscale exists"
+    fi
+}
+
+# ts_expect_absent: an image without Tailscale has no trace of it (R63)
+ts_expect_absent() {
+    [ ! -e /etc/config/tailscale ] || lw_fail "R63: /etc/config/tailscale exists"
+    [ ! -e /etc/tailscale ] || lw_fail "R63: /etc/tailscale exists"
+    ! uci show network | grep -qi tailscale || lw_fail "R63: tailscale in the network config"
+    ! uci show firewall | grep -qi tailscale || lw_fail "R63: tailscale in the firewall config"
+    ! uci show lonewrt | grep -qi tailscale || lw_fail "R63: tailscale in /etc/config/lonewrt"
+    lw_expect_eq "$(ts_zone_names)" "lan vpn wan " "names of the firewall zones"
+    ! fw4 print 2>&1 | grep -qi 'tailscale\|100.64.0.0' || lw_fail "R63: tailscale in the rules of fw4"
+    lw_expect_eq "$(ts_count '=nat$')" 0 "nat sections"
+    lw_expect_eq "$(ts_count "=forwarding$")" 2 "forwardings (lan to wan, vpn to lan)"
+}
+
+# ts_expect_twice: R8a, a second run of the first-boot script changes nothing
+ts_expect_twice() {
+    first=$(fb_state)
+    fb_uci_defaults
+    lw_expect_eq "$(fb_state)" "$first" "state after a second uci-defaults run"
+}

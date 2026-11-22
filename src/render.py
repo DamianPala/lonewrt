@@ -8,7 +8,8 @@ address (SPEC R42), the profile's SSH key files merged with its SSH_KEYS (SPEC R
 /etc/lw-build with the release version of the VERSION file (SPEC R3b, R7b), the operator preset of
 the profile's OP_ keys, judged by the image's own reader (SPEC R47d), fills an empty TIMEZONE
 from ZONENAME with the configurator's zone table (SPEC R3c), sets file modes and
-checks every shell script with busybox `sh -n` (SPEC R6).
+checks every shell script with busybox `sh -n` (SPEC R6). With TS_ENABLED=1 it also adds the tree
+src/files-tailscale and the file of the auth key (SPEC R63, R64b).
 Errors name the key, line or file, never a profile value.
 """
 
@@ -43,6 +44,7 @@ MAY_BE_EMPTY = {
     "WG_ENDPOINT_PORT",
     "WG_ALLOWED_IPS",
     "WG_KEEPALIVE",
+    "TS_AUTHKEY",
     "TG_BOT_TOKEN",
     "TG_CHAT_ID",
     "LOW_BALANCE",
@@ -90,6 +92,17 @@ REQUIRED_WHEN_WG_ENABLED = (
     "WG_PEER_PUBLIC_KEY",
     "WG_ENDPOINT_HOST",
 )
+# Files only a tailscale image has (SPEC R63, "Obraz bez Tailscale"): the tree is copied over the
+# overlay when TS_ENABLED is 1 and never otherwise. build.sh takes the config file as the marker of
+# a tailscale image, so it parses no profile for that.
+TS_TREE = "files-tailscale"
+TS_CONFIG_REL = "etc/config/tailscale"
+# R64b: the auth key is in the image in this one file, root only; zz-lw-config does not carry it
+TS_KEY_REL = "etc/tailscale/lw-authkey"
+# R66: an API token or an OAuth client secret is not an auth key (D141)
+TS_REFUSED_KEY_PREFIXES = ("tskey-api-", "tskey-client-")
+# R67b: the LANs of many homes, where a route into the router's LAN collides with the owner's own
+TS_COMMON_LAN_PREFIXES = ("192.168.0.0/24", "192.168.1.0/24")
 
 IPV4 = r"(?:(?:25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])"
 CIDR_LIST = rf"{IPV4}/[0-9]{{1,2}}(?: {IPV4}/[0-9]{{1,2}})*"
@@ -120,6 +133,10 @@ FORMATS = {
     "WG_ENDPOINT_PORT": r"[0-9]{1,5}",
     "WG_ALLOWED_IPS": CIDR_LIST,
     "WG_KEEPALIVE": r"[0-9]{1,3}",
+    "TS_ENABLED": r"[01]",
+    "TS_ADVERTISE_LAN": r"[01]",
+    # a secret: an auth key only (R66, D141)
+    "TS_AUTHKEY": r"tskey-auth-[A-Za-z0-9-]+",
     "TG_BOT_TOKEN": r"[0-9]{5,15}:[A-Za-z0-9_-]{30,64}",
     "TG_CHAT_ID": r"-?[0-9]{1,20}",
     # in the currency of the operator preset (SPEC R47b)
@@ -207,6 +224,11 @@ def check_value(key: str, value: str, name: str) -> None:
         # a key with a fixed list of values names it also when it is empty
         hint = allowed_hint(key) if key in CHOICES else ""
         raise RenderError(f"profile {name}: key {key} is empty{hint}")
+    if key == "TS_AUTHKEY" and value.startswith(TS_REFUSED_KEY_PREFIXES):
+        raise RenderError(
+            f"profile {name}: key TS_AUTHKEY has an invalid value; an API token or an OAuth "
+            "client secret is not supported, use an auth key that starts with tskey-auth-"
+        )
     pattern = FORMATS.get(key)
     valid = not (value and pattern) or re.fullmatch(pattern, value) is not None
     if valid and value and key in RANGES:
@@ -269,6 +291,38 @@ def parse_ssh_keys(value: str, name: str) -> list[tuple[str, str, str]]:
     return keys
 
 
+def check_tailscale_keys(values: dict[str, str], name: str) -> None:
+    """R63f, D150: Tailscale keys with TS_ENABLED='0' stop the build, naming each key that is set."""
+    if values["TS_ENABLED"] == "1":
+        return
+    for key, is_set in (
+        ("TS_AUTHKEY", bool(values["TS_AUTHKEY"])),
+        ("TS_ADVERTISE_LAN", values["TS_ADVERTISE_LAN"] == "1"),
+    ):
+        if is_set:
+            raise RenderError(f"profile {name}: key {key} is set but TS_ENABLED is 0")
+
+
+def lan_prefix(lan_ip: str) -> str:
+    """The network address of the LAN as the router configures it, a /24 (R67):
+    192.168.5.0/24 for 192.168.5.1. The octets go through int, so 192.168.05.1 reads as 5."""
+    first, second, third, _ = (int(octet) for octet in lan_ip.split("."))
+    return f"{first}.{second}.{third}.0/24"
+
+
+def tailscale_warnings(values: dict[str, str]) -> list[str]:
+    """R67b, D142: a route into a LAN that many homes share is a warning, never a stop."""
+    if values["TS_ADVERTISE_LAN"] != "1" or values["TS_LAN_PREFIX"] not in TS_COMMON_LAN_PREFIXES:
+        return []
+    return [
+        (
+            f"warning: TS_ADVERTISE_LAN is 1 and LAN_IP is in {values['TS_LAN_PREFIX']}, the network "
+            "of many homes: a device at home on the same network cannot tell it from the router's "
+            "LAN; set LAN_IP to another network"
+        )
+    ]
+
+
 def validate(values: dict[str, str], required: list[str], name: str) -> None:
     for key in values:
         if key not in required:
@@ -288,6 +342,7 @@ def validate(values: dict[str, str], required: list[str], name: str) -> None:
         for key in REQUIRED_WHEN_WG_ENABLED:
             if not values[key]:
                 raise RenderError(f"profile {name}: key {key} is empty but WG_ENABLED is 1")
+    check_tailscale_keys(values, name)
     preset = [PRESET_FILE_KEY, *(key for key, _ in PRESET_KEYS)]
     if any(values[key] for key in preset):
         for key in preset:
@@ -412,6 +467,19 @@ def add_heartbeat_cron(out: Path, values: dict[str, str]) -> bool:
     return True
 
 
+def add_tailscale(out: Path, src: Path, values: dict[str, str]) -> bool:
+    """Add what only a tailscale image has (R63, R64b): the tree src/files-tailscale and, with an
+    auth key in the profile, its file. Nothing at all when TS_ENABLED is 0."""
+    if values["TS_ENABLED"] != "1":
+        return False
+    shutil.copytree(src / TS_TREE, out, dirs_exist_ok=True)
+    if values["TS_AUTHKEY"]:
+        key = out / TS_KEY_REL
+        key.parent.mkdir(parents=True, exist_ok=True)
+        key.write_text(values["TS_AUTHKEY"] + "\n", encoding="ascii")
+    return True
+
+
 def read_card(path: Path | None) -> dict[str, str]:
     if path is None or not path.is_file():
         return {}
@@ -532,11 +600,14 @@ def read_version(path: Path) -> str:
 
 
 def src_digest(src: Path) -> str:
-    """sha256 over `relative path NUL sha256(content) LF` for every file under src, sorted."""
+    """sha256 over `relative path NUL sha256(content) LF` for every file under src, sorted.
+
+    Sorted as strings, not as paths: `files-tailscale/x` comes before `files/x` as text and after
+    it as path parts, and the digest is meant to be reproducible with `sort` (R7b)."""
     outer = hashlib.sha256()
-    files = sorted(p for p in src.rglob("*") if p.is_file())
-    for path in files:
-        rel = path.relative_to(src).as_posix()
+    rels = sorted(p.relative_to(src).as_posix() for p in src.rglob("*") if p.is_file())
+    for rel in rels:
+        path = src / rel
         inner = hashlib.sha256(path.read_bytes()).hexdigest()
         outer.update(f"{rel}\0{inner}\n".encode())
     return outer.hexdigest()
@@ -625,8 +696,9 @@ def is_script(rel: str, path: Path) -> bool:
 def set_dir_modes(out: Path) -> None:
     # ImageBuilder copies FILES with `cp -p`, so these modes land on /, /etc, /usr/sbin ... of the
     # image; a checkout under umask 002 would make them group-writable.
+    private = (out / "etc/dropbear", out / TS_KEY_REL.rpartition("/")[0])
     for path in [out, *(p for p in out.rglob("*") if p.is_dir())]:
-        path.chmod(0o700 if path == out / "etc/dropbear" else 0o755)
+        path.chmod(0o700 if path in private else 0o755)
 
 
 def set_modes(out: Path) -> list[str]:
@@ -635,7 +707,7 @@ def set_modes(out: Path) -> list[str]:
     scripts = []
     for path in sorted(p for p in out.rglob("*") if p.is_file()):
         rel = path.relative_to(out).as_posix()
-        if rel.startswith("etc/dropbear/") or rel == "etc/crontabs/root":
+        if rel.startswith("etc/dropbear/") or rel in ("etc/crontabs/root", TS_KEY_REL):
             path.chmod(0o600)
         elif rel.startswith("etc/uci-defaults/"):
             # D15: first boot deletes it only from the writable layer; the copy in the read-only
@@ -676,6 +748,7 @@ def render(args: argparse.Namespace) -> None:
     template = parse_profile(args.profiles / "generic.conf")
     values = parse_profile(args.profiles / f"{args.name}.conf")
     validate(values, list(template), args.name)
+    values["TS_LAN_PREFIX"] = lan_prefix(values["LAN_IP"])
     zone_filled = fill_timezone(values, args.zones, args.name)
     version = read_version(args.version_file)
     shell = shell_command(args.rootfs)
@@ -688,6 +761,7 @@ def render(args: argparse.Namespace) -> None:
     if out.exists() and any(out.iterdir()):
         raise RenderError(f"output directory {out} is not empty")
     shutil.copytree(args.src / "files", out, dirs_exist_ok=True)
+    tailscale = add_tailscale(out, args.src, values)
     fill_placeholders(out, values)
     if preset is not None:
         # R47d: also in place of a preset of the image with the same name
@@ -712,6 +786,8 @@ def render(args: argparse.Namespace) -> None:
         f"heartbeat: {'on' if heartbeat else 'off'}",
         f"TIMEZONE: {'from ZONENAME' if zone_filled else 'from the profile'}",
         f"operator preset: {'from the profile' if preset is not None else 'only those of the image'}",
+        f"tailscale: {'in the image' if tailscale else 'not in the image'}",
+        *tailscale_warnings(values),
     ]
     if card and args.card_out:
         args.card_out.write_text(card[0], encoding="utf-8")

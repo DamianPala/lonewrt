@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Rendered overlays without ImageBuilder: the generic one carries no private or fake-profile value
 # (SPEC R4, R4a), the fake full one carries its values and SSH key files, /etc/lw-build names the
-# profile and a reproducible digest of src/ (R7b), the password card follows R33 and R33a.
-# Leaves tests/.out/render/{generic,fake-full} for the first-boot tests (tests/run-all.sh firstboot).
+# profile and a reproducible digest of src/ (R7b), the password card follows R33 and R33a. Tailscale
+# (R63, R64b): the generic overlay is src/files and nothing else, a tailscale overlay adds the tree
+# src/files-tailscale and the auth key in one file of mode 0600.
+# Leaves tests/.out/render/{generic,fake-full,ts-plain,ts-key,ts-lan,debug-plain} for the first-boot
+# tests (tests/run-all.sh firstboot).
 # shellcheck source=tests/build/lib.bash
 source "$(dirname "$0")/lib.bash"
 scratch render
@@ -13,6 +16,20 @@ rm -rf -- "$RENDER"
 mkdir -p "$RENDER"
 "$FW/build.sh" --render-only generic "$RENDER/generic" 2>/dev/null
 LW_PROFILES=$P "$FW/build.sh" --render-only fake-full "$RENDER/fake-full" 2>/dev/null
+# ts_profile NAME SED...: generic.conf with the sed edits, rendered into $RENDER/NAME
+ts_profile() {
+    local n=$1
+    shift
+    sed "$@" "$P/generic.conf" >"$P/$n.conf"
+    LW_PROFILES=$P "$FW/build.sh" --render-only "$n" "$RENDER/$n" 2>/dev/null
+}
+on="s/^TS_ENABLED=.*/TS_ENABLED='1'/"
+ts_profile ts-plain -e "$on"
+ts_profile ts-key -e "$on" -e "s|^TS_AUTHKEY=.*|TS_AUTHKEY='$FAKE_TS_AUTHKEY'|"
+ts_profile ts-lan -e "$on" -e "s/^TS_ADVERTISE_LAN=.*/TS_ADVERTISE_LAN='1'/" \
+    -e "s/^LAN_IP=.*/LAN_IP='192.168.5.1'/" -e "s/^HOSTNAME=.*/HOSTNAME='ts-router'/" \
+    -e "s/^LOG_LEVEL=.*/LOG_LEVEL='debug'/"
+ts_profile debug-plain -e "s/^LOG_LEVEL=.*/LOG_LEVEL='debug'/"
 D=$RENDER/generic
 F=$RENDER/fake-full
 UD=etc/uci-defaults/zz-lw-config
@@ -48,9 +65,44 @@ for f in usr/sbin/lw-heartbeat etc/hotplug.d/ntp/30-lw-nlbwmon; do
     [ "$(stat -c %a "$D/$f")" = 755 ] || fail "$f is not executable"
 done
 # Directory modes become those of /, /etc, /usr/sbin ... in the image (cp -p in ImageBuilder)
-bad=$(find "$D" "$F" -type d ! -perm 755 ! -path "$F/etc/dropbear")
+bad=$(find "$D" "$F" -type d ! -perm 755 ! -path "$F/etc/dropbear" ! -path "$F/etc/tailscale")
 [ -z "$bad" ] || fail "overlay dirs not 0755: $bad"
 [ "$(stat -c %a "$F/etc/dropbear")" = 700 ] || fail "etc/dropbear is not 0700"
+
+# R63: an image without Tailscale is the files of src/files and its /etc/lw-build, nothing more: no
+# tailscale file, directory, zone or uci section (the uci part is tests/firstboot/generic.sh)
+diff <(cd "$FW/src/files" && find . | LC_ALL=C sort) <(cd "$D" && find . ! -path ./etc/lw-build | LC_ALL=C sort) >/dev/null ||
+    fail "R63: the generic overlay is not src/files: $(diff <(cd "$FW/src/files" && find . | LC_ALL=C sort) <(cd "$D" && find . ! -path ./etc/lw-build | LC_ALL=C sort) | tr '\n' ' ')"
+[ -z "$(find "$D" -ipath '*tailscale*')" ] || fail "R63: the generic overlay has a tailscale path"
+[ -z "$(find "$RENDER/debug-plain" -ipath '*tailscale*')" ] || fail "R63: debug-plain has a tailscale path"
+grep -qx "P_TS_ENABLED='0'" "$D/$UD" || fail "the generic overlay does not turn Tailscale off"
+
+# R63, R64b: a tailscale overlay is src/files plus src/files-tailscale; the auth key is in one file
+# only, 0600, in a 0700 directory, and without a key there is neither file nor directory
+grep -qx "P_TS_ENABLED='1'" "$F/$UD" || fail "the fake-full overlay does not turn Tailscale on"
+for rel in $(cd "$FW/src/files-tailscale" && find . -type f); do
+    for n in fake-full ts-plain ts-key ts-lan; do
+        cmp -s "$FW/src/files-tailscale/$rel" "$RENDER/$n/$rel" || fail "R63: $n lacks $rel of src/files-tailscale"
+    done
+done
+[ "$(find "$F/etc/tailscale" -type f)" = "$F/etc/tailscale/lw-authkey" ] || fail "R64b: etc/tailscale holds other files than the key"
+[ "$(printf '%s\n' "$FAKE_TS_AUTHKEY" | cmp - "$F/etc/tailscale/lw-authkey" && echo same)" = same ] ||
+    fail "R64b: lw-authkey is not the profile's key and a newline"
+[ "$(stat -c %a "$F/etc/tailscale/lw-authkey")" = 600 ] || fail "R64b: lw-authkey is not 0600"
+[ "$(stat -c %a "$F/etc/tailscale")" = 700 ] || fail "R64b: etc/tailscale is not 0700"
+[ "$(grep -rlaF "$FAKE_TS_AUTHKEY" "$F")" = "$F/etc/tailscale/lw-authkey" ] ||
+    fail "R64b: the auth key is in other files than lw-authkey: $(grep -rlaF "$FAKE_TS_AUTHKEY" "$F" | tr '\n' ' ')"
+grep -qx "P_TS_LAN_PREFIX='192.168.77.0/24'" "$F/$UD" || fail "R67: the LAN prefix of 192.168.77.1 is not 192.168.77.0/24"
+grep -qx "P_TS_LAN_PREFIX='192.168.5.0/24'" "$RENDER/ts-lan/$UD" || fail "R67: the LAN prefix of 192.168.5.1 is not 192.168.5.0/24"
+for n in ts-plain ts-lan; do
+    [ ! -e "$RENDER/$n/etc/tailscale" ] || fail "R64b: $n has etc/tailscale without a key"
+done
+[ "$(stat -c %a "$RENDER/ts-key/etc/tailscale/lw-authkey")" = 600 ] || fail "R64b: ts-key lw-authkey is not 0600"
+# the settings of the package file (R63h, D156): output out of syslog, the rest as the package has it
+for line in "option log_stderr '0'" "option log_stdout '0'" "option port '41641'" \
+    "option state_file '/etc/tailscale/tailscaled.state'"; do
+    grep -qF "$line" "$F/etc/config/tailscale" || fail "R63h: etc/config/tailscale lacks '$line'"
+done
 # Every file under the overlay with a shell shebang, plus sourced dirs, goes through sh -n (R6)
 S=$SCRATCH/src-syntax
 for f in usr/lib/lw/lw-apn usr/lib/lw/common.sh etc/hotplug.d/iface/99-auto-apn-at; do

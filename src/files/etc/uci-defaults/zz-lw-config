@@ -31,6 +31,9 @@ P_WG_ENDPOINT_HOST='@WG_ENDPOINT_HOST@'
 P_WG_ENDPOINT_PORT='@WG_ENDPOINT_PORT@'
 P_WG_ALLOWED_IPS='@WG_ALLOWED_IPS@'
 P_WG_KEEPALIVE='@WG_KEEPALIVE@'
+P_TS_ENABLED='@TS_ENABLED@'
+P_TS_ADVERTISE_LAN='@TS_ADVERTISE_LAN@'
+P_TS_LAN_PREFIX='@TS_LAN_PREFIX@'
 P_TG_BOT_TOKEN='@TG_BOT_TOKEN@'
 P_TG_CHAT_ID='@TG_CHAT_ID@'
 P_LOW_BALANCE='@LOW_BALANCE@'
@@ -169,8 +172,9 @@ uci set system.@system[0].hostname="$P_HOSTNAME"
 uci set system.@system[0].timezone="$P_TIMEZONE"
 uci set system.@system[0].zonename="$P_ZONENAME"
 uci set system.@system[0].log_file='/root/openwrt.log'
-# R29c: the debug level doubles the size at which the persistent log rotates
-if [ "$P_LOG_LEVEL" = debug ]; then
+# R29c: the debug level doubles the size at which the persistent log rotates, except in a tailscale
+# image, whose overlay is too small for two logs of 2048 KB (D147)
+if [ "$P_LOG_LEVEL" = debug ] && [ "$P_TS_ENABLED" != 1 ]; then
     uci set system.@system[0].log_size='2048'
 else
     uci set system.@system[0].log_size='1024'
@@ -215,6 +219,55 @@ fi
 uci set lonewrt.heartbeat=heartbeat
 set_or_delete lonewrt.heartbeat.url "$P_HC_PING_URL"
 uci commit lonewrt
+
+# Tailscale: only an image built with TS_ENABLED='1' has any of it (SPEC R63, R7 table). The service
+# that runs it and sets its options is lw-tailscale's; the auth key is not here but in its own file
+# in the image (R64b), so this script holds no copy of it.
+if [ "$P_TS_ENABLED" = 1 ]; then
+    # R64a: netifd owns the device only to give the firewall a name for it; Tailscale brings the
+    # device up itself and manages no addresses or routes through netifd
+    # deleted first like wg_server above, so a run repeated after a cut ends in the same order (R8a)
+    uci -q delete network.tailscale
+    uci set network.tailscale=interface
+    uci set network.tailscale.proto='none'
+    uci set network.tailscale.device='tailscale0'
+    uci commit network
+
+    # R64a, D149: the account reaches the router and the router starts nothing into the account;
+    # answers to the account's connections pass by connection tracking. Nothing leads into the zone.
+    uci -q delete firewall.tailscale
+    uci set firewall.tailscale=zone
+    uci set firewall.tailscale.name='tailscale'
+    uci set firewall.tailscale.input='ACCEPT'
+    uci set firewall.tailscale.output='REJECT'
+    uci set firewall.tailscale.forward='REJECT'
+    uci set firewall.tailscale.mtu_fix='1'
+    uci add_list firewall.tailscale.network='tailscale'
+    uci -q delete firewall.tailscale_lan
+    uci -q delete firewall.tailscale_lan_masq
+    if [ "$P_TS_ADVERTISE_LAN" = 1 ]; then
+        uci set firewall.tailscale_lan=forwarding
+        uci set firewall.tailscale_lan.src='tailscale'
+        uci set firewall.tailscale_lan.dest='lan'
+        # D155: a nat section, not masq on the zone lan: masq of the zone would translate every
+        # forward that leaves the LAN, this one only what comes from Tailscale's own addresses
+        # (100.64.0.0/10), so the forwarding above is the only way into the LAN it applies to
+        uci set firewall.tailscale_lan_masq=nat
+        uci set firewall.tailscale_lan_masq.name='tailscale-lan-masquerade'
+        uci set firewall.tailscale_lan_masq.family='ipv4'
+        uci set firewall.tailscale_lan_masq.src='lan'
+        uci set firewall.tailscale_lan_masq.src_ip='100.64.0.0/10'
+        uci set firewall.tailscale_lan_masq.target='MASQUERADE'
+    fi
+    uci commit firewall
+
+    # read by lw-tailscale; the router's name in the account is the system host name
+    uci set lonewrt.tailscale=tailscale
+    uci set lonewrt.tailscale.enabled='1'
+    uci set lonewrt.tailscale.advertise_lan="$P_TS_ADVERTISE_LAN"
+    uci set lonewrt.tailscale.lan_prefix="$P_TS_LAN_PREFIX"
+    uci commit lonewrt
+fi
 
 # Data counters of /devices (SPEC R44, R44a, D59): nlbwmon keeps its database on flash, because the
 # default /var/lib/nlbwmon is RAM and a restart would zero the month. It commits once a day and when
