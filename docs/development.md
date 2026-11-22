@@ -74,7 +74,7 @@ The transcript format and the options are in `tools/tg-preview/README.md`; `tool
 ## Release
 
 The release version is the one line of `VERSION` at the repository root (`0.4.0`; a pre-release is `0.5.0-rc.1`, SPEC R3b).
-The build puts it into `/etc/lw-build` and the first line of the `lw-firstboot` log entry, so a router tells which release it runs.
+The build puts it into `/etc/lw-build`, together with the profile name, the build date and a hash of `src/`, and after a flash or a reset with the button the router logs that file once as `lw-firstboot`, so a router tells which release it runs.
 To release: change `VERSION` and `LW_VERSION` in `configurator/index.html`, commit, tag that commit `v<version>`, then build. Publishing the release (not a pre-release) starts `.github/workflows/pages.yml`, which puts that tag's configurator on GitHub Pages; its actions are pinned to commits and move only by hand.
 A build stops when `VERSION` is missing or malformed.
 

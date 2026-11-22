@@ -18,7 +18,7 @@ NT_OPERATORS=${LW_OPERATORS_DIR:-/usr/share/lw/operators}
 NT_PRESET_RETRY=${LW_NOTIFY_PRESET_RETRY:-60}
 NT_P_STATE=
 NT_MCC=
-# Building blocks of the reply pattern, as sed BRE (docs/operators.md lists the same dialect)
+# Building blocks of the reply pattern, as sed BRE (the placeholders of docs/operators.md)
 NT_RE_AMOUNT='\([0-9][0-9]*\([.,][0-9][0-9]*\)\{0,1\}\)'
 NT_RE_DAY='\([0-9]\{1,2\}\)'
 
