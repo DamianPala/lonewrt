@@ -2,7 +2,8 @@
 # Telegram notifications for the full image (SPEC R34 to R38, D43 to D48): every new SMS to the
 # owner's chat, the weekly balance check, and a bot (/status, /wifi, /devices, /speedtest, /balance,
 # /sms, /alerts, /reboot, /help) that changes only the 2G backup message and, after a tap on a
-# button, restarts the router (R37a, R37c, R45).
+# button, restarts the router (R37a, R37c, R45). In an image with Tailscale it also queues the
+# service's one-time messages and answers /tailscale (R65 to R69d, R72).
 # Nothing runs without a bot token and chat in uci lonewrt.notify (the default image, D43).
 #
 #   lw-notify run     the procd service: poll the modem every 15 s, long-poll the bot in between
@@ -275,7 +276,7 @@ $(nt_action_line)
 
 $(nt_signal_line)
 $(nt_wifi_line)
-$(nt_balance_lines)$(nt_st_status_line)$(nt_data_status_line)
+$(nt_balance_lines)$(nt_st_status_line)$(nt_data_status_line)$(nt_ts_status_line)
 $(nt_since_line)
 $(nt_outage_line)
 <blockquote>$(nt_tech_line)</blockquote>"
@@ -426,6 +427,7 @@ nt_command() {
         /wifi) nt_wifi_cmd ;;
         /devices) nt_devices_cmd ;;
         /reboot) nt_reboot_cmd ;;
+        /tailscale) nt_ts_cmd ;;
         /help | /start) nt_send "$(nt_help)" "$(nt_kb_markup)" ;;
         *) nt_send "$(nt_help)" ;;
     esac
@@ -442,6 +444,7 @@ nt_callback() {
         dn:*) nt_nm_tap ;;
         al:2g:off) nt_alerts_tap off ;;
         al:2g:on) nt_alerts_tap on ;;
+        ts:link) nt_ts_tap ;;
         *) nt_answer "$NT_CB" ;;
     esac
 }
@@ -536,6 +539,7 @@ nt_pass() {
     nt_names_poll
     nt_balance_tick
     nt_outage_tick
+    nt_ts_tick
     nt_st_tick
     nt_rb_check_stale
     nt_rb_tick

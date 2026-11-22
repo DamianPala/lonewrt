@@ -1,0 +1,54 @@
+#!/bin/sh
+# Test stand-in for /usr/sbin/lw-tailscale, the service of a tailscale image, as slice B's contract
+# (lonewrt-notes/tailscale/slices/contract-BC.md) defines it: status, link, due, mark. State lives in
+# $LW_TEST/ts, written by the tests (tests/notify/helpers.inc ts_state, ts_due):
+#   state         the state file the real service keeps; missing = the service does not run
+#   due           events due, one per line; `mark` takes the first match out and appends it to marked
+#   marked        every event the bot marked, one per line
+#   links         one line per link made, so every `link` of a router that is not added gives a new URL
+#   link_calls    one line per `link` call, whatever it gave
+#   hang          present: `link` never answers (the bot's time limit has to end it)
+# `link` follows the contract: URL and 0 for a router that is not added, the state and 2 for an added
+# one, `state=...` and 3 while starting or not running (and with no state file).
+T=${LW_TEST:-/lwtest}
+D=$T/ts
+mkdir -p "$D"
+case ${1:-} in
+    status)
+        [ -f "$D/state" ] || exit 3
+        cat "$D/state"
+        ;;
+    due)
+        [ ! -f "$D/due" ] || cat "$D/due"
+        ;;
+    mark)
+        case ${2:-} in
+            link | refused | added | route | expiry_warning | expired) ;;
+            *) exit 1 ;;
+        esac
+        echo "$2" >>"$D/marked"
+        [ ! -f "$D/due" ] || awk -v e="$2" '$0 == e && !done { done = 1; next } { print }' "$D/due" \
+            >"$D/due.new"
+        [ ! -f "$D/due.new" ] || mv "$D/due.new" "$D/due"
+        ;;
+    link)
+        echo x >>"$D/link_calls"
+        [ ! -f "$D/hang" ] || exec sleep 3600
+        st=$(sed -n 's/^state=//p' "$D/state" 2>/dev/null | head -n 1)
+        case $st in
+            added)
+                cat "$D/state"
+                exit 2
+                ;;
+            not_added | ended)
+                echo x >>"$D/links"
+                printf 'https://login.tailscale.com/a/LINK%04d\n' "$(wc -l <"$D/links")"
+                ;;
+            *)
+                echo "state=${st:-not_running}"
+                exit 3
+                ;;
+        esac
+        ;;
+    *) exit 2 ;;
+esac

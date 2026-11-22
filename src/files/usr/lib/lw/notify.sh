@@ -62,6 +62,14 @@ NT_RB_WAIT=${LW_NOTIFY_REBOOT_WAIT:-120}
 NT_RB_GAP=40
 # Bytes per bot reply; Telegram takes up to 4096 characters per message
 NT_CHUNK=3500
+# The service of a tailscale image and how long the bot waits for its link (R65a: a command answers
+# within 30 s; the service itself waits at most 25 s for Tailscale, R72a)
+NT_TS_BIN=${LW_TS_BIN:-/usr/sbin/lw-tailscale}
+NT_TS_LIMIT=${LW_NOTIFY_TS_LIMIT:-27}
+# No preview card for a login page (D140); the button asks for a new link by callback, as a URL button
+# would only repeat the link already in the text (R65a)
+NT_TS_NOPREV='&link_preview_options=%7B%22is_disabled%22%3Atrue%7D'
+NT_TS_BTN='{"inline_keyboard":[[{"text":"🔗 New link","callback_data":"ts:link"}]]}'
 # nt_help (R37): what each button does, in the order and with the emoji of the keyboard. The
 # Balance line names the operator of the preset (R47); without a preset the check does not exist
 # for this SIM (R47a), and the footer leaves the low-balance message out, as it does when the
@@ -82,9 +90,10 @@ nt_help() {
         "$_hb" \
         '✉️ <b>SMS</b> – newest SMS (/sms 10 for more)' \
         '🔔 <b>Alerts</b> – automatic messages, on or off' \
-        '🔄 <b>Reboot</b> – restart the router (asks first)' \
-        '' \
-        "The bot also posts by itself: $_hf."
+        '🔄 <b>Reboot</b> – restart the router (asks first)'
+    # R69c: the line of a tailscale image; no button, the keyboard stays at 9 (R37e)
+    ! nt_ts_image || printf '%s\n' '/tailscale – remote access from your own devices'
+    printf '%s\n' '' "The bot also posts by itself: $_hf."
 }
 # An inline keyboard with no buttons: sent with an edited text, it removes the old buttons
 NT_NOKB='&reply_markup=%7B%22inline_keyboard%22%3A%5B%5D%7D'
@@ -676,6 +685,7 @@ nt_enqueue() {
 }
 
 # nt_send_item FILE: one queue file to the chat, with nt_send's return codes. A file that starts
+# with the line @@TS:<event>@@ is a Tailscale message (nt_ts_send_item). A file that starts
 # with the line @@E<id>@@ (nt_balance) is the answer to /balance and edits message <id>, the
 # acknowledgement of the command, into the answer. Telegram refusing the edit (the message is
 # gone, or the markup was wrong) sends the answer as a new message, which has the fallbacks of
@@ -697,6 +707,11 @@ nt_send_item() {
                     return
                     ;;
             esac
+            ;;
+        @@TS:*@@)
+            # R72, R72a: a Tailscale message, whose link is taken from the service now
+            nt_ts_send_item "$1"
+            return
             ;;
     esac
     nt_send "$(cat "$1")"
@@ -1315,4 +1330,290 @@ nt_outage_tick() {
         nt_outage_close
     fi
     rm -f "$NT_RUN/out_pending" "$NT_RUN/out_cycles" "$NT_RUN/out_reboots"
+}
+
+# Tailscale, the bot's side (SPEC R37, R65 to R69d, R72 to R72d, D140 to D160). The service of the
+# image, $NT_TS_BIN, keeps the state and decides when a one-time message is due (`due`, `mark`, `link`,
+# `status`); the bot queues what it reports, writes the texts and takes the link at the moment of
+# sending (R72a). The file is in the image only with TS_ENABLED='1' (R63), so its presence is what
+# makes an image a tailscale image for the bot, the SMS control and the help (R37, R46, R69c). What
+# the service prints is data: read with sed, never evaluated, and put into a message through nt_hd.
+# No link is ever written to a file or to the log: the queue holds the name of the event only
+# (R65f). Text is HTML (R37g): a ">" of the admin page's menus is written &gt;.
+
+nt_ts_image() { [ -x "$NT_TS_BIN" ]; }
+
+# nt_ts_val KEY: one value of the state text in NT_TS_RAW, empty when it is not there.
+nt_ts_val() { printf '%s\n' "$NT_TS_RAW" | sed -n "s/^$1=//p" | head -n 1; }
+
+# nt_ts_load: the state of the service into NT_TS_RAW; empty when the service does not answer.
+nt_ts_load() {
+    NT_TS_RAW=$(timeout 10 "$NT_TS_BIN" status 2>/dev/null) || NT_TS_RAW=
+}
+
+# nt_ts_link: ask the service for a link now (R65a, R72a). NT_TS_LINK is one https URL or empty;
+# NT_TS_RC is 0 with a link, 2 for an added router (NT_TS_RAW then holds its state) and 3 for no
+# link: the state is in NT_TS_RAW, which is empty when it is not known. A silent service, a crash and
+# a link that is no URL end as 3, with the state read from `status`.
+nt_ts_link() {
+    NT_TS_LINK=
+    NT_TS_RC=0
+    NT_TS_RAW=$(timeout "$NT_TS_LIMIT" "$NT_TS_BIN" link 2>/dev/null) || NT_TS_RC=$?
+    if [ "$NT_TS_RC" = 0 ]; then
+        NT_TS_LINK=$(printf '%s\n' "$NT_TS_RAW" | head -n 1)
+        NT_TS_RAW=
+        case $NT_TS_LINK in https://*) ;; *) NT_TS_LINK= ;; esac
+        case $NT_TS_LINK in *[!A-Za-z0-9._~:/?#@%=\&+,-]*) NT_TS_LINK= ;; esac
+        [ -n "$NT_TS_LINK" ] && return 0
+        NT_TS_RC=3
+    fi
+    case $NT_TS_RC in
+        2 | 3) ;;
+        *)
+            nt_ts_load
+            NT_TS_RC=3
+            [ "$(nt_ts_val state)" != added ] || NT_TS_RC=2
+            ;;
+    esac
+    return 1
+}
+
+nt_ts_host() { uci -q get system.@system[0].hostname; }
+
+# nt_ts_name: the router's name in Tailscale (the short MagicDNS name of the state), the profile's
+# HOSTNAME until the state has one.
+nt_ts_name() {
+    _tsm=$(nt_ts_val name)
+    [ -n "$_tsm" ] || _tsm=$(nt_ts_host)
+    printf '%s' "$_tsm"
+}
+
+# nt_ts_old_name (R65c): Tailscale gave the router another name than HOSTNAME, letter case aside:
+# an older entry of the same name still holds it.
+nt_ts_old_name() {
+    _tsm=$(nt_ts_val name)
+    _tsh=$(nt_ts_host)
+    [ -n "$_tsm" ] && [ -n "$_tsh" ] && [ "$(nt_lower "$_tsm")" != "$(nt_lower "$_tsh")" ]
+}
+
+nt_ts_lan() { [ "$(uci -q get lonewrt.tailscale.advertise_lan)" = 1 ]; }
+
+# nt_ts_prefix: the LAN prefix the router offers, from the state or else from uci.
+nt_ts_prefix() {
+    _tsm=$(nt_ts_val prefix)
+    [ -n "$_tsm" ] || _tsm=$(uci -q get lonewrt.tailscale.lan_prefix)
+    printf '%s' "$_tsm"
+}
+
+# nt_ts_date EPOCH: "21 May" in the router's zone; empty for anything but a number of seconds. The
+# date is absolute, so it needs no synced clock (the warning itself waits for one, R68).
+nt_ts_date() {
+    case $1 in '' | *[!0-9]*) return 0 ;; esac
+    nt_local "$1" | awk '{ split("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec", m, " ")
+        if (split($1, d, "-") == 3 && d[2] >= 1 && d[2] <= 12) printf "%d %s", d[3], m[d[2] + 0] }'
+}
+
+# nt_ts_expiry (R69b): the date the sign-in ends, "never" when key expiry is off for the router.
+nt_ts_expiry() {
+    if [ "$(nt_ts_val expiry_off)" = 1 ]; then
+        echo never
+        return 0
+    fi
+    _tsd=$(nt_ts_date "$(nt_ts_val expiry)")
+    echo "${_tsd:-unknown}"
+}
+
+# nt_ts_link_text KIND (R65, R65d, R66a, R68a, D148): the message that carries a link, with NT_TS_LINK
+# in it, or without one and with the way to get it (R72a). Only the link message has the line for a
+# new link, because its button gives it (R65a).
+nt_ts_link_text() {
+    case $1 in
+        link)
+            printf '%s\n' '🔗 <b>Add this router to Tailscale</b>' \
+                'Sign in with the link to reach the router from your own devices. No account yet? Signing in makes a free one.'
+            ;;
+        refused)
+            printf '%s\n' '⚠️ <b>The Tailscale key in the profile did not work</b> (expired or already used).' \
+                'Add the router with this link instead:'
+            ;;
+        *)
+            printf '%s\n' '🔴 <b>This router is no longer in Tailscale</b> (the sign-in ended, or it was removed)' \
+                'Sign in again to get access back:'
+            ;;
+    esac
+    if [ -n "$NT_TS_LINK" ]; then
+        nt_h "$NT_TS_LINK"
+        echo
+    else
+        echo 'Send /tailscale for a link.'
+    fi
+    echo 'Only for the person who manages this router: whoever signs in first gets access.'
+    [ "$1" != link ] || [ -z "$NT_TS_LINK" ] || echo 'Not working? Send /tailscale for a new link.'
+}
+
+# nt_ts_post KIND: the message KIND (link, refused, expired) with nt_send's return codes. The link
+# message has the button for a new link, with or without a link in it.
+nt_ts_post() {
+    _tsx=$NT_TS_NOPREV
+    [ "$1" != link ] || _tsx="$_tsx$(nt_markup "$NT_TS_BTN")"
+    nt_send "$(nt_ts_link_text "$1")" "$_tsx"
+}
+
+# nt_ts_added_text (R65b, R65c, D143): added, with the account, how to connect and the step of key
+# expiry, which a router with the expiry off does not need; the line about an old entry only for another
+# name and the one about the route only while it waits. "there" points at the admin page of the step.
+nt_ts_added_text() {
+    _tsn=$(nt_hd "$(nt_ts_name)")
+    _tsa=$(nt_ts_val account)
+    printf '✅ <b>Added to Tailscale as %s</b>\n' "$_tsn"
+    [ -z "$_tsa" ] || printf 'Account: %s\n' "$(nt_hd "$_tsa")"
+    printf 'On a laptop or phone, install the Tailscale app, sign in with the same account and open https://%s.\n' \
+        "$_tsn"
+    _tsw='on login.tailscale.com/admin/machines'
+    if [ "$(nt_ts_val expiry_off)" != 1 ]; then
+        _tsd=$(nt_ts_date "$(nt_ts_val expiry)")
+        printf '❗ One more step: on login.tailscale.com/admin/machines, in the ⋯ menu of %s, choose Disable key expiry.' \
+            "$_tsn"
+        [ -z "$_tsd" ] || printf ' Otherwise you must sign in again on %s.' "$_tsd"
+        echo
+        _tsw=there
+    fi
+    if nt_ts_old_name; then
+        printf 'The name %s was taken, probably by this router before a reset. Remove the old one %s (⋯ &gt; Remove), then rename this one (⋯ &gt; Edit machine name).\n' \
+            "$(nt_hd "$(nt_ts_host)")" "$_tsw"
+    fi
+    if nt_ts_lan && [ "$(nt_ts_val route)" != approved ]; then
+        printf "To reach devices on the router's network (%s), approve it %s: ⋯ &gt; Edit route settings.\n" \
+            "$(nt_hd "$(nt_ts_prefix)")" "$_tsw"
+    fi
+}
+
+# nt_ts_expiry_text (R68, D143): the warning, with the date on its own in the first line.
+nt_ts_expiry_text() {
+    _tsd=$(nt_ts_date "$(nt_ts_val expiry)")
+    printf '⚠️ <b>Tailscale sign-in of this router ends %s</b>\n' "${_tsd:-soon}"
+    printf 'To keep access, on login.tailscale.com/admin/machines choose Disable key expiry in the ⋯ menu of %s.' \
+        "$(nt_hd "$(nt_ts_name)")"
+}
+
+# nt_ts_state_text (R69b): the router is added; the address and the account only when the state has
+# them, the route only with TS_ADVERTISE_LAN.
+nt_ts_state_text() {
+    printf '🔒 <b>Tailscale: on as %s</b>\n' "$(nt_hd "$(nt_ts_name)")"
+    _tsm=$(nt_ts_val ip)
+    [ -z "$_tsm" ] || printf 'Address: %s\n' "$(nt_hd "$_tsm")"
+    _tsm=$(nt_ts_val account)
+    [ -z "$_tsm" ] || printf 'Account: %s\n' "$(nt_hd "$_tsm")"
+    printf 'Sign-in ends: %s' "$(nt_ts_expiry)"
+    if nt_ts_lan; then
+        _tsm='waiting for approval'
+        [ "$(nt_ts_val route)" != approved ] || _tsm=reachable
+        printf "\nRouter's network %s: %s" "$(nt_hd "$(nt_ts_prefix)")" "$_tsm"
+    fi
+}
+
+# nt_ts_down_text STATE (R69d): not running for "not_running" and for an unknown state, starting for
+# everything else the service reports while it has no link to give.
+nt_ts_down_text() {
+    case $1 in
+        not_running | '') echo '⚠️ Tailscale is not running on the router.' ;;
+        *) echo '⏳ Tailscale is starting, try again in a minute.' ;;
+    esac
+}
+
+# nt_ts_cmd (R37, R65a, R69b, R69d, D158): /tailscale and the button of the link message. A router that
+# is not added gets a link made now, an added one its state and never a link, which the service
+# guarantees with its code 2. A command answer is not queued (R51).
+nt_ts_cmd() {
+    if ! nt_ts_image; then
+        nt_send '🔒 Tailscale is not in this image. Set TS_ENABLED to 1 in the profile and build again.'
+        return 0
+    fi
+    nt_ts_link || :
+    case $NT_TS_RC in
+        0) nt_ts_post link ;;
+        2) nt_send "$(nt_ts_state_text)" ;;
+        *) nt_send "$(nt_ts_down_text "$(nt_ts_val state)")" ;;
+    esac
+}
+
+# nt_ts_tap: the button "New link" of the link message; the spinner stops first, the link may take
+# 25 s.
+nt_ts_tap() {
+    nt_answer "$NT_CB"
+    nt_ts_cmd
+}
+
+# nt_ts_status_line (R69, R39c): the one line of /status, with the name and no address.
+nt_ts_status_line() {
+    nt_ts_image || return 0
+    nt_ts_load
+    case $(nt_ts_val state) in
+        added) printf '\n🔒 Tailscale: on as %s' "$(nt_hd "$(nt_ts_name)")" ;;
+        not_added) printf '\n🔒 Tailscale: not added yet (/tailscale)' ;;
+        ended) printf '\n🔒 Tailscale: sign-in ended (/tailscale)' ;;
+        starting) printf '\n🔒 Tailscale: starting' ;;
+        *) printf '\n🔒 Tailscale: not running' ;;
+    esac
+}
+
+# nt_ts_queue EVENT (R72, R72a): the event of `due` as a queue file. The three with a link are the
+# marker alone, written when they are sent; the others carry their text as the state gave it when the
+# event came. Fails for an unknown event and when the flash cannot be written, so it stays due.
+nt_ts_queue() {
+    _tsb=
+    case $1 in
+        link | refused | expired) ;;
+        added)
+            nt_ts_load
+            _tsb=$(nt_ts_added_text)
+            ;;
+        route)
+            nt_ts_load
+            _tsb=$(printf '✅ Tailscale: devices on %s are reachable now.' "$(nt_hd "$(nt_ts_prefix)")")
+            ;;
+        expiry_warning)
+            nt_ts_load
+            _tsb=$(nt_ts_expiry_text)
+            ;;
+        *) return 1 ;;
+    esac
+    if [ -n "$_tsb" ]; then
+        nt_enqueue "ts-$1" "@@TS:$1@@
+$_tsb"
+    else
+        nt_enqueue "ts-$1" "@@TS:$1@@"
+    fi
+}
+
+# nt_ts_send_item FILE: a queue file of a Tailscale message, with nt_send's return codes. The three
+# with a link ask the service now; one that gives none sends the message without (R72a).
+nt_ts_send_item() {
+    _tsk=$(head -n 1 "$1")
+    _tsk=${_tsk#@@TS:}
+    _tsk=${_tsk%@@}
+    case $_tsk in
+        link | refused | expired)
+            # R72a: the link is taken only while Telegram answers, so it is as fresh as it can be
+            # and a dead network does not cost the service's wait (25 s) at every pass
+            nt_api getMe '' || return 1
+            nt_ts_link || :
+            nt_ts_post "$_tsk"
+            ;;
+        *) nt_send "$(tail -n +2 "$1")" "$NT_TS_NOPREV" ;;
+    esac
+}
+
+# nt_ts_tick (R72, R72b): once per pass the events the service says are due go to the queue and are
+# marked at once, so a restart sends each of them once (D151). The service decides what is due; no
+# internet is needed here, the queue waits for it. Only with the chat: without it nothing is taken
+# off the list, and the link comes by SMS or over SSH (R65e, R69a).
+nt_ts_tick() {
+    nt_ts_image || return 0
+    timeout 10 "$NT_TS_BIN" due >"$NT_RUN/ts.due" 2>/dev/null || { rm -f "$NT_RUN/ts.due"; return 0; }
+    while IFS= read -r _tse; do
+        nt_ts_queue "$_tse" || continue
+        timeout 10 "$NT_TS_BIN" mark "$_tse" >/dev/null 2>&1 || :
+    done <"$NT_RUN/ts.due"
+    rm -f "$NT_RUN/ts.due"
 }

@@ -68,23 +68,26 @@ sc_fresh() {
     [ "$_sce" -ge $((-NT_SMS_AGE * 60)) ]
 }
 
-# sc_kind CONTENT: status, reboot or help for exactly that word (any case, spaces around it), own for
-# a text that starts with the router name, like our replies (two routers must not answer each other
-# forever), else other.
+# sc_kind CONTENT: status, reboot or help for exactly that word (any case, spaces around it), and
+# tailscale in a tailscale image (R46), own for a text that starts with the router name, like our
+# replies (two routers must not answer each other forever), else other.
 sc_kind() {
     _sck=$(printf '%s' "$1" | tr '\r\n\t' '   ' | sed 's/^ *//; s/ *$//')
     case $(nt_lower "$_sck") in
         status) echo status ;;
         reboot) echo reboot ;;
         help) echo help ;;
+        tailscale) if nt_ts_image; then echo tailscale; else echo other; fi ;;
         "$(nt_lower "$NT_NAME")"*) echo own ;;
         *) if sc_other_reply "$(nt_lower "$_sck")"; then echo own; else echo other; fi ;;
     esac
 }
 
 # The fixed starts of our own replies after "<name>: " (sc_status_text, sc_down_text, sc_reboot_text);
-# the HELP reply is "<name> commands: status, reboot". One list for the loop guard (R48).
-SC_OPENINGS='internet ok|internet down|4g down|reboot not done|restarting now'
+# the HELP reply is "<name> commands: status, reboot" (with ", tailscale" in a tailscale image, which
+# the same prefix covers). One list for the loop guard (R46, R48); "tailscale" is the start of every
+# reply to the command of that name (R69a).
+SC_OPENINGS='internet ok|internet down|4g down|reboot not done|restarting now|tailscale'
 
 # sc_other_reply TEXT (lower case): TEXT has the shape of a reply of a router with another name, so
 # two routers with different names do not answer each other either.
@@ -155,8 +158,10 @@ sc_reply() {
         return 0
     fi
     nt_sms_send "$1" "$(sc_clean "$2")" && return 0
-    lw_log "$NT_TAG" "SMS control: reply not sent (exit $NT_SEND_RC: $(printf '%s' "$NT_SEND_OUT" |
-        tr '\n' ' ' | tr -cd ' -~' | cut -c1-80))"
+    _scdet=$(printf '%s' "$NT_SEND_OUT" | tr '\n' ' ' | tr -cd ' -~' | cut -c1-80)
+    # R65f: what the tool printed may hold the text of a reply that carries a sign-in link
+    case $2 in *://*) _scdet='reply with a link, output not logged' ;; esac
+    lw_log "$NT_TAG" "SMS control: reply not sent (exit $NT_SEND_RC: $_scdet)"
     return 1
 }
 
@@ -285,6 +290,47 @@ sc_down_text() {
     sc_fit "$_scz" "$_scsg" "$_scbl"
 }
 
+# sc_ts_on_text (R69a): the router is added: the name, the address, the account and the date the
+# sign-in ends ("no expiry" when it is off for the router); the account is the first part to go when
+# the reply would not fit one SMS.
+sc_ts_on_text() {
+    _sth="$NT_NAME: Tailscale on as $(nt_ts_name)"
+    _sti=$(nt_ts_val ip)
+    [ -z "$_sti" ] || _sth="$_sth $_sti"
+    _sta=$(nt_ts_val account)
+    _ste=.
+    if [ "$(nt_ts_val expiry_off)" = 1 ]; then
+        _ste=', no expiry.'
+    else
+        _std=$(nt_ts_date "$(nt_ts_val expiry)")
+        [ -z "$_std" ] || _ste=", sign-in ends $_std."
+    fi
+    _stt="$_sth${_sta:+, account $_sta}$_ste"
+    [ "${#_stt}" -le "$SC_LEN" ] || _stt="$_sth$_ste"
+    printf '%s' "$_stt"
+}
+
+# sc_tailscale_text (R69a, R65e, D148): the reply to `tailscale`: a link made now, the state of an added
+# router, or that Tailscale is not running or starting. The long form of the link reply gives way to
+# a shorter one, never to a cut link.
+sc_tailscale_text() {
+    nt_ts_link || :
+    case $NT_TS_RC in
+        0)
+            _stt="$NT_NAME: Tailscale sign-in link, open soon: $NT_TS_LINK"
+            [ "${#_stt}" -le "$SC_LEN" ] || _stt="$NT_NAME: Tailscale link: $NT_TS_LINK"
+            printf '%s' "$_stt"
+            ;;
+        2) sc_ts_on_text ;;
+        *)
+            case $(nt_ts_val state) in
+                not_running | '') printf '%s: Tailscale not running, try again in a few min.' "$NT_NAME" ;;
+                *) printf '%s: Tailscale is starting, try again in a few min.' "$NT_NAME" ;;
+            esac
+            ;;
+    esac
+}
+
 # sc_reboot_text FLAG: SC_TEXT is the reply to a REBOOT and SC_GO says whether it restarts (1): a
 # note that is too old or a day that is used up gets its reason and no restart (R46b, D65).
 sc_reboot_text() {
@@ -326,7 +372,11 @@ sc_run() {
                 _srt=$SC_TEXT
                 [ "$SC_GO" != 1 ] || _srto=$_srn
                 ;;
-            *) _srt="$NT_NAME commands: status, reboot" ;;
+            tailscale) _srt=$(sc_tailscale_text) ;;
+            *)
+                _srt="$NT_NAME commands: status, reboot"
+                ! nt_ts_image || _srt="$_srt, tailscale"
+                ;;
         esac
         sc_reply "$_srn" "$_srt" || :
     done 3<"$SC_TODO"

@@ -44,6 +44,7 @@
 # with its reply_markup; without a reply_markup it leaves them as they are (the conservative model:
 # the code must remove buttons explicitly). answerCallbackQuery goes to tg/answers/N (id, text,
 # alert).
+# sendMessage also records the link_preview_options field in tg/sent/N.preview (empty when absent).
 # Records: tg/allowed (the allowed_updates of the last getUpdates), tg/polls (the long-poll time of every getUpdates, one per line), tg/calls (one method per
 # call), tg/sent/N.chat, tg/sent/N.text and tg/sent/N.markup per sendMessage.
 # getUpdates follows the Bot API: offset > 0 confirms (deletes) older updates, offset -1 keeps
@@ -341,6 +342,7 @@ case $method in
         param text >"$G/sent/$n.text"
         param text >"$G/sent/$n.shown"
         param reply_markup >"$G/sent/$n.markup"
+        param link_preview_options >"$G/sent/$n.preview"
         printf '%s' "$mode" >"$G/sent/$n.mode"
         printf '{"ok":true,"result":{"message_id":%s}}\n' "$n"
         ;;

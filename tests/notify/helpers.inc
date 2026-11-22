@@ -14,6 +14,9 @@ G=$LW_TEST/tg
 # is marked as sent (kb_first_start undoes that).
 notify_setup() {
     lw_setup
+    # a tailscale image has the service's file in /usr/sbin and so would the copy of src/files once the
+    # service is in the tree: every test is an image without Tailscale until it says ts_on
+    rm -f /usr/sbin/lw-tailscale
     PATH=/fw/tests/notify/stubs:$PATH
     uci -q set lonewrt.notify=notify
     uci -q set lonewrt.notify.token="$TG_TOKEN"
@@ -30,7 +33,7 @@ notify_setup() {
         LW_NOTIFY_HTTP_LIMIT=2 LW_NOTIFY_AT_LIMIT=2 LW_NOTIFY_READ_LIMIT=3 LW_NOTIFY_SEND_LIMIT=3 \
         LW_NOTIFY_WALL="$T/wall" LW_NOTIFY_WWAN_STATS="$T/wwan0" LW_NOTIFY_ST_LIMIT=5 \
         LW_NOTIFY_ST_TOTAL=12 LW_NOTIFY_ST_POLL=1 LW_NOTIFY_BOOT_ID="$T/boot_id" \
-        LW_NOTIFY_LEASES="$T/leases" LW_NOTIFY_ARP="$T/arp"
+        LW_NOTIFY_LEASES="$T/leases" LW_NOTIFY_ARP="$T/arp" LW_NOTIFY_TS_LIMIT=3
     echo boot-0 >"$T/boot_id"
     # the keyboard message of the first start (R37e) is done: every test but keyboard.sh counts the
     # messages it caused itself
@@ -280,9 +283,11 @@ sent_photo() { cat "$G/sent/$1.photo"; }
 rejected_n() { if [ -f "$G/rejected" ]; then wc -l <"$G/rejected" | tr -d ' '; else echo 0; fi; }
 sendcalls() { grep -c '^sendMessage$' "$G/calls" 2>/dev/null || :; }
 
-# shown N: what message N shows now (its text after edits); markup_of N: its buttons as JSON.
+# shown N: what message N shows now (its text after edits); markup_of N: its buttons as JSON;
+# preview_of N: its link_preview_options.
 shown() { cat "$G/sent/$1.shown"; }
 markup_of() { cat "$G/sent/$1.markup"; }
+preview_of() { cat "$G/sent/$1.preview"; }
 # edits: how many editMessageText calls went through; edit_msgid K / edit_text K / edit_markup K.
 edits() { find "$G/edits" -name '*.msgid' 2>/dev/null | wc -l | tr -d ' '; }
 edit_msgid() { cat "$G/edits/$1.msgid"; }
@@ -386,6 +391,61 @@ no_orphans() {
         ps >&2
         lw_fail "orphaned process"
     }
+}
+
+# The service of a tailscale image (tests/notify/stubs/lw-tailscale, whose header lists its knobs).
+# ts_on [ADVERTISE_LAN [PREFIX]]: the image has the service (the bot decides by its file, R37), the
+# profile's HOSTNAME is lte-router and the LAN route is off (ADVERTISE_LAN 0) or on (1, PREFIX the
+# offered network, default 192.168.5.0/24); the service starts without a state file (not running).
+ts_on() {
+    cp /fw/tests/notify/stubs/lw-tailscale /usr/sbin/lw-tailscale
+    chmod +x /usr/sbin/lw-tailscale
+    mkdir -p "$T/ts"
+    rm -f "$T"/ts/*
+    touch /etc/config/system
+    uci -q set system.sys=system
+    uci -q set system.sys.hostname=lte-router
+    uci -q commit system
+    uci -q set lonewrt.tailscale=tailscale
+    uci -q set lonewrt.tailscale.enabled=1
+    ts_lan "${1:-0}" "${2:-192.168.5.0/24}"
+}
+# ts_lan 0|1 [PREFIX]: TS_ADVERTISE_LAN of the profile, as the first start wrote it to uci.
+ts_lan() {
+    uci -q set lonewrt.tailscale.advertise_lan="$1"
+    uci -q set lonewrt.tailscale.lan_prefix="${2:-192.168.5.0/24}"
+    uci -q commit lonewrt
+}
+# ts_state STATE [KEY=VALUE...]: the state file of the service: the keys of the contract, with these
+# defaults (name lte-router, 100.101.102.103, account jan@example.com, expiry 21 May 2027 12:00 UTC,
+# route none); the arguments after STATE replace a default.
+ts_state() {
+    _tss=$1
+    shift
+    {
+        echo "state=$_tss"
+        for _tsk in name=lte-router ip=100.101.102.103 account=jan@example.com expiry=1810900800 \
+            expiry_off=0 route=none prefix=192.168.5.0/24; do
+            for _tsa in "$@"; do
+                case $_tsa in "${_tsk%%=*}="*) _tsk=$_tsa ;; esac
+            done
+            echo "$_tsk"
+        done
+        echo "updated=$(cat "$T/wall")"
+    } >"$T/ts/state"
+}
+# ts_down: the service does not run (no state file); ts_due EVENT...: the events `due` gives, replacing
+# what was there; ts_marked: the events marked so far, one per line; ts_links: links made so far;
+# ts_link_calls: calls of `link`.
+ts_down() { rm -f "$T/ts/state"; }
+ts_due() { : >"$T/ts/due"; for _tse in "$@"; do echo "$_tse" >>"$T/ts/due"; done; }
+ts_marked() { cat "$T/ts/marked" 2>/dev/null || :; }
+ts_links() { if [ -f "$T/ts/links" ]; then wc -l <"$T/ts/links" | tr -d ' '; else echo 0; fi; }
+ts_link_calls() { if [ -f "$T/ts/link_calls" ]; then wc -l <"$T/ts/link_calls" | tr -d ' '; else echo 0; fi; }
+# no_link_logged: no sign-in link in syslog or in anything the bot keeps on flash (R65f)
+no_link_logged() {
+    ! grep -rq 'login.tailscale.com/a/' "$T/syslog" /etc/lw-notify 2>/dev/null ||
+        lw_fail "a sign-in link reached the log or the flash"
 }
 
 # elapsed_since T0: seconds since T0 (date +%s).
