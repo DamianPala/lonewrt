@@ -1,0 +1,433 @@
+#!/bin/sh
+# Tailscale service of the image, only in an image built with TS_ENABLED='1' (SPEC R63c, R63d, R63e,
+# R64, R65e, R66a, R66b, R72c, D135, D154, D157). It makes Tailscale's settings hold before anyone
+# signs in, reports the state to a file for the bot, signs in with the profile's auth key once, and
+# keeps the record of which one-time messages are due and which went.
+#
+#   lw-tailscale run          the procd service: one pass every LW_TS_PERIOD seconds (30)
+#   lw-tailscale once         one pass without waiting (tests, manual check)
+#   lw-tailscale status       the state file; exit 3 while the service has written none
+#   lw-tailscale link         the sign-in link (exit 0), the state of an added router (2), or the
+#                             state when Tailscale gives no link (3); this is the way to sign in by hand
+#   lw-tailscale due          the one-time messages that are due, one per line
+#   lw-tailscale mark EVENT   that message went (link, refused, added, route, expiry_warning, expired)
+#
+# The service talks to Tailscale's CLI only, never to the modem, netifd or the link repair (R63e,
+# D157), and starts nothing but Tailscale's own commands. Every call has a timeout, and none of its
+# output goes to syslog: it may hold a link or a key (R63h, R65f, D156).
+# Commands of tailscale 1.104.1 used (the CLI stand-in of the tests is made from them, R63g):
+#   status --json   set --netfilter-mode=off --accept-dns=false --accept-routes=false
+#   --advertise-routes=PREFIX --hostname=NAME
+#   up --auth-key=file:PATH --timeout=Ns <the same settings>
+
+# shellcheck source=src/files/usr/lib/lw/common.sh
+. /usr/lib/lw/common.sh
+
+TS_TAG=lw-tailscale
+TS_RUN=${LW_TS_RUN:-/tmp/lw-tailscale}
+TS_STATE=$TS_RUN/state
+# D135: the account's state, the key and the record of messages live together on flash, so a button
+# reset or a flash that does not keep settings removes all of them at once (R72c)
+TS_DIR=${LW_TS_DIR:-/etc/tailscale}
+TS_SENT=$TS_DIR/lw-sent
+TS_KEY=$TS_DIR/lw-authkey
+# ntpd's marker of a first sync, the same file the bot reads (notify.sh); tests move the wall clock
+TS_NTP=${LW_TS_NTP:-/var/state/dnsmasqsec}
+TS_WALL=${LW_TS_WALL:-}
+# Seconds; tests shorten them through the environment
+TS_PERIOD=${LW_TS_PERIOD:-30}
+TS_KEY_RETRY=${LW_TS_KEY_RETRY:-60}
+TS_KEY_WAIT=${LW_TS_KEY_WAIT:-25}
+# R65a: the link answers within 30 s
+TS_LINK_WAIT=${LW_TS_LINK_WAIT:-25}
+TS_CALL_LIMIT=${LW_TS_CALL_LIMIT:-10}
+# R68: the expiry warning comes 14 days before the date
+TS_WARN=$((14 * 86400))
+# How Tailscale's refusal of a key reads in the output of `up`; any other failure counts as no
+# answer and the key is tried again (R66a). Unverified against the real CLI (see the slice report).
+TS_REFUSED_RE='backend error|invalid key|key.*(expired|revoked|invalid|not valid)|not authorized|unauthorized|forbidden'
+
+TS_NAP=
+TS_APPLIED=0
+TS_PREV=
+TS_KEY_AT=
+
+ts_wall() {
+    if [ -n "$TS_WALL" ]; then head -n 1 "$TS_WALL"; else date +%s; fi
+}
+
+# ts_clock_ok: ntpd has set the clock since the boot; the router has no clock of its own (R68, D9)
+ts_clock_ok() { [ -f "$TS_NTP" ]; }
+
+# ts_conf: the settings of R64 as the arguments of `set` and `up`; an empty --advertise-routes also
+# takes back a prefix offered earlier
+ts_conf() {
+    _tc_host=$(uci -q get 'system.@system[0].hostname' | tr -cd 'A-Za-z0-9.-')
+    TS_PREFIX=
+    if [ "$(uci -q get lonewrt.tailscale.advertise_lan)" = 1 ]; then
+        TS_PREFIX=$(uci -q get lonewrt.tailscale.lan_prefix | tr -cd '0-9./')
+    fi
+    TS_PREFS="--netfilter-mode=off --accept-dns=false --accept-routes=false --advertise-routes=$TS_PREFIX"
+    [ -z "$_tc_host" ] || TS_PREFS="$TS_PREFS --hostname=$_tc_host"
+}
+
+# ts_epoch TIME: an RFC 3339 time as Tailscale prints it, as epoch seconds in TS_EPOCH
+ts_epoch() {
+    case $1 in
+        [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]*) ;;
+        *) return 1 ;;
+    esac
+    _te_date=${1%%T*}
+    _te_rest=${1#*T}
+    _te_time=${_te_rest%"${_te_rest#????????}"}
+    _te_rest=${_te_rest#????????}
+    case $_te_rest in
+        .*)
+            _te_rest=${_te_rest#.}
+            _te_rest=${_te_rest#"${_te_rest%%[!0-9]*}"}
+            ;;
+    esac
+    _te_off=0
+    case $_te_rest in
+        Z) ;;
+        [+-][0-9][0-9]:[0-9][0-9])
+            _te_h=${_te_rest#?}
+            _te_h=${_te_h%%:*}
+            _te_m=${_te_rest#*:}
+            _te_off=$((${_te_h#0} * 3600 + ${_te_m#0} * 60))
+            [ "${_te_rest%"${_te_rest#?}"}" = + ] || _te_off=$((0 - _te_off))
+            ;;
+        *) return 1 ;;
+    esac
+    _te_secs=$(date -u -d "$_te_date $_te_time" +%s 2>/dev/null) || return 1
+    TS_EPOCH=$((_te_secs - _te_off))
+}
+
+# ts_read: Tailscale's state from `status --json` into TS_BS and, for an added router, its fields;
+# returns 1 when the daemon gives no answer (D135, the interface facts of the Tailscale section)
+ts_read() {
+    TS_BS='' TS_URL='' TS_NAME='' TS_IP='' TS_ACCT='' TS_EXP='' TS_EXP_OFF=0 TS_ROUTE=none
+    _tr_json=$(timeout -k 1 "$TS_CALL_LIMIT" tailscale status --json </dev/null 2>/dev/null) || :
+    TS_BS=$(printf '%s\n' "$_tr_json" | jsonfilter -e '@.BackendState' 2>/dev/null) || :
+    [ -n "$TS_BS" ] || return 1
+    case $TS_BS in
+        NeedsLogin)
+            TS_URL=$(printf '%s\n' "$_tr_json" | jsonfilter -e '@.AuthURL' 2>/dev/null) || :
+            ;;
+        Running) ts_fields "$_tr_json" ;;
+    esac
+    return 0
+}
+
+ts_fields() {
+    _tf_dns=$(printf '%s\n' "$1" | jsonfilter -e '@.Self.DNSName' 2>/dev/null) || :
+    TS_NAME=$(printf '%s' "${_tf_dns%%.*}" | tr -cd 'A-Za-z0-9-')
+    TS_IP=$(printf '%s\n' "$1" | jsonfilter -e '@.Self.TailscaleIPs[*]' 2>/dev/null | grep -m 1 '^100\.') || :
+    TS_ACCT=$(printf '%s\n' "$1" | jsonfilter -e '@.CurrentTailnet.Name' 2>/dev/null | tr -cd 'A-Za-z0-9@._-') || :
+    _tf_exp=$(printf '%s\n' "$1" | jsonfilter -e '@.Self.KeyExpiry' 2>/dev/null) || :
+    if [ -z "$_tf_exp" ]; then
+        TS_EXP_OFF=1
+    elif ts_epoch "$_tf_exp"; then
+        # Go's zero time is how a missing date can arrive
+        if [ "$TS_EPOCH" -gt 0 ]; then TS_EXP=$TS_EPOCH; else TS_EXP_OFF=1; fi
+    fi
+    if [ -n "$TS_PREFIX" ]; then
+        TS_ROUTE=pending
+        printf '%s\n' "$1" | jsonfilter -e '@.Self.PrimaryRoutes[*]' 2>/dev/null | grep -qFx "$TS_PREFIX" &&
+            TS_ROUTE=approved
+    fi
+    return 0
+}
+
+ts_signin() { cat "$TS_SENT/signin" 2>/dev/null; }
+
+# ts_derive: the state of the contract in TS_ST. NeedsLogin after the router was added is `ended`
+# (the sign-in ended or the router was removed, R68a); a daemon that is not up, or `Stopped`, is not
+# running; every other backend state is starting.
+ts_derive() {
+    case $TS_BS in
+        '' | Stopped) TS_ST=not_running ;;
+        Running) TS_ST=added ;;
+        NeedsLogin)
+            case $(ts_signin) in
+                in | out) TS_ST=ended ;;
+                *) TS_ST=not_added ;;
+            esac
+            ;;
+        *) TS_ST=starting ;;
+    esac
+    if [ "$TS_ST" != added ]; then
+        TS_NAME='' TS_IP='' TS_ACCT='' TS_EXP='' TS_EXP_OFF=0 TS_ROUTE=none
+    fi
+}
+
+ts_emit() {
+    cat <<EOF
+state=$TS_ST
+name=$TS_NAME
+ip=$TS_IP
+account=$TS_ACCT
+expiry=$TS_EXP
+expiry_off=$TS_EXP_OFF
+route=$TS_ROUTE
+prefix=$TS_PREFIX
+updated=$(ts_wall)
+EOF
+}
+
+# ts_put NAME VALUE: a record on flash, atomic, then sync so a power cut right after keeps it (R66b)
+ts_put() {
+    mkdir -p "$TS_SENT"
+    printf '%s\n' "$2" | lw_write_atomic "$TS_SENT/$1"
+    sync
+}
+
+# ts_log: one syslog line per change of the state (R63d); `starting` is a passage, not a state to
+# report, and never carries a link or a key
+ts_log() {
+    case $TS_ST in
+        not_added) _tl="not added" ;;
+        added) _tl="added" ;;
+        ended) _tl="sign-in ended" ;;
+        not_running) _tl="not running" ;;
+        *) return 0 ;;
+    esac
+    [ "$(cat "$TS_RUN/logged" 2>/dev/null)" != "$TS_ST" ] || return 0
+    echo "$TS_ST" >"$TS_RUN/logged"
+    lw_log "$TS_TAG" "state: $_tl"
+}
+
+ts_apply() {
+    # shellcheck disable=SC2086  # TS_PREFS is a list of words without spaces or globs
+    timeout -k 1 "$TS_CALL_LIMIT" tailscale set $TS_PREFS </dev/null >/dev/null 2>&1
+}
+
+# ts_try_key: R66a, R66b, D141. The key counts as used once Tailscale answered, accepted or refused;
+# the record is written here, before the state shows `refused` to the bot, and the file with the key
+# goes with it. No answer (no internet) leaves everything as it was and the next pass tries again.
+ts_try_key() {
+    TS_KEY_AT=$(lw_uptime)
+    _tk_out=$TS_RUN/up.out
+    (umask 077 && : >"$_tk_out")
+    # shellcheck disable=SC2086
+    timeout -k 2 "$((TS_KEY_WAIT + 10))" tailscale up "--auth-key=file:$TS_KEY" \
+        "--timeout=${TS_KEY_WAIT}s" $TS_PREFS </dev/null >"$_tk_out" 2>&1
+    _tk_rc=$?
+    if [ "$_tk_rc" = 0 ]; then
+        ts_put key-used accepted
+        rm -f "$TS_KEY"
+    elif grep -qiE "$TS_REFUSED_RE" "$_tk_out"; then
+        ts_put key-used refused
+        rm -f "$TS_KEY"
+    fi
+    rm -f "$_tk_out"
+}
+
+# ts_track: R72b, R72c. The occasions of the one-time messages: a sign-in (not added or ended to added)
+# starts a new round of the added and route messages, a change from added to ended one of the expired
+# message. The key has done its job once the router is added, by whatever way (D141).
+ts_track() {
+    case $TS_ST in
+        added)
+            [ "$(ts_signin)" = in ] && return 0
+            rm -f "$TS_SENT/added" "$TS_SENT/route" "$TS_SENT/expired" "$TS_KEY"
+            ts_put signin in
+            ;;
+        ended)
+            [ "$(ts_signin)" = in ] || return 0
+            rm -f "$TS_SENT/expired"
+            ts_put signin out
+            ;;
+    esac
+}
+
+ts_pass() {
+    mkdir -p "$TS_RUN"
+    ts_read || :
+    ts_derive
+    # R64: the settings are set whenever the daemon answers after it did not, and again when the
+    # router becomes added, because a sign-in may take its own flags with it (D154)
+    if [ "$TS_ST" = not_running ]; then
+        TS_APPLIED=0
+    else
+        if [ "$TS_ST" = added ] && [ "$TS_PREV" != added ]; then TS_APPLIED=0; fi
+        if [ "$TS_APPLIED" = 0 ] && ts_apply; then TS_APPLIED=1; fi
+    fi
+    if [ "$TS_ST" = not_added ] && [ -f "$TS_KEY" ] && [ ! -e "$TS_SENT/key-used" ]; then
+        if [ -z "$TS_KEY_AT" ] || [ $(($(lw_uptime) - TS_KEY_AT)) -ge "$TS_KEY_RETRY" ]; then
+            ts_try_key
+            ts_read || :
+            ts_derive
+        fi
+    fi
+    ts_track
+    ts_emit | lw_write_atomic "$TS_STATE"
+    ts_log
+    TS_PREV=$TS_ST
+}
+
+ts_nap() {
+    sleep "$1" &
+    TS_NAP=$!
+    wait "$TS_NAP"
+    TS_NAP=
+}
+
+ts_run() {
+    trap '[ -z "$TS_NAP" ] || kill "$TS_NAP" 2>/dev/null; exit 0' TERM INT
+    _tr_n=0
+    while :; do
+        ts_pass
+        _tr_n=$((_tr_n + 1))
+        [ "${LW_TS_PASSES:-0}" = 0 ] || [ "$_tr_n" -lt "$LW_TS_PASSES" ] || break
+        ts_nap "$TS_PERIOD"
+    done
+}
+
+# ts_load: the fields of the state file that the due rules read, in F_*
+ts_load() {
+    F_STATE='' F_EXP='' F_OFF='' F_ROUTE=''
+    while IFS='=' read -r _tl_k _tl_v; do
+        case $_tl_k in
+            state) F_STATE=$_tl_v ;;
+            expiry) F_EXP=$_tl_v ;;
+            expiry_off) F_OFF=$_tl_v ;;
+            route) F_ROUTE=$_tl_v ;;
+        esac
+    done <"$TS_STATE"
+}
+
+# ts_expiry_due: R68, D160. The warning is due from 14 days before the date, also when the date is
+# first seen later than that, and once per date; without NTP the router does not know the day.
+ts_expiry_due() {
+    [ "$F_OFF" = 0 ] || return 1
+    case $F_EXP in '' | *[!0-9]*) return 1 ;; esac
+    ts_clock_ok || return 1
+    [ "$(ts_wall)" -ge $((F_EXP - TS_WARN)) ] || return 1
+    [ "$(cat "$TS_SENT/expiry_warning" 2>/dev/null)" != "$F_EXP" ]
+}
+
+# cmd_due: R65, R65b, R66a, R67a, R68, R68a, D151, D159, D160. Reads the state file and the record
+# only, so the bot may call it every pass.
+cmd_due() {
+    [ -f "$TS_STATE" ] || return 0
+    ts_load
+    case $F_STATE in
+        not_added)
+            if [ -e "$TS_SENT/key-used" ]; then
+                # R65: a refused key gives the refusal message instead of the link message
+                [ "$(cat "$TS_SENT/key-used")" != refused ] || [ -e "$TS_SENT/refused" ] || echo refused
+            elif [ ! -f "$TS_KEY" ] && [ ! -e "$TS_SENT/link" ]; then
+                echo link
+            fi
+            ;;
+        added)
+            [ -e "$TS_SENT/added" ] || echo added
+            [ "$F_ROUTE" != approved ] || [ -e "$TS_SENT/route" ] || echo route
+            ! ts_expiry_due || echo expiry_warning
+            ;;
+        ended)
+            [ -e "$TS_SENT/expired" ] || echo expired
+            ;;
+    esac
+    return 0
+}
+
+cmd_mark() {
+    case ${1:-} in
+        link | refused | added | route | expired) ts_put "$1" sent ;;
+        expiry_warning)
+            [ ! -f "$TS_STATE" ] || ts_load
+            ts_put expiry_warning "$F_EXP"
+            ;;
+        *)
+            echo "lw-tailscale mark: unknown event '${1:-}'" >&2
+            return 1
+            ;;
+    esac
+}
+
+cmd_status() {
+    [ -f "$TS_STATE" ] || return 3
+    cat "$TS_STATE"
+}
+
+# ts_url_from FILE: the first https address in FILE
+ts_url_from() {
+    sed -n 's#.*\(https://[^[:space:]]*\).*#\1#p' "$1" | head -n 1
+}
+
+# cmd_link: R65a, R65e, R72a, D140, D154, D158. The link comes from `up`, which asks Tailscale for one
+# now and prints it; `up` carries the settings of R64, so a sign-in by hand keeps them. An added
+# router never gets one (D158). R65a: the whole answer within TS_LINK_WAIT, also when the daemon
+# stops answering midway; each call gets what is left, 3 s kept for the last read.
+cmd_link() {
+    _cl_end=$(($(lw_uptime) + TS_LINK_WAIT))
+    TS_CALL_LIMIT=5
+    ts_conf
+    ts_read || :
+    ts_derive
+    case $TS_ST in
+        added)
+            ts_emit
+            return 2
+            ;;
+        not_added | ended) ;;
+        *)
+            echo "state=$TS_ST"
+            return 3
+            ;;
+    esac
+    mkdir -p "$TS_RUN"
+    _cl_out=$TS_RUN/link.out
+    (umask 077 && : >"$_cl_out")
+    _cl_left=$((_cl_end - 3 - $(lw_uptime)))
+    [ "$_cl_left" -ge 1 ] || _cl_left=1
+    # shellcheck disable=SC2086
+    timeout -k 1 "$_cl_left" tailscale up "--timeout=${TS_LINK_WAIT}s" $TS_PREFS \
+        </dev/null >"$_cl_out" 2>&1 &
+    _cl_pid=$!
+    _cl_url=
+    while [ "$(lw_uptime)" -lt $((_cl_end - 3)) ]; do
+        _cl_url=$(ts_url_from "$_cl_out")
+        [ -z "$_cl_url" ] || break
+        kill -0 "$_cl_pid" 2>/dev/null || break
+        sleep 1
+    done
+    [ -n "$_cl_url" ] || _cl_url=$(ts_url_from "$_cl_out")
+    kill "$_cl_pid" 2>/dev/null
+    wait "$_cl_pid" 2>/dev/null
+    rm -f "$_cl_out"
+    # no link printed: the one the daemon holds is the best there is
+    if [ -z "$_cl_url" ]; then
+        TS_CALL_LIMIT=2
+        ts_read || :
+        _cl_url=$TS_URL
+    fi
+    if [ -n "$_cl_url" ]; then
+        printf '%s\n' "$_cl_url"
+        return 0
+    fi
+    echo "state=$TS_ST"
+    return 3
+}
+
+case ${1:-} in
+    run | once | status | link | due | mark) ;;
+    *)
+        echo "usage: lw-tailscale run|once|status|link|due|mark EVENT" >&2
+        exit 2
+        ;;
+esac
+cmd=$1
+shift
+case $cmd in
+    run | once)
+        ts_conf
+        if [ "$cmd" = run ]; then ts_run; else ts_pass; fi
+        ;;
+    status) cmd_status ;;
+    link) cmd_link ;;
+    due) cmd_due ;;
+    mark) cmd_mark "$@" ;;
+esac

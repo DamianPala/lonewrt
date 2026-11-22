@@ -1,0 +1,96 @@
+#!/bin/sh
+# Test stand-in for the tailscale CLI of 1.104.1 (SPEC "Tailscale" section, R63g). The test drives it
+# through files in $LW_TEST/ts:
+#   backend    BackendState to report (NeedsLogin, Running, Starting, Stopped); no file = tailscaled is
+#              not running and every command fails
+#   authurl    AuthURL of the status
+#   dnsname, ips (space separated), keyexpiry, routes (space separated), tailnet: the fields of Self
+#              and CurrentTailnet, left out when the file is missing
+#   up-mode    what `up` does: url (prints a link and ends with an error, as a timeout would),
+#              accept (reaches Running), refuse (Tailscale refuses the key), noanswer (no internet),
+#              wait (prints nothing and waits for the timeout)
+#   set-fail   `set` fails when the file exists
+#   hang       every command hangs (a daemon that does not answer) when the file exists
+# Every `set` and `up` is appended to calls with its arguments (a key is only ever passed as file:PATH).
+T=${LW_TEST:-/lwtest}
+D=$T/ts
+cmd=${1:-}
+[ $# -eq 0 ] || shift
+
+if [ ! -f "$D/backend" ]; then
+    echo "failed to connect to local tailscaled; it doesn't appear to be running" >&2
+    exit 1
+fi
+
+[ ! -f "$D/hang" ] || exec sleep 3600
+
+val() { [ -f "$D/$1" ] && head -n 1 "$D/$1"; }
+
+# list WORDS: a JSON array of strings
+list() {
+    printf '['
+    sep=
+    for w in $1; do
+        printf '%s"%s"' "$sep" "$w"
+        sep=,
+    done
+    printf ']'
+}
+
+status_json() {
+    printf '{"Version":"1.104.1","BackendState":"%s"' "$(val backend)"
+    [ ! -f "$D/authurl" ] || printf ',"AuthURL":"%s"' "$(val authurl)"
+    if [ "$(val backend)" = Running ]; then
+        printf ',"Self":{"ID":"n1","HostName":"x"'
+        [ ! -f "$D/dnsname" ] || printf ',"DNSName":"%s"' "$(val dnsname)"
+        [ ! -f "$D/ips" ] || printf ',"TailscaleIPs":%s' "$(list "$(val ips)")"
+        [ ! -f "$D/keyexpiry" ] || printf ',"KeyExpiry":"%s"' "$(val keyexpiry)"
+        [ ! -f "$D/routes" ] || printf ',"PrimaryRoutes":%s' "$(list "$(val routes)")"
+        printf '}'
+        [ ! -f "$D/tailnet" ] || printf ',"CurrentTailnet":{"Name":"%s","MagicDNSSuffix":"tail1.ts.net"}' "$(val tailnet)"
+    fi
+    printf ',"Peer":{"nodekey:aa":{"HostName":"other","TailscaleIPs":["100.64.0.9"]}}}\n'
+}
+
+case $cmd in
+    status)
+        status_json
+        ;;
+    set)
+        echo "set $*" >>"$D/calls"
+        [ ! -f "$D/set-fail" ] || { echo "set: failed" >&2; exit 1; }
+        ;;
+    up)
+        echo "up $*" >>"$D/calls"
+        case $(val up-mode) in
+            url)
+                url=https://login.example.invalid/a/FAKELINK01
+                echo "$url" >"$D/authurl"
+                printf 'To authenticate, visit:\n\n\t%s\n\n' "$url" >&2
+                exit 1
+                ;;
+            accept)
+                for a in "$@"; do
+                    case $a in --auth-key=file:*) [ -r "${a#--auth-key=file:}" ] || { echo "cannot read key file" >&2; exit 1; } ;; esac
+                done
+                echo Running >"$D/backend"
+                rm -f "$D/authurl"
+                ;;
+            wait)
+                exec sleep 3600
+                ;;
+            refuse)
+                echo "backend error: invalid key: API key tskey-auth-FAKE not valid" >&2
+                exit 1
+                ;;
+            *)
+                echo 'timeout waiting for Tailscale service to enter a Running state; check health with "tailscale status"' >&2
+                exit 1
+                ;;
+        esac
+        ;;
+    *)
+        echo "stand-in: unknown command $cmd" >&2
+        exit 2
+        ;;
+esac
