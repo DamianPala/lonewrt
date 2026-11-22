@@ -4,6 +4,7 @@
 
 ### Added
 
+- Profile key `WWAN_PIN` for a SIM card with a PIN, also in the configurator: the router unlocks the card at every start, so a button reset no longer leaves it offline until someone enters the PIN in LuCI. Not tried on a card with a PIN yet. Add the line `WWAN_PIN=''` to an existing profile, or load the profile into the configurator
 - Configurator: a button at an empty `WIFI_KEY` and `ROOT_PASSWORD` draws a password in the browser, in the form the build draws them, so a build on GitHub no longer means making up two passwords
 
 ### Changed

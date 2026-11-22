@@ -214,8 +214,10 @@ expect "WG keys after WG_ENABLED=1" "$(visible '[data-key^=WG_]')" 8
 ab fill '#f-WG_KEEPALIVE' 25 >/dev/null
 ab select '#f-WG_ENABLED' 0 >/dev/null
 expect "WG keys after WG_ENABLED=0" "$(visible '[data-key^=WG_]')" 2
+# WWAN_PIN does not depend on the APN, so it is shown from the start, next to WWAN_APN
+expect "WWAN keys before an APN" "$(visible '[data-key^=WWAN_]')" 2
 ab fill '#f-WWAN_APN' internet >/dev/null
-expect "APN login after an APN" "$(visible '[data-key^=WWAN_]')" 4
+expect "APN login after an APN" "$(visible '[data-key^=WWAN_]')" 5
 ab fill '#f-TG_BOT_TOKEN' 1:x >/dev/null
 expect "LOW_BALANCE with the token only" "$(visible '[data-key=LOW_BALANCE]')" 0
 ab fill '#f-TG_CHAT_ID' 5 >/dev/null

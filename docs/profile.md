@@ -21,6 +21,7 @@ A missing key, an unknown key, a key given twice, an empty value where none is a
 | `ROOT_PASSWORD_HASH` | the root password as a crypt(3) hash (it starts with `$`), e.g. from `openssl passwd -6` | drawn when both are empty |
 | `SSH_KEYS` | public SSH keys of the people who may log in as root, separated by `;`, see [SSH keys](#ssh-keys) | only the keys of the profile's folder, if any |
 | `WWAN_APN`, `WWAN_AUTH`, `WWAN_USERNAME`, `WWAN_PASSWORD` | LTE access; auth is `none`, `pap`, `chap` or `both` | the network assigns an APN; when that fails, the router takes one from its own short list of operators |
+| `WWAN_PIN` | the PIN of the SIM card, 4 to 8 digits, see [SIM PIN](#sim-pin) | for a card without a PIN |
 | `LTE_BANDS` | comma list of LTE bands to lock, e.g. `1,3,20` | bands untouched |
 | `WG_ENABLED` | `1` turns the WireGuard client on, `0` leaves it off | not allowed |
 | `WG_PRIVATE_KEY`, `WG_ADDRESS`, `WG_PEER_PUBLIC_KEY`, `WG_ENDPOINT_HOST` | the tunnel: the router's private key, its address (space-separated CIDR list), the server's public key and the server's name or address | allowed only when `WG_ENABLED` is `0` |
@@ -35,7 +36,7 @@ A missing key, an unknown key, a key given twice, an empty value where none is a
 | `LINK_RESTART_AFTER_S` | seconds without an answer to the pings after which the router restarts its mobile connection, see [Link restart](#link-restart); `120` to `900`, `generic.conf` has `120` | not allowed |
 | `LOG_LEVEL` | `info` or `debug`; `debug` is for a test period, see [Log level](#log-level) | not allowed |
 
-`WIFI_KEY`, `ROOT_PASSWORD`, `ROOT_PASSWORD_HASH`, `WWAN_PASSWORD`, `WG_PRIVATE_KEY`, `TG_BOT_TOKEN`, `HC_PING_URL` and `SMS_ADMINS` are secrets or private data.
+`WIFI_KEY`, `ROOT_PASSWORD`, `ROOT_PASSWORD_HASH`, `WWAN_PASSWORD`, `WWAN_PIN`, `WG_PRIVATE_KEY`, `TG_BOT_TOKEN`, `HC_PING_URL` and `SMS_ADMINS` are secrets or private data.
 They end up in the image as root-readable files (`ROOT_PASSWORD` as its hash), so an image built from a profile with them is private too, and git ignores every profile except `generic.conf`.
 `build.sh` warns when a profile with one of the secrets (all but `SMS_ADMINS`), or a private SSH host key in `profiles/<name>/`, is readable by group or others: run `chmod 600` on those files.
 
@@ -59,6 +60,14 @@ The folder `profiles/<name>/` may hold three more files, each optional:
 
 - `authorized_keys`: its lines are copied as they are after the keys of `SSH_KEYS`, so options such as `from="..."` belong here. A key that `SSH_KEYS` already has (same type and data, whatever the comment) is written once.
 - `dropbear_ed25519_host_key` and `dropbear_rsa_host_key`: the router's own SSH host keys. With them the router keeps its host key over a flash or a reset with the button, so SSH does not warn that the key changed.
+
+## SIM PIN
+
+A SIM without a PIN is the simplest: take the PIN off in a phone and leave `WWAN_PIN` empty.
+With `WWAN_PIN` set the router unlocks the card at every start of the connection, also after a reset with the button; a PIN entered in LuCI instead is lost at a reset or a flash.
+The router tries the PIN only while the card has all 3 tries left, and stops after a wrong one.
+So a wrong `WWAN_PIN` costs up to 2 tries and the router alone cannot block the card, but a card with fewer than 3 tries left stays locked, also with the right PIN: enter the right PIN once in a phone, which gives the card its 3 tries back.
+This key has not been tried on a card with a PIN yet.
 
 ## SMS control
 

@@ -32,6 +32,7 @@ MAY_BE_EMPTY = {
     "WWAN_AUTH",
     "WWAN_USERNAME",
     "WWAN_PASSWORD",
+    "WWAN_PIN",
     "LTE_BANDS",
     "WG_PRIVATE_KEY",
     "WG_ADDRESS",
@@ -78,6 +79,8 @@ FORMATS = {
     "ROOT_PASSWORD": PASSWORD,
     "ROOT_PASSWORD_HASH": r"\$[A-Za-z0-9./$]+",
     "WWAN_AUTH": r"none|pap|chap|both",
+    # a secret: the SIM's PIN, the `pincode` of the interface wwan (SPEC R13e)
+    "WWAN_PIN": r"[0-9]{4,8}",
     "LTE_BANDS": r"[0-9]{1,2}(?:,[0-9]{1,2})*",
     "WG_ENABLED": r"[01]",
     "WG_PRIVATE_KEY": WG_KEY,
@@ -406,8 +409,8 @@ LTE router with OpenWrt (ZTE MF289F): passwords and hints
   The browser warns that the certificate is not trusted. The router signs it itself, so this is expected:
   choose Advanced and continue.
 - A reset with the button restores the settings from the image, including the passwords on this card.
-- SIM card with a PIN: remove the PIN in a phone, or enter it in LuCI:
-  Network > Interfaces > WWAN > Edit > PIN.
+- SIM card with a PIN: remove the PIN in a phone, or put it into the profile (WWAN_PIN) and build again.
+  A PIN entered in LuCI (Network > Interfaces > WWAN > Edit > PIN) is lost at a reset with the button.
 - No internet 5 minutes after boot: enter the operator's APN in LuCI:
   Network > Interfaces > WWAN > Edit > APN, then Save & Apply.
 - The router works on LTE and sets LTE again at every boot. Only when LTE stays dead after a restart

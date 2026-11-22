@@ -69,7 +69,8 @@ usage() {
 
 # Profile keys whose value is a secret (SPEC R4, D15); a profile that holds one should be 0600
 SECRET_KEYS=(
-    WIFI_KEY ROOT_PASSWORD ROOT_PASSWORD_HASH WWAN_PASSWORD WG_PRIVATE_KEY TG_BOT_TOKEN HC_PING_URL
+    WIFI_KEY ROOT_PASSWORD ROOT_PASSWORD_HASH WWAN_PASSWORD WWAN_PIN WG_PRIVATE_KEY TG_BOT_TOKEN
+    HC_PING_URL
 )
 # Private key files of profiles/<name>/ that the build copies into the image (render.py KEY_FILES;
 # authorized_keys is public and not listed)

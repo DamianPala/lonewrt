@@ -40,6 +40,7 @@ fb_expect network.wwan.modes lte
 fb_expect network.wwan.timeout 30
 fb_expect network.wwan.apn "<unset>"
 fb_expect network.wwan.auth "<unset>"
+fb_expect network.wwan.pincode "<unset>"
 fb_expect lonewrt.modem.bands "<unset>"
 
 # WireGuard: wg0 and the vpn zone exist, wg0 disabled, no key, peer or endpoint (R32)

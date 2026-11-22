@@ -171,6 +171,8 @@ ol { padding-left: 1.4rem; }
    "help": "The APN user name, if the operator wants one."},
   {"key": "WWAN_PASSWORD", "group": "mobile", "default": "", "empty": true, "secret": true, "when": ["WWAN_APN!="],
    "help": "The APN password, if the operator wants one."},
+  {"key": "WWAN_PIN", "group": "mobile", "default": "", "empty": true, "secret": true,
+   "help": "The PIN of the SIM card, 4 to 8 digits, if the card asks for one. Empty: a card without a PIN, which is the simplest (take the PIN off in a phone). The router tries the PIN only while the card has all 3 tries left, so a wrong one cannot block the card."},
   {"key": "LTE_BANDS", "group": "mobile", "default": "", "empty": true,
    "help": "A comma list of LTE bands to lock, for example `1,3,20`. Empty leaves the modem's bands untouched."},
 

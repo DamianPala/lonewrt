@@ -21,6 +21,7 @@ P_WWAN_APN='@WWAN_APN@'
 P_WWAN_AUTH='@WWAN_AUTH@'
 P_WWAN_USERNAME='@WWAN_USERNAME@'
 P_WWAN_PASSWORD='@WWAN_PASSWORD@'
+P_WWAN_PIN='@WWAN_PIN@'
 P_LTE_BANDS='@LTE_BANDS@'
 P_WG_ENABLED='@WG_ENABLED@'
 P_WG_PRIVATE_KEY='@WG_PRIVATE_KEY@'
@@ -72,6 +73,8 @@ set_or_delete network.wwan.apn "$P_WWAN_APN"
 set_or_delete network.wwan.auth "$P_WWAN_AUTH"
 set_or_delete network.wwan.username "$P_WWAN_USERNAME"
 set_or_delete network.wwan.password "$P_WWAN_PASSWORD"
+# R13e: netifd's QMI handler unlocks the SIM with it at every start of the interface
+set_or_delete network.wwan.pincode "$P_WWAN_PIN"
 uci set network.wwan.pdptype='ipv4'
 uci set network.wwan.multipath='off'
 uci set network.wwan.modes='lte'

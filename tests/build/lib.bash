@@ -34,7 +34,7 @@ ssh_field() { cut -d' ' -f"$2" <<<"$1"; }
 # Values that only fixtures/fake-full.conf and fixtures/fake-full/ carry (SPEC R4, R4a)
 FAKE_VALUES=(
     fakelw-q7x9 192.168.77.1 FakeLwSsid-q7x9 fake-wifi-key-q7x9 fakesaltq7x9 fake.apn.q7x9
-    fakeuser-q7x9 fakepass-q7x9 "$FAKE_WG_PRIVATE_KEY"
+    fakeuser-q7x9 fakepass-q7x9 73914826 "$FAKE_WG_PRIVATE_KEY"
     RkFLRS13Zy1wZWVyLXB1YmxpYy1rZXktcTd4OS0wMTI= 10.99.77. vpn.fake-q7x9.example
     FAKEauthorizedKEYq7x9 FAKE-dropbear-ed25519-host-key-q7x9 FAKE-dropbear-rsa-host-key-q7x9
     FAKEtgtokenq7x9 -1009977001977 hc-ping.fake-q7x9.example FAKEhcping-q7x9-0001

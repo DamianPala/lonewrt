@@ -19,7 +19,7 @@ render() {
 warnings() { grep -c 'warning' <<<"$1" || true; }
 
 # a profile without any secret: the fake one with the secret keys emptied
-SECRETS=(WIFI_KEY ROOT_PASSWORD ROOT_PASSWORD_HASH WWAN_PASSWORD WG_PRIVATE_KEY TG_BOT_TOKEN HC_PING_URL)
+SECRETS=(WIFI_KEY ROOT_PASSWORD ROOT_PASSWORD_HASH WWAN_PASSWORD WWAN_PIN WG_PRIVATE_KEY TG_BOT_TOKEN HC_PING_URL)
 expr=()
 for key in "${SECRETS[@]}"; do expr+=(-e "s/^$key=.*/$key=''/"); done
 sed "${expr[@]}" -e "s/^WG_ENABLED=.*/WG_ENABLED='0'/" "$P/fake-full.conf" >"$P/open.conf"

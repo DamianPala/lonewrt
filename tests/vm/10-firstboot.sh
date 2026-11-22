@@ -68,13 +68,14 @@ gcheck "WiFi radios: country '$country', channels '$ch2'/'$ch5' from generic.con
 gcheck "WiFi schedule off" '[ "$(uci -q get wifi_schedule.@global[0].enabled)" != 1 ]'
 
 # LTE as the image's scripts left it, before the VM swaps QMI for DHCP (overlay zzzz-lw-vm-wwan)
-gcheck "wwan from the image: QMI on /dev/cdc-wdm0, modes=lte, empty APN (R7a, R10, R13a)" \
+gcheck "wwan from the image: QMI on /dev/cdc-wdm0, modes=lte, empty APN, no PIN (R7a, R10, R13a, R13e)" \
     'f=/etc/lw-vm/wwan-from-image.uci; cat "$f"
      grep -qx "network.wwan.proto=.qmi." "$f" &&
      grep -qx "network.wwan.device=./dev/cdc-wdm0." "$f" &&
      grep -qx "network.wwan.modes=.lte." "$f" &&
      grep -qx "network.wwan.timeout=.30." "$f" &&
-     ! grep -q "^network.wwan.apn=.[^'"'"']" "$f"'
+     ! grep -q "^network.wwan.apn=.[^'"'"']" "$f" &&
+     ! grep -q "^network.wwan.pincode=" "$f"'
 gcheck "network.wwan.modes=lte at runtime (R10)" '[ "$(uci get network.wwan.modes)" = lte ]'
 gcheck "network.wwan.timeout=30 at runtime (R7, D82)" '[ "$(uci get network.wwan.timeout)" = 30 ]'
 # R12d: the handler of the uqmi package without its network scan, still the mode set, still

@@ -9,7 +9,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/../build/lib.bash"
 
 # Keys whose values are secrets or private data of a profile (SPEC terms: secret values, R53b)
 CI_SECRET_KEYS=(
-    WIFI_KEY ROOT_PASSWORD ROOT_PASSWORD_HASH WWAN_PASSWORD WG_PRIVATE_KEY TG_BOT_TOKEN HC_PING_URL SMS_ADMINS
+    WIFI_KEY ROOT_PASSWORD ROOT_PASSWORD_HASH WWAN_PASSWORD WWAN_PIN WG_PRIVATE_KEY TG_BOT_TOKEN HC_PING_URL
+    SMS_ADMINS
 )
 CI_STUBS=$FW/tests/ci/stubs
 

@@ -45,6 +45,7 @@ WWAN_APN='fake.apn.q7x9'
 WWAN_AUTH=''
 WWAN_USERNAME='fakeuser-q7x9'
 WWAN_PASSWORD='fakepass-q7x9'
+WWAN_PIN='73914826'
 LTE_BANDS='3,20'
 WIFI_KEY='fake-wifi-key-q7x9'
 PROFILE
@@ -59,20 +60,23 @@ set_router network.wg_server.persistent_keepalive 25
 set_router network.wwan.apn fake.apn.q7x9
 set_router network.wwan.username fakeuser-q7x9
 set_router network.wwan.password fakepass-q7x9
+set_router network.wwan.pincode 73914826
 set_router lonewrt.modem.bands 3,20
 
 got=$(run_block)
 [ "$got" = "keys that differ: none" ] || fail "R59e: a matching router gave: $got"
 
-# changes: the endpoint, the bands (the list order is kept), the tunnel switched off on the router
+# changes: the endpoint, the bands (the list order is kept), the tunnel switched off on the router,
+# another SIM PIN
 set_router network.wg_server.endpoint_host other.fake-q7x9.example
 set_router lonewrt.modem.bands 3,7
 set_router network.wg0.disabled 1
+set_router network.wwan.pincode 1111
 got=$(run_block)
-[ "$got" = "keys that differ: WG_ENABLED WG_ENDPOINT_HOST LTE_BANDS" ] || fail "R59e: the changed keys came out as: $got"
+[ "$got" = "keys that differ: WG_ENABLED WG_ENDPOINT_HOST WWAN_PIN LTE_BANDS" ] || fail "R59e: the changed keys came out as: $got"
 
 # R59c: no value of the profile or of the router in the output
-for v in fake-wg-private-q7x9 fake-wg-peer-q7x9 vpn.fake-q7x9 other.fake-q7x9 fake.apn.q7x9 fakeuser-q7x9 fakepass-q7x9 10.99.77; do
+for v in fake-wg-private-q7x9 fake-wg-peer-q7x9 vpn.fake-q7x9 other.fake-q7x9 fake.apn.q7x9 fakeuser-q7x9 fakepass-q7x9 73914826 1111 10.99.77; do
     ! grep -qF -- "$v" <<<"$got" || fail "R59c: the output holds a value ($v)"
 done
 echo "tunnel-limit comparison names the keys that differ and prints no value"

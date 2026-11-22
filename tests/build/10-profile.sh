@@ -171,6 +171,26 @@ for good in 'R' 'Home router' 'Router' 'a-b c-1' '12345678901234567890' 'Trailin
         fail "ROUTER_NAME '$good' not written verbatim"
 done
 
+# R13e: WWAN_PIN is a key every profile must have; empty or 4 to 8 ASCII digits, anything else stops
+# the build, and the error never shows the value. A PIN lands in the first-boot script as it is.
+variant no-pin '/^WWAN_PIN=/d'
+expect_fail_with "key WWAN_PIN is missing; add the line WWAN_PIN=''" build no-pin
+i=0
+for bad in 123 123456789 12a4 ' 1234' '1234 ' +1234 '12 34' 12.4 '１２３４'; do
+    i=$((i + 1))
+    variant "bad-pin-$i" "s|^WWAN_PIN=.*|WWAN_PIN='$bad'|"
+    expect_fail_with "key WWAN_PIN has an invalid value" build "bad-pin-$i"
+    err=$(build "bad-pin-$i" 2>&1 || true)
+    ! grep -qF -- "'$bad'" <<<"$err" || fail "error message echoes the WWAN_PIN value '$bad'"
+done
+for good in 0000 1234 73914826; do
+    variant "good-pin-$good" "s|^WWAN_PIN=.*|WWAN_PIN='$good'|"
+    build --render-only "good-pin-$good" "$SCRATCH/good-pin-$good" 2>/dev/null ||
+        fail "WWAN_PIN '$good' was rejected"
+    grep -qxF "P_WWAN_PIN='$good'" "$SCRATCH/good-pin-$good/etc/uci-defaults/zz-lw-config" ||
+        fail "WWAN_PIN '$good' not written verbatim"
+done
+
 # R46b: the two REBOOT limits are keys every profile must have, with a positive whole number of up to
 # 4 ASCII digits; anything else stops the build, and the error never shows the value
 for key in SMS_REBOOT_MAX_AGE_MIN SMS_REBOOT_MAX_PER_DAY; do
@@ -347,6 +367,8 @@ sed -e "s/^\(WWAN_[A-Z]*\)=.*/\1=''/" -e "s/^LTE_BANDS=.*/LTE_BANDS=''/" \
 build --render-only blanks "$SCRATCH/blanks" 2>/dev/null || fail "allowed empty values were rejected"
 grep -qx "P_SMS_ADMINS=''" "$SCRATCH/blanks/etc/uci-defaults/zz-lw-config" ||
     fail "an empty SMS_ADMINS is not written as empty"
+grep -qx "P_WWAN_PIN=''" "$SCRATCH/blanks/etc/uci-defaults/zz-lw-config" ||
+    fail "an empty WWAN_PIN is not written as empty"
 
 # R3b: VERSION (MAJOR.MINOR.PATCH, optional -prerelease) is read by every build; a missing file or a
 # malformed value stops the build naming VERSION, and a good one lands in /etc/lw-build (R7b)
