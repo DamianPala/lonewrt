@@ -54,6 +54,7 @@ input[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--
 .msg.new { background: var(--new-bg); color: var(--new); }
 button { font: inherit; padding: 0.45rem 0.9rem; border-radius: 6px; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-fg); cursor: pointer; }
 button.plain { background: transparent; color: var(--accent); }
+button.draw { margin-top: 0.4rem; }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
 .row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0.5rem 0; }
 .row input[type="text"] { width: auto; flex: 1 1 10rem; margin: 0; }
@@ -141,7 +142,7 @@ ol { padding-left: 1.4rem; }
 
   {"key": "WIFI_SSID", "group": "wifi", "default": "OpenWrt-LTE", "empty": false,
    "help": "The name of the Wi-Fi network, 1 to 32 characters."},
-  {"key": "WIFI_KEY", "group": "wifi", "default": "", "empty": true, "secret": true,
+  {"key": "WIFI_KEY", "group": "wifi", "default": "", "empty": true, "secret": true, "draw": true,
    "help": "The Wi-Fi password, 8 to 63 characters. On Linux, an empty key is drawn by the build and written to a password card. A run on GitHub needs it set."},
   {"key": "WIFI_COUNTRY", "group": "wifi", "default": "PL", "empty": false,
    "help": "The two-letter regulatory country of the place the router runs in, for example `PL`, `DE` or `ME`. Set it before building."},
@@ -154,7 +155,7 @@ ol { padding-left: 1.4rem; }
   {"key": "WIFI_HTMODE_5G", "group": "wifi", "default": "VHT80", "empty": false, "suggest": ["HT20", "HT40", "VHT20", "VHT40", "VHT80"],
    "help": "The channel width mode of the 5 GHz band: `HT20`, `HT40`, `VHT80`..."},
 
-  {"key": "ROOT_PASSWORD", "group": "passwords", "default": "", "empty": true, "secret": true, "when": ["ROOT_PASSWORD_HASH="],
+  {"key": "ROOT_PASSWORD", "group": "passwords", "default": "", "empty": true, "secret": true, "draw": true, "when": ["ROOT_PASSWORD_HASH="],
    "help": "The root password, 8 to 63 printable ASCII characters. The image holds only its hash."},
   {"key": "ROOT_PASSWORD_HASH", "group": "passwords", "default": "", "empty": true, "secret": true, "when": ["ROOT_PASSWORD="],
    "help": "Optional, instead of `ROOT_PASSWORD`: the password as a crypt(3) hash, for example from `openssl passwd -6`."},
@@ -453,6 +454,15 @@ function passwordNotes(values) {
   return notes;
 }
 
+// R57b, D130: a password in the form build.sh draws them (draw_password of render.py): three groups
+// of four characters. The alphabet has 32 characters, so the low 5 bits of a random byte pick one
+// without a bias.
+const DRAW_ALPHABET = 'abcdefghijkmnpqrstuvwxyz23456789'; // gitleaks:allow (an alphabet, not a key)
+function drawPassword() {
+  const chars = [...crypto.getRandomValues(new Uint8Array(12))].map((byte) => DRAW_ALPHABET[byte & 31]);
+  return [0, 4, 8].map((start) => chars.slice(start, start + 4).join('')).join('-');
+}
+
 // A field with `when` is shown while every condition holds (`KEY=value`, `KEY!=value`), or while it
 // holds something else than its default, so a value in the text is never out of sight.
 function shown(field, values) {
@@ -557,6 +567,17 @@ function buildField(field) {
     msgs.append(slots[kind]);
   }
   wrap.append(label, input);
+  let draw = null;
+  if (field.draw) {
+    // R57b: offered only while the field is empty (refresh hides it), so it never replaces a password
+    draw = el('button', { type: 'button', class: 'plain draw', id: 'd-' + field.key }, 'Draw a password');
+    draw.addEventListener('click', () => {
+      input.value = drawPassword();
+      input.focus();
+      refresh();
+    });
+    wrap.append(draw);
+  }
   if (field.suggest) {
     const list = el('datalist', { id: 'f-' + field.key + '-list' });
     for (const value of field.suggest) list.append(el('option', { value }));
@@ -564,7 +585,7 @@ function buildField(field) {
   }
   wrap.append(help, msgs);
   inputs[field.key] = input;
-  parts[field.key] = { wrap, slots, isNew: false };
+  parts[field.key] = { wrap, slots, draw, isNew: false };
   return wrap;
 }
 
@@ -654,6 +675,7 @@ function refresh() {
     showMessage(slots.note, notes[field.key] || '');
     showMessage(slots.new, parts[field.key].isNew ? 'New in this release: your profile had no line for it, so it holds the default.' : '');
     inputs[field.key].setAttribute('aria-invalid', error ? 'true' : 'false');
+    if (parts[field.key].draw) parts[field.key].draw.hidden = value !== '';
     lines.push(field.key + "='" + value + "'");
   }
   showNameNote($('name').value.trim());

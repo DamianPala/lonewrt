@@ -47,7 +47,7 @@ Later builds of the profile take the drawn passwords from the card, so keep it: 
 Once a card exists, every build rewrites it from what the image holds, so a password the profile now sets replaces the card's.
 When the profile gives only `ROOT_PASSWORD_HASH`, the card has no `root=` line and says that root uses the hash from the profile.
 Every build hashes the root password with a new salt, so the hash in the image changes between builds while the password stays.
-A build on GitHub writes no card: it refuses a profile with an empty `WIFI_KEY` or with both root keys empty, so that every run gives the same passwords.
+A build on GitHub writes no card: it refuses a profile with an empty `WIFI_KEY` or with both root keys empty, so that every run gives the same passwords; the configurator can draw them for you.
 
 ## SSH keys
 

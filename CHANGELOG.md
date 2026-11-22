@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Configurator: a button at an empty `WIFI_KEY` and `ROOT_PASSWORD` draws a password in the browser, in the form the build draws them, so a build on GitHub no longer means making up two passwords
+
 ### Changed
 
 - Docs: `README.md` is shorter and reordered: "What it solves" comes first, a table says where to start, and "Limits" and "Docs" are sections of their own

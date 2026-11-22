@@ -2,7 +2,8 @@
 # The page in a headless browser (agent-browser, bundled Chromium), opened from disk: the unchanged
 # form is accepted by build.sh (R56a), the run fixture typed in comes out key by key and in order
 # (R56b), a loaded profile gets "new" and "left out" (R56d), the rough checks mark and stop the text
-# and the password note does not (R57, R57a), a reload and the browser's storage are empty (R56c),
+# and the password note does not (R57, R57a), an empty password field draws one (R57b), a reload
+# and the browser's storage are empty (R56c),
 # and the request log holds only the file itself (R58). Prints SKIP when there is no agent-browser.
 # shellcheck source=tests/build/lib.bash
 source "$(dirname "$0")/../build/lib.bash"
@@ -233,6 +234,30 @@ load_lines() { # load_lines TEXT: load the text into the form
 load_lines "ROOT_PASSWORD='fake-pass-q7x9'"$'\n'"ROOT_PASSWORD_HASH='x'"
 expect "both root keys shown when both set" "$(visible '[data-key^=ROOT_PASSWORD]')" 2
 expect "both root keys noted" "$(( $(at_key ROOT_PASSWORD note) + $(at_key ROOT_PASSWORD_HASH note) ))" 2
+
+# R57b: an empty WIFI_KEY and ROOT_PASSWORD each have a button that draws a password in the form
+# build.sh draws them; the button is gone while the field holds a value, so it replaces nothing,
+# and build.sh accepts the text
+ab click '#reset-btn' >/dev/null
+DRAWN='^[a-km-np-z2-9]{4}(-[a-km-np-z2-9]{4}){2}$'
+expect "draw buttons on the defaults" "$(visible '.draw')" 2
+ab click '#d-WIFI_KEY' >/dev/null
+wifi=$(js 'document.getElementById("f-WIFI_KEY").value')
+[[ $wifi =~ $DRAWN ]] || fail "R57b: the drawn WIFI_KEY has another form (${#wifi} characters)"
+expect "draw button after a draw" "$(visible '[data-key=WIFI_KEY] .draw')" 0
+expect "WIFI_KEY note after a draw" "$(at_key WIFI_KEY note)" 0
+grep -qx "WIFI_KEY='$wifi'" <(out_text) || fail "R57b: the drawn WIFI_KEY is not in the text"
+ab click '#d-ROOT_PASSWORD' >/dev/null
+root=$(js 'document.getElementById("f-ROOT_PASSWORD").value')
+[[ $root =~ $DRAWN ]] || fail "R57b: the drawn ROOT_PASSWORD has another form (${#root} characters)"
+[ "$root" != "$wifi" ] || fail "R57b: two draws gave the same password"
+expect "root note after a draw" "$(at_key ROOT_PASSWORD note)" 0
+save_to "$P/drawn.conf"
+render_ok drawn
+ab fill '#f-WIFI_KEY' '' >/dev/null
+expect "draw button back at an emptied field" "$(visible '[data-key=WIFI_KEY] .draw')" 1
+ab fill '#f-WIFI_KEY' 'fake-pass-q7x9' >/dev/null
+expect "no draw button at a typed password" "$(visible '[data-key=WIFI_KEY] .draw')" 0
 
 # TIMEZONE follows ZONENAME and stays hidden while it holds the listed string; a loaded profile whose
 # TIMEZONE differs, or whose ZONENAME is not listed, shows it with a note and keeps the loaded values
