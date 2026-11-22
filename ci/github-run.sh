@@ -196,7 +196,7 @@ ensure_host_tools() {
     done
     if [ "${#missing[@]}" -eq 0 ]; then return 0; fi
     if [ "${GITHUB_ACTIONS:-}" != true ]; then
-        fail "Missing on this machine: ${missing[*]}. Install: ${packages[*]} (README, What you need)."
+        fail "Missing on this machine: ${missing[*]}. Install: ${packages[*]} (docs/development.md, Build host)."
     fi
     say "installing ${packages[*]}"
     sudo apt-get update -qq

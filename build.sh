@@ -75,10 +75,10 @@ SECRET_KEYS=(
 # authorized_keys is public and not listed)
 SECRET_KEY_FILES=(dropbear_ed25519_host_key dropbear_rsa_host_key)
 
-# need CMD...: stop before any work when a host program is missing (README, "What you need")
+# need CMD...: stop before any work when a host program is missing (docs/development.md, "Build host")
 need() {
     local c
-    for c; do command -v "$c" >/dev/null || die "$c is required on the build host (see README, What you need)"; done
+    for c; do command -v "$c" >/dev/null || die "$c is required on the build host (see docs/development.md, Build host)"; done
 }
 
 check_name() {

@@ -45,7 +45,7 @@ For the GitHub way no copy is needed: you send the person's file straight to Git
 ## Step 3: choose the way
 
 Ask which one: "build on this Linux machine" or "build on GitHub" (the person has no Linux machine, or prefers it).
-A local build needs Linux x86_64 with the tools of `README.md` ("What you need").
+A local build needs Linux x86_64 with the tools of `docs/development.md` ("Build host").
 The GitHub way needs a GitHub account, `gh` logged in as that person, and a **private** repository (a public one stops the run before it builds anything).
 
 ## Step 4: local build

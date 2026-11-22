@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- Docs: `README.md` is shorter and reordered: "What it solves" comes first, a table says where to start, and "Limits" and "Docs" are sections of their own
+- Docs: what the build downloads and what the router talks to moved from `README.md` to `docs/network.md`
+- Docs: the tools a Linux build host needs are listed only in `docs/development.md` ("Build host"), and the messages about a missing tool from `build.sh` and from a run on GitHub point there
+- Password card and `README.md` ("After flashing"): a new hint says what to do when SSH warns that the router's host key changed after a flash or a button reset
+
+### Fixed
+
+- Password card and `README.md` ("After flashing"): the hint about the network mode said "LTE only"; it now says that the router sets LTE at every start and switches to 2G (EDGE) only while LTE stays dead after a restart
+
 ## [0.4.0] - 2026-11-20
 
 ### Added

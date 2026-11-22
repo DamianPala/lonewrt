@@ -418,6 +418,8 @@ LTE router with OpenWrt (ZTE MF289F): passwords and hints
   /root/sms-archive/ every day at 04:10 and deletes the oldest, keeping 20.
 - To change the WiFi country (now {country}) in LuCI: Network > Wireless > Edit on each radio >
   Advanced Settings > Country Code.
+- SSH warns that the host key changed: expected after a flash or a reset with the button, when
+  the router makes a new key. Run ssh-keygen -R {lan} and connect again.
 """
     return "\n".join(lines) + "\n" + hints
 
