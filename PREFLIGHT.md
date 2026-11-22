@@ -69,3 +69,16 @@ Decisions: name lonewrt · licence MIT · history squash · maturity experimenta
 | L15 | PASS | reruns send no duplicates (tests) |
 | L16 | PASS | no model; endpoints and failure modes documented |
 | L21 | FINDINGS 1 resolved | build.sh now checks its host programs first |
+
+## 2026-11-22 · announce · candidate 92e8a17 · destination github:DamianPala/lonewrt (public)
+Decisions: name lonewrt · licence MIT · history squash · maturity experimental · disclosure: "Built with AI coding agents under my direction."
+
+| Item | Result | Note |
+|---|---|---|
+| C01 | DEFERRED the release of the candidate, then B14 on that release (owner, then agent) | the candidate is on main since this run but 11 commits past the latest release v0.4.0; light checks of the live release passed |
+| C02 | DEFERRED one description, topics and the post draft (owner) | two descriptions that agree but differ in words, no topics |
+| C03 | PASS | the three README images looked at in full, made-up data only; no new media yet |
+| C04 | DEFERRED venue list, then one line per venue on the day (owner picks, agent reads) | no venues named |
+| C05 | DEFERRED the date (owner) | |
+| C07 | DEFERRED the owner confirms or changes the draft (owner) | route drafted in the private record |
+| C08 | PASS | README carries the disclosure sentence |
