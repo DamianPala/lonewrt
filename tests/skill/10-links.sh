@@ -26,7 +26,8 @@ check_tree() {
     for phrase in 'install -m 0600' './fetch-deps.sh' './build.sh <name>' 'explicit yes' 'sysupgrade -b' \
         'scp -O' 'sysupgrade -T' 'sysupgrade -n' 'someone is at the router' 'gh secret set LW_PROFILE' \
         'gh repo create' '--template DamianPala/lonewrt-build' '--private' 'ssh-keygen -R' \
-        'Never set the `test` input' 'No secret value ever reaches the chat' 'Recovery'; do
+        'Never set the `test` input' 'No secret value ever reaches the chat' 'file-reading tool' \
+        'Recovery'; do
         grep -qF -- "$phrase" "$f" || { echo "R59: $SKILL lacks '$phrase'"; return 1; }
     done
     # a secret is never given in an argument of the secret command

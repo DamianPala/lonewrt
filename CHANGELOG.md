@@ -8,8 +8,14 @@
 - Docs: what the build downloads and what the router talks to moved from `README.md` to `docs/network.md`
 - Docs: the tools a Linux build host needs are listed only in `docs/development.md` ("Build host"), and the messages about a missing tool from `build.sh` and from a run on GitHub point there
 - Password card and `README.md` ("After flashing"): a new hint says what to do when SSH warns that the router's host key changed after a flash or a button reset
+- Agent skill: it says where the code comes from (for a local build, a checkout of the release the profile was made for), forbids opening the profile, the card, an image or a backup with the agent's own file tools as well, and asks before a flash whether the router will answer on another address and still accept a key login
+- Agent skill: a shorter description, one example instead of two, and the way to build is chosen before the profile is copied
 
 ### Fixed
+
+- Agent skill: on GitHub it could take an earlier run of the repository for the one it had just started; it now waits for the new run, always names the version and reads the message of a failed run from its log
+- Agent skill: a router this machine had never connected to was reported as "no key login"; the two failures are now told apart
+- Agent skill: its examples named release 0.1.0, which cannot be built on GitHub, and the configurator's version line, the `test` field of a run and the generic image were described wrongly
 
 - Password card and `README.md` ("After flashing"): the hint about the network mode said "LTE only"; it now says that the router sets LTE at every start and switches to 2G (EDGE) only while LTE stays dead after a restart
 - `./fetch-deps.sh --help` and `tests/vm/run-all.sh --help` ended with a line of the script's code
