@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.5.0] - 2026-11-22
 
 ### Added
 
@@ -11,6 +11,7 @@
 
 ### Changed
 
+- **BREAKING:** a profile made for 0.4.0 lacks nine keys, and the build stops with the name of the first one. Migration: add `WWAN_PIN=''` and the eight `OP_*` lines with empty values (copy them from `profiles/generic.conf`), or load the profile into the configurator and download it again
 - Docs: `README.md` is shorter and reordered: "What it solves" comes first, a table says where to start, and "Limits" and "Docs" are sections of their own
 - Docs: what the build downloads and what the router talks to moved from `README.md` to `docs/network.md`
 - Docs: the tools a Linux build host needs are listed only in `docs/development.md` ("Build host"), and the messages about a missing tool from `build.sh` and from a run on GitHub point there
@@ -92,6 +93,7 @@ First public release, experimental: it runs on one router in daily use.
 - Listed phone numbers can text `status` or `reboot` to the SIM, at most 5 restarts a day
 - Optional WireGuard tunnel for remote access, LuCI apps for the modem, the LTE bands and SMS, persistent logs, and the release version in `/etc/lw-build`
 
+[0.5.0]: https://github.com/DamianPala/lonewrt/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/DamianPala/lonewrt/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/DamianPala/lonewrt/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/DamianPala/lonewrt/compare/v0.2.0...v0.2.1
