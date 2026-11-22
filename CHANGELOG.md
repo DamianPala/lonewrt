@@ -18,6 +18,7 @@
 - Agent skill: it says where the code comes from (for a local build, a checkout of the release the profile was made for), forbids opening the profile, the card, an image or a backup with the agent's own file tools as well, and asks before a flash whether the router will answer on another address and still accept a key login
 - Agent skill: a shorter description, one example instead of two, and the way to build is chosen before the profile is copied
 - Docs: `docs/operators.md` starts with what a preset gives you, says how a preset for another operator gets into an image (the `OP_*` keys of the profile) and how to try one on a running router before building
+- `profiles/generic.conf`: the comments are one-line reminders now, and `docs/profile.md` is the one place that says what each key takes
 - Docs: `docs/profile.md` states the format of more keys (`LOW_BALANCE`, `HOSTNAME`, `WIFI_SSID`, `TG_CHAT_ID` of a group and others), says what the SSH host key files of a profile's folder are for, and its long table cells are sections below the table
 
 ### Fixed
