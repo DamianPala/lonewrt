@@ -2,6 +2,12 @@
 
 ## [0.5.1] - 2026-11-22
 
+### Added
+
+- Optional Tailscale remote access (profile key `TS_ENABLED`, default off): the bot sends a sign-in link, and then you reach the router's settings page and SSH by its name from your own devices, with no server of your own. The README section "Remote access with Tailscale" has the steps, including the access policy that keeps a stolen router out of your other devices
+- Tailscale can also share the router's LAN with your devices (`TS_ADVERTISE_LAN`), after you approve the route in the admin console
+- With Tailscale on, the image is about 18 MB and the free space on the router is about 4 to 6 MiB instead of 12.5 MiB, so install few extra packages later
+
 ### Fixed
 
 - `./fetch-deps.sh` and every build on GitHub stopped with "sha256 mismatch" for `libjpeg-turbo-3.1.1-r1.apk` since 2026-11-19, when OpenWrt rebuilt two packages the tests use without a new version number. `deps.lst` has the sums of the rebuilt files, whose hashes match OpenWrt's signed package index. The image itself was not affected: `build.sh` never used these files

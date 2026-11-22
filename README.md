@@ -20,12 +20,13 @@ For a router you cannot walk up to: a rental flat, a holiday home, a cabin, a sm
 - **Someone asks for the Wi-Fi password at 23:00.** You tap a button in Telegram and the bot posts the Wi-Fi name and password with a QR code that a phone camera scans to join. Other buttons give the link state, the connected devices, the newest SMS, a speed test (about 330 MB of your data) and a restart.
 - **The internet is down and so is the bot.** A healthchecks.io heartbeat tells you from the outside, and the router posts when it is back and how long it was gone.
 - **Telegram is not an option.** Phone numbers you list can text `status` or `reboot` to the SIM. The router checks only the sender's number, and numbers can be faked, so SMS can only ask for the state and a restart, 5 restarts a day by default.
+- **You want to reach the router yourself.** With Tailscale on, you open its settings page and SSH from your own laptop or phone by its name, with no server of your own. Optional, see [Remote access with Tailscale](#remote-access-with-tailscale).
 
 ## What you need
 
 - A ZTE MF289F that already runs OpenWrt. The build targets OpenWrt 25.12.6.
 - Either a Linux x86_64 build host, or no Linux at all: a web browser, a GitHub account and the router's web page (LuCI), see [Build without Linux](#build-without-linux). The tools the Linux host needs are listed in [docs/development.md](docs/development.md#build-host).
-- For the notifications, a Telegram bot token and a chat. For remote access, a WireGuard server. For the heartbeat, a healthchecks.io check. Each is optional.
+- For the notifications, a Telegram bot token and a chat. For remote access, a WireGuard server or a free Tailscale account, see [Remote access with Tailscale](#remote-access-with-tailscale). For the heartbeat, a healthchecks.io check. Each is optional.
 
 | You have | Start at |
 |---|---|
@@ -110,6 +111,118 @@ The router's own settings page is called LuCI.
 - **SMS in the modem.** When it holds more than 30 messages, the router copies all of them to `/root/sms-archive/` once a day at 04:10 and deletes the oldest, keeping 20, so new SMS (top-ups, package expiry) keep arriving.
 - **The Wi-Fi country.** It is the `WIFI_COUNTRY` of the profile. To change it without a new image, go to LuCI: Network > Wireless > Edit on each radio > Advanced Settings > Country Code.
 - **SSH warns that the host key changed.** Expected after every flash and button reset, because the router gets a new key. Run `ssh-keygen -R <router address>` and connect again.
+
+## Remote access with Tailscale
+
+Tailscale joins your own devices into one private network, so you reach the router's settings page (LuCI) and SSH from your laptop or phone, with no server of your own.
+It is optional: the image has it only when the profile sets `TS_ENABLED='1'`.
+
+### Before the build
+
+1. Make a free account at tailscale.com.
+2. Install the Tailscale app on your laptop and your phone, and sign in with the same account. Another account is another private network, and the router will not show up in yours.
+3. Set `TS_ENABLED` to `1` in the configurator (group Tailscale) or in the profile as `TS_ENABLED='1'`, then build and flash as described above.
+
+### Sign in
+
+After the flash, the bot sends a sign-in link to your Telegram chat, once for each flash without kept settings and each button reset.
+Open the link on your phone or laptop and sign in.
+Without Telegram, send `tailscale` by SMS to the router's SIM, or run `lw-tailscale link` over SSH; both give you a link.
+If the link is old, send `/tailscale` in the chat for a new one.
+
+Do not run a bare `tailscale up` on the router: it can switch on the firewall and DNS settings that the image keeps off.
+
+Then turn off key expiry for the router, or its sign-in ends after 180 days.
+On the Machines page of the admin console, open the menu at the right of the router's row and choose **Disable Key Expiry**.
+The bot warns you 14 days before the date when key expiry is still on.
+
+### Connect
+
+- In a browser: `https://` followed by `HOSTNAME` of your profile, for example `https://lte-router`. This opens LuCI; the browser warns about the certificate, as described under "After flashing".
+- Over SSH: `ssh root@<HOSTNAME>`.
+
+This needs MagicDNS, which is on by default; the DNS page of the admin console shows it.
+
+### The router's network (optional)
+
+With `TS_ADVERTISE_LAN` set to `1`, your devices can also reach the devices on the router's network, such as a camera.
+
+1. Approve the route once: on the Machines page, open the router and its **Subnets** section, select the route and save.
+2. On Linux, run `sudo tailscale set --accept-routes`. Android, iOS, macOS and Windows pick the route up on their own.
+3. If your home network is `192.168.0.x` or `192.168.1.x`, it clashes with the router's network. The build and the configurator warn about it, and the configurator can set another `LAN_IP`.
+4. Devices on the router's network see the router's address, not yours, because the router passes your traffic on under its own address.
+
+### Reset or reflash
+
+A button reset, or a flash without "Keep settings", gives the router a new identity in Tailscale, and the old entry stays in your account.
+Before you do it, remove the router's entry on the Machines page of the admin console.
+If the router then comes up with a number at the end of its name (`lte-router-1`), remove the old entry and rename the new one on that page.
+A router added again with a link has no tag, so give it the tag again, see [Limit what the router can reach](#limit-what-the-router-can-reach).
+After a flash that keeps settings, a router that is not added yet sends no link by itself, so send `/tailscale`.
+
+### Auth key (optional)
+
+To add the router without a click, put a key into the profile as `TS_AUTHKEY`.
+Make it on the Keys page of the admin console with **Generate auth key**, and set:
+
+- **Reusable** off and **Ephemeral** off.
+- **Tags**: optional. A tagged device has key expiry off by default, so a tag replaces the step above.
+- **Pre-approved**: on when device approval is on in your account.
+- **Expiry**: a day or more and at most 90 days, and later than the day of the flash.
+
+The key must start with `tskey-auth-`. Keys starting with `tskey-api-` or `tskey-client-` are for API tools; the build refuses them.
+The router uses the key once. After a reset or a later flash, the bot sends a link again.
+The key sits in the image like the other profile secrets, so keep the image private.
+
+### Safety
+
+The sign-in link is a key.
+Whoever signs in with it first adds the router to that account, and every device of the account can reach the router's settings page and SSH (both still ask for the login).
+Send the link only to the person who manages the router.
+If the router ended up in the wrong account, a button reset puts it back to a fresh state, and the bot sends a new link.
+
+### Limit what the router can reach
+
+By default every device in a Tailscale account reaches every other device.
+So a stolen router with root could join your account and reach your laptop and phone, and the router's firewall does not stop that, because root can change the firewall.
+The account's access policy does, so set it up as follows.
+
+1. On the Access controls page of the admin console, replace the policy with the one below and save it. If you changed the policy before, add these parts to yours instead. The policy has to come first, because a tag can be applied only when the policy's `tagOwners` names it.
+2. Give the router the tag `tag:lonewrt`: on the Machines page, open the router's menu and choose **Edit tags**, or add the tag to its auth key.
+3. Check that your laptop still opens the router's settings page.
+
+```json
+{
+  "tagOwners": {
+    "tag:lonewrt": ["autogroup:admin"]
+  },
+  "acls": [
+    {
+      "action": "accept",
+      "src": ["autogroup:member"],
+      "dst": ["autogroup:member:*"]
+    },
+    {
+      "action": "accept",
+      "src": ["autogroup:member"],
+      "dst": ["tag:lonewrt:22,80,443"]
+    }
+  ]
+}
+```
+
+Your devices reach the router's SSH (22) and its settings page (80 and 443), and they still reach each other.
+No rule has the router as its source, so the router starts no connection into your account.
+The router's own firewall blocks those connections too, but root can change that firewall, while the policy stays in your account.
+If `TS_ADVERTISE_LAN` is `1`, add the router's network with its mask to the second rule, for a `LAN_IP` of `192.168.5.1` as `"dst": ["tag:lonewrt:22,80,443", "192.168.5.0/24:*"]`.
+
+A tag that comes with the auth key also turns key expiry off. A tag added later with **Edit tags** leaves key expiry as it was, so turn it off as described under "Sign in".
+
+### Cost
+
+The Tailscale packages make the image about 18 MB.
+The free space on the router drops from about 12.5 MiB to about 4 to 6 MiB, so install few extra packages later.
+How much data Tailscale uses while idle is not measured yet; on a prepaid SIM it counts against your data.
 
 ## Limits
 
