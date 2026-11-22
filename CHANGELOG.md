@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- `./fetch-deps.sh` and every build on GitHub stopped with "sha256 mismatch" for `libjpeg-turbo-3.1.1-r1.apk` since 2026-11-19, when OpenWrt rebuilt two packages the tests use without a new version number. `deps.lst` has the sums of the rebuilt files, whose hashes match OpenWrt's signed package index. The image itself was not affected: `build.sh` never used these files
+
 ## [0.5.0] - 2026-11-22
 
 ### Added
