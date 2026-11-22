@@ -11,43 +11,42 @@ A port lives in a fork of this repository; this repository builds only the MF289
 
 Find out with the person, and write it down in the fork's `SPEC.md` (part 1 and the Terms):
 
-- **The router and its OpenWrt.** The new router needs an official OpenWrt 25.12.6 build: lonewrt uses the official ImageBuilder and kernel (SPEC R1, D1), never a custom one. Note the target, subtarget and device profile, from the router's page on openwrt.org or `profiles.json` of the target's download folder.
+- **The router and its OpenWrt.** The new router needs an official OpenWrt 25.12.6 build: lonewrt uses the official ImageBuilder and kernel (SPEC R1, D1), never a custom one. Note the target, subtarget and device profile, from the router's page on openwrt.org or `profiles.json` of the target's download folder. The router must already run that official OpenWrt, so its stock settings can be read (below) and a lonewrt image goes on with `sysupgrade`.
 - **How the modem talks.** QMI (`uqmi`, `/dev/cdc-wdm0`, `proto qmi`), MBIM (`umbim`, `proto mbim`), ModemManager (`proto modemmanager`) or a modem in router mode that hands out DHCP. lonewrt's link layer is QMI; anything else changes step 2 below.
 - **The modem's AT dialect.** The make and model of the modem inside (`ATI` on its AT port). lonewrt sends ZTE commands for the radio mode and the bands; another vendor has other commands.
 - **How to get back from a bad image.** The MF289F can only be recovered over UART with the case open. The new router may have a failsafe mode, a recovery button or a TFTP recovery in its bootloader. Know which one before the first flash, and tell the person.
-- **The router must already run official OpenWrt**, so its stock settings can be read (below) and a lonewrt image goes on with `sysupgrade`.
 
 ## Read the new router first
 
-On the router with stock official OpenWrt, before changing any code. These commands only read, and they print no password or key:
+On the router with stock official OpenWrt, before changing any code. These commands only read, and the filter drops every option whose name looks like a password, a key or a PIN:
 
 ```sh
 ubus call system board                     # target, board name, OpenWrt version
 ls -l /dev/ttyUSB* /dev/cdc-wdm* /dev/wwan* 2>/dev/null
 ip -br link                                # the name of the modem's network device
-uci show network  | grep -vE '\.(private_key|preshared_key|password|key)='
-uci show wireless | grep -vE '\.(key|password)='
+uci show network  | grep -viE '\.[a-z0-9_]*(key|pass|pin|secret|psk|token)[a-z0-9_]*='
+uci show wireless | grep -viE '\.[a-z0-9_]*(key|pass|pin|secret|psk|token)[a-z0-9_]*='
 ```
 
-Never print `uci export` or a whole config file into the chat: they hold the Wi-Fi password, WireGuard keys and the APN password.
+Never print `uci export` or a whole config file into the chat: they hold the Wi-Fi password, WireGuard keys, the APN password and the SIM's PIN.
 
 Find the AT port by sending `ATI` to each `ttyUSB` with `sms_tool -d /dev/ttyUSBn at ATI`. Ask the person before each port: a port that is not an AT port can hang a modem, and a raw read of a port (`cat`) never belongs in a script.
 If `sms_tool` is missing, installing it writes to flash; ask first, and say that this is the only write of the survey.
 
 ## What stays
 
-These parts know nothing about the router and move unchanged:
+These parts know nothing about the router and move unchanged, unless a step below names them:
 
-- the profile format and its checks in `src/render.py` (apart from the card text, below), the password card, `docs/profile.md`;
+- the profile format and its checks in `src/render.py`, the password card (apart from its hints, below), `docs/profile.md`;
 - the Telegram bot's commands and texts, the SMS forwarding and the SMS commands, the balance check and the operator presets (those belong to the SIM, not to the router);
 - the logic of the recovery ladder (`wwan-recover`): its waits, classes and state;
-- WireGuard, firewall, LAN, system settings, logs, cron and watchcat in `src/files/etc/uci-defaults/zz-lw-config`;
-- most tests of those parts: `tests/notify` (apart from `isolation.sh`), `tests/hostnet`, `tests/configurator`, `tests/ci`, most of `tests/build`.
+- WireGuard, firewall, LAN, system settings and logs in `src/files/etc/uci-defaults/zz-lw-config`, the watchcat entry (`src/files/etc/config/watchcat`) and the cron table (`src/files/etc/crontabs/root`);
+- most tests of those parts: `tests/hostnet`, `tests/configurator`, `tests/ci`, most of `tests/build` and of `tests/notify` (step 9 names the exceptions).
 
 These move with small edits:
 
 - `lw-notify` and `src/files/usr/lib/lw/speedtest.sh`: the modem's network device `wwan0` and the SMS store `ME` (steps 3 and 4);
-- the card text in `src/render.py`: the router's name, the two bands and the SMS thresholds;
+- the hints on the password card (`src/render.py`): the router's name, the Wi-Fi line (2.4 and 5 GHz), the SMS thresholds, and the hints about the SIM's PIN and about LTE and 2G, which follow steps 2 and 4;
 - the configurator: its Wi-Fi defaults, which `tests/configurator` keeps equal to `generic.conf`;
 - the GitHub build and the agent skill, which name this repository (step 7).
 
@@ -56,18 +55,31 @@ These move with small edits:
 ### 1. Target, packages and image name
 
 - `build.sh`: `IB_TAR` (the ImageBuilder file name), `PROFILE=zte_mf289f` in the ImageBuilder call, and the glob that finds the image after `make image` (`*-$name-*-squashfs-sysupgrade.bin`; other routers name it `.itb` or differently). `build.sh` always publishes it as `image/<name>-sysupgrade.bin`, so nothing after it depends on the ImageBuilder's name.
-- `deps.lst`: the ImageBuilder URL and sha256; the `dl.eko.one.pl` folder of `modemband` and `modemdata` carries the CPU architecture (`arm_cortex-a7_neon-vfpv4` for ipq40xx); the `rescue` group holds MF289F images.
-- Packages: the ImageBuilder's device profile brings the modem and Wi-Fi drivers; check its default packages for `kmod-usb-net-qmi-wwan` (or the MBIM one), `kmod-usb-serial-option` and `uqmi`. `tests/build/60-images.sh` (full `tests/build/run.sh` only) compares `PACKAGES` of `build.sh` with `packages.md` but leaves the device's default set out of the comparison: a driver the new profile lacks goes into `PACKAGES` and its own row of `packages.md`, and the filter in that test changes with it. `tests/vm/build-image.sh` has its own list and follows the same change.
+- `deps.lst`: the ImageBuilder URL and sha256. The `dl.eko.one.pl` folder of `modemband` and `modemdata` carries the CPU architecture (`arm_cortex-a7_neon-vfpv4` for ipq40xx). The `rescue` group holds MF289F images.
+- Packages: the ImageBuilder's device profile brings the modem and Wi-Fi drivers. Check its default packages for `kmod-usb-net-qmi-wwan` (or the MBIM one), `kmod-usb-serial-option` and `uqmi`.
+  - A driver the new profile lacks goes into `PACKAGES` of `build.sh` and its own row of `packages.md`.
+  - `tests/build/60-images.sh` (full `tests/build/run.sh` only) compares the two but leaves the device's default set out of the comparison; its filter changes with the default set.
+  - `tests/vm/build-image.sh` has its own list and follows the same change.
 - `tests/build/lib.bash` (`unpack_image`) expects the NAND tar image of the MF289F.
-- Check the image size against the router's flash: nothing in the build does that.
+- Check the image size against the router's flash: nothing in the build does that. What the image leaves is the overlay, which also holds the persistent log, the data counters of `nlbwmon` and the SMS archive (`packages.md`, "Size", has the MF289F's numbers).
 
 ### 2. Modem connection
 
-lonewrt uses QMI through netifd's `qmi.sh` (`network.wwan.proto=qmi`, `device=/dev/cdc-wdm0`, `modes`, `timeout` in `zz-lw-config`).
+lonewrt uses QMI through netifd's `qmi.sh` (`network.wwan.proto=qmi`, `device=/dev/cdc-wdm0`, `pdptype`, `pincode`, `modes`, `timeout` in `zz-lw-config`).
 
-- `qmi-handler.sh` derives `qmi.sh` from the `uqmi` package without its `--network-scan` line (SPEC R12d, D82). It is QMI only. With QMI, keep it and time `ifup wwan` again. With MBIM or ModemManager, remove it and everything that uses it: its calls in `build.sh` and `tests/vm/build-image.sh`; `tests/build/45-qmi-handler.sh`; `check_qmi` in `tests/build/60-images.sh`; the qmi part of `tests/build/15-pinned-packages.sh`, with `fake_qmi_ib` and `fake_make_image` in `tests/build/lib.bash` and their fixtures; the copy in `tests/ci/lib.bash`; and the `qmi.sh` check of Acceptance point 2.
-- `lw-linkwatch` restores a dropped QMI data session in place (SPEC R49 to R49g). It needs `uqmi`, netifd's `cid_4`/`pdh_4` and `udhcpc`. With another protocol, remove it (`src/files/etc/init.d/lw-linkwatch`, `usr/sbin/lw-linkwatch`, `tests/linkwatch/`, its entries in `tests/build/60-images.sh` and `tests/vm/10-firstboot.sh`, and its mentions in `packages.md`, `docs/profile.md`, `generic.conf`, `docs/development.md`, R12c and Acceptance point 2) or write the equivalent. Nothing else calls it; the ladder still repairs the link, only more slowly.
+- `qmi-handler.sh` derives `qmi.sh` from the `uqmi` package without its `--network-scan` line (SPEC R12d, D82). It is QMI only. With QMI, keep it and time `ifup wwan` again. With MBIM or ModemManager, remove it and everything that uses it:
+  - its calls in `build.sh` and `tests/vm/build-image.sh`, and the copy in `tests/ci/lib.bash`;
+  - `tests/build/45-qmi-handler.sh` and `check_qmi` in `tests/build/60-images.sh`;
+  - the qmi part of `tests/build/15-pinned-packages.sh`, with `fake_qmi_ib` and `fake_make_image` in `tests/build/lib.bash` and their fixtures;
+  - the `qmi.sh` check of Acceptance point 2.
+- `lw-linkwatch` restores a dropped QMI data session in place (SPEC R49 to R49g). It needs `uqmi`, netifd's `cid_4`/`pdh_4` and `udhcpc`. Nothing else calls it, and without it the ladder still repairs the link, only more slowly. With another protocol, write the equivalent or remove it:
+  - `src/files/etc/init.d/lw-linkwatch`, `usr/sbin/lw-linkwatch` and `tests/linkwatch/`;
+  - its entries in `tests/build/60-images.sh` and `tests/vm/10-firstboot.sh`;
+  - its mentions in `packages.md`, `docs/profile.md`, `docs/development.md`, `AGENTS.md`, R12c and Acceptance point 2.
+- The SIM's PIN: `WWAN_PIN` of the profile becomes `network.wwan.pincode`, and the protocol's handler decides what happens with it (SPEC R13e, D131). That a wrong PIN costs at most 2 of the SIM's 3 tries was read in `qmi.sh`. Read the new protocol's handler before the first image with a PIN in its profile: a handler that tries again at every start of the interface blocks the SIM, and then only the PUK helps. The hint about the PIN on the password card names a LuCI field of the QMI page.
 - `network.wwan.modes` is also how the EDGE fallback works (`lw-modem-mode`, `lw-fallback`); give it the new protocol's equivalent, or drop the fallback with the person's word.
+- The values of `WWAN_AUTH` (`none`, `pap`, `chap`, `both`) are those of `qmi.sh`. Another protocol can take others, and then they change in `render.py`, the configurator, `docs/profile.md` and the operator table of `src/files/usr/lib/lw/lw-apn`.
+- `qmi.sh` gives the data connection its own netifd interface, `wwan_4`. `wwan-recover` reads the operator's DNS server from it, `src/files/etc/hotplug.d/iface/95-lw-notify` reacts to its start and `lw-linkwatch` reads its device. Check the name with `ifstatus` under the new protocol.
 - `luci-proto-qmi` in `PACKAGES` becomes the protocol's LuCI package.
 
 ### 3. Ports and device names
@@ -88,7 +100,7 @@ The ZTE commands, and where they are sent:
 | `AT+ZSNT=0,0,0` | `lw-fallback edge` | automatic mode for the EDGE fallback (SPEC R22, R23) |
 | `AT+ZNLOCKBAND?`, `AT+ZNLOCKBAND=1,0,<mask>,0` | `lw-modem-mode` | the bands of `LTE_BANDS`; `lwmm_mask` turns the list into a bit mask at every start (SPEC R12) |
 
-Everything else is standard 3GPP (`CPIN`, `CIMI`, `CPMS`, `CEREG`, `COPS`, `CSQ`, `CEER`, `CGATT`, `CGPADDR`) and SMS goes through `sms_tool`. Signal and band names come from `md_serial_ecm` of the `modemdata` package; a modem it does not know gives `?` fields in `lw-siglog`.
+Everything else is standard 3GPP (`CPIN`, `CIMI`, `CPMS`, `CEREG`, `COPS`, `CSQ`, `CEER`, `CGATT`, `CGACT`, `CGPADDR`) and SMS goes through `sms_tool`. Signal and band names come from `md_serial_ecm` of the `modemdata` package; a modem it does not know gives `?` fields in `lw-siglog`.
 
 The SMS store `ME` is written into `lw-modem-mode` (it sets `"ME","ME","ME"` at every start, R11), `lw-notify`, `notify.sh`, `lw-sms-clean` and the `sms_tool_js` block of `zz-lw-config`. A modem without `ME` changes all of them and R11, R26.
 
@@ -100,7 +112,7 @@ For another vendor, find its commands for the radio mode and the band lock in th
 
 ### 5. Wi-Fi
 
-`zz-lw-config` takes `radio0` as 2,4 GHz and `radio1` as 5 GHz, by position. Compare with `uci show wireless` of the new router.
+`zz-lw-config` takes `radio0` as 2.4 GHz and `radio1` as 5 GHz, by position. Compare with `uci show wireless` of the new router.
 
 - Radios in another order: change the `radio0`/`radio1` lines of `zz-lw-config` and the first-boot fixtures and tests (`tests/firstboot/fixtures/etc-config/wireless`, `tests/firstboot/generic.sh`, `full.sh`, the VM overlay).
 - One radio or three: the profile keys are per band (`WIFI_CHANNEL_2G`, `WIFI_HTMODE_5G`...), so the keys change too, in `render.py`, `generic.conf`, the configurator, `docs/profile.md`, `tests/configurator`, `tests/firstboot`, the VM overlay and the card text.
@@ -108,7 +120,10 @@ For another vendor, find its commands for the radio mode and the band lock in th
 
 ### 6. Third-party packages
 
-`modemband`, `modemdata` and their LuCI apps hold per-modem data. Check that they know the new modem (their LuCI pages on the router, and `md_serial_ecm <AT port>`, which `lw-siglog` reads), then pin the files for the new architecture in `deps.lst` (sha256, group `extra`, SPEC R2a).
+`modemband`, `modemdata` and their LuCI apps hold per-modem data. Check that they know the new modem: their LuCI pages on the router, and `md_serial_ecm <AT port>`, which `lw-siglog` reads.
+
+- The pinned files are `noarch` (the VM bench installs the same files on x86_64, `tests/vm/README.md`), so they need no new pin for another CPU. A newer version that knows the modem is pinned in `deps.lst` (sha256, group `extra`, SPEC R2a).
+- `src/files/etc/uci-defaults/set_up_bandz.sh` replaces the first-boot script of `luci-app-modemband`, which talked to the modem during the first start (SPEC R8, R12a); `tests/build/60-images.sh` checks it. Keep it while `modemband` stays.
 
 ### 7. The fork's own name
 
@@ -116,23 +131,23 @@ The GitHub build and the agent skill point at this repository, so a fork that ke
 
 - `UPSTREAM` in `ci/github-run.sh` (checked by `tests/ci/30-output.sh`);
 - the template repository `DamianPala/lonewrt-build`, whose workflow checks out releases of `DamianPala/lonewrt`: the fork needs its own template repository, and its name goes into `README.md`, `skills/lonewrt/SKILL.md` and `tests/skill/10-links.sh`;
-- the hosted configurator address `https://damianpala.github.io/lonewrt/` in `README.md` and `SKILL.md`;
+- the address of this repository in `skills/lonewrt/SKILL.md` (the clone command and the raw addresses of the documents);
+- the hosted configurator address `https://damianpala.github.io/lonewrt/` in `README.md`, `SKILL.md` and `docs/profile.md`;
 - the skill's description, which refuses routers other than the MF289F.
 
 ### 8. Recovery and documents
 
-Rewrite the "Recovery" section of `docs/development.md` and the recovery risk in `SPEC.md` for the new router. Change the router's name in `README.md`, `SPEC.md`, `skills/lonewrt/SKILL.md`, `AGENTS.md`, `packages.md` and the card text of `src/render.py`.
+Rewrite the "Recovery" section of `docs/development.md`, the recovery risk in `SPEC.md` and the sentences about a bad image in `README.md` and `skills/lonewrt/SKILL.md` for the new router. Change the router's name in `README.md`, `SPEC.md`, `skills/lonewrt/SKILL.md`, `AGENTS.md`, `packages.md` and the hints on the password card (`src/render.py`).
 
 ### 9. Tests
 
-The stand-ins and many tests carry the ZTE model:
+The stand-ins and many tests carry the ZTE model. Change the model in the stand-ins first, then the scripts (AGENTS.md: the test comes first):
 
 - `tests/stubs/sms_tool` (the AT state model: `ZSNT`, `ZNLOCKBAND`, the SMS store), `tests/stubs/ping` (decides LTE from the `ZSNT` state) and `tests/lib.sh` (`proto`, `device`, `modes`);
-- the ZTE commands and answers in `tests/modem/`, `tests/ladder/`, `tests/smoke/stubs.sh` and `tests/notify/isolation.sh`;
-- the port bound in `tests/rootfs/run.sh`;
+- the ZTE commands and answers in `tests/modem/`, `tests/ladder/` and `tests/smoke/stubs.sh`;
+- in `tests/notify`: `isolation.sh`, and the `zsnt` state or signal-log field in `status.sh`, `smsstatus.sh`, `reboot.sh`, `quiet.sh` and `helpers.inc`;
 - the expectations of `tests/firstboot/generic.sh` and `full.sh` (radios, `qmi`, `/dev/cdc-wdm0`, `ttyUSB1`, `mf289f`) and their fixtures;
-- `tests/vm/modem.py` and `tests/vm/overlay/` (the VM's modem, the AT port, `wwan0`, the radios);
-- `tests/linkwatch/`, when QMI stays.
+- in `tests/vm`: `modem.py` and `overlay/` (the VM's modem, the AT port, `wwan0`, the radios), and the ZTE commands, ports and signal-log fields in `10-firstboot.sh`, `20-no-modem.sh`, `50-cron.sh` and `70-modem-mode.sh`.
 
 The rootfs tests run the image's scripts in the x86 rootfs of the same OpenWrt version, so they do not depend on the router's CPU.
 
@@ -141,7 +156,9 @@ The rootfs tests run the image's scripts in the x86 rootfs of the same OpenWrt v
 These numbers in `SPEC.md` were measured on the MF289F and its modem firmware. They say nothing about another modem, so re-measure them with the person and write the new values with their date:
 
 - the radio mode after an interface start and what the mode query reports (R10, R11, R28);
+- how long after the start the AT port appears and answers (R11, R11b: `lw-modem-mode` waits up to 120 s for the port and 60 s more before the first command);
 - the band mask and which bands the modem accepts (R12);
+- what the handler does with a SIM that asks for its PIN, right and wrong (R13e; not tried on the MF289F either, SPEC "Unverified");
 - `ifup wwan` to the first ping, with and without the network scan, and the start with LTE absent (R12d, D82);
 - the size of the SMS store and the store it falls back to (R26, D16, Risks "Another modem firmware", the thresholds of `lw-sms-clean`);
 - whether a modem reset (`AT+CFUN=1,1`, a USB unbind) restarts the whole board, and whether a router restart power-cycles the modem (D11: on the MF289F a modem reset restarts the board, so the ladder has no step between `ifup` and a reboot);

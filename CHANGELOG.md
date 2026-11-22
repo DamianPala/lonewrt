@@ -19,6 +19,8 @@
 - Agent skill: a shorter description, one example instead of two, and the way to build is chosen before the profile is copied
 - Docs: `docs/operators.md` starts with what a preset gives you, says how a preset for another operator gets into an image (the `OP_*` keys of the profile) and how to try one on a running router before building
 - `profiles/generic.conf`: the comments are one-line reminders now, and `docs/profile.md` is the one place that says what each key takes
+- Docs: `packages.md` says what the third-party packages are and how they are pinned, how much room the image leaves on the router and how to change the package list; the history of how the list was made is gone
+- Docs: `docs/porting.md` covers the SIM's PIN (`WWAN_PIN`), more places that depend on QMI (`WWAN_AUTH`, the `wwan_4` interface, `set_up_bandz.sh`) and two more measurements, and its long steps are lists
 - Docs: `docs/profile.md` states the format of more keys (`LOW_BALANCE`, `HOSTNAME`, `WIFI_SSID`, `TG_CHAT_ID` of a group and others), says what the SSH host key files of a profile's folder are for, and its long table cells are sections below the table
 
 ### Fixed
@@ -27,6 +29,9 @@
 - Agent skill: a router this machine had never connected to was reported as "no key login"; the two failures are now told apart
 - Agent skill: its examples named release 0.1.0, which cannot be built on GitHub, and the configurator's version line, the `test` field of a run and the generic image were described wrongly
 - Docs: `docs/operators.md` named a chat line that `/balance` does not show, left out that a reply counts as the balance only within 10 minutes of a query the router sent, and gave a test step that could not be followed
+- Docs: the commands of `docs/porting.md` that read a router's settings let the SIM's PIN and some Wi-Fi passwords through (`pincode`, `sae_password`, `key1` to `key4`); the filter now drops every option whose name looks like a password, a key or a PIN
+- Docs: `docs/porting.md` named files that hold no such thing (watchcat and cron in `zz-lw-config`, `lw-linkwatch` in `generic.conf`) and left out tests and documents that carry the ZTE model or this repository's name
+- Docs: `packages.md` gave eko.one.pl as the source of the LuCI apps that come from 4IceG's GitHub releases, a reason for `coreutils-stty` that no script of the image matches, and an image size "not yet measured"; it also left out that the signal log needs `modemdata`
 - `profiles/generic.conf`: a comment said that a restart of the mobile connection costs about 40 s without internet; it is about 15 s
 - Password card and `README.md` ("After flashing"): the hint about the network mode said "LTE only"; it now says that the router sets LTE at every start and switches to 2G (EDGE) only while LTE stays dead after a restart
 - `./fetch-deps.sh --help` and `tests/vm/run-all.sh --help` ended with a line of the script's code
