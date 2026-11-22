@@ -19,7 +19,7 @@ while [ $# -gt 0 ]; do
     case $1 in
         --overlay) overlay=("$2"); shift 2 ;;
         -j) jobs=$2; shift 2 ;;
-        -h | --help) sed -n '2,8p' "$0"; exit 0 ;;
+        -h | --help) sed -n '2,7p' "$0"; exit 0 ;;
         *) picks+=("$1"); shift ;;
     esac
 done

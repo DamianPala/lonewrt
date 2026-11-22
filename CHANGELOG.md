@@ -12,6 +12,7 @@
 ### Fixed
 
 - Password card and `README.md` ("After flashing"): the hint about the network mode said "LTE only"; it now says that the router sets LTE at every start and switches to 2G (EDGE) only while LTE stays dead after a restart
+- `./fetch-deps.sh --help` and `tests/vm/run-all.sh --help` ended with a line of the script's code
 
 ## [0.4.0] - 2026-11-20
 
