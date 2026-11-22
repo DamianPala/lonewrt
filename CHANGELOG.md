@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.5.1] - 2026-11-22
 
 ### Fixed
 
@@ -99,6 +99,7 @@ First public release, experimental: it runs on one router in daily use.
 - Listed phone numbers can text `status` or `reboot` to the SIM, at most 5 restarts a day
 - Optional WireGuard tunnel for remote access, LuCI apps for the modem, the LTE bands and SMS, persistent logs, and the release version in `/etc/lw-build`
 
+[0.5.1]: https://github.com/DamianPala/lonewrt/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/DamianPala/lonewrt/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/DamianPala/lonewrt/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/DamianPala/lonewrt/compare/v0.2.1...v0.3.0
