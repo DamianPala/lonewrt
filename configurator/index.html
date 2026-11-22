@@ -54,7 +54,7 @@ input[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--
 .msg.new { background: var(--new-bg); color: var(--new); }
 button { font: inherit; padding: 0.45rem 0.9rem; border-radius: 6px; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-fg); cursor: pointer; }
 button.plain { background: transparent; color: var(--accent); }
-button.draw { margin-top: 0.4rem; }
+button.draw, button.move { margin-top: 0.4rem; }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
 .row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0.5rem 0; }
 .row input[type="text"] { width: auto; flex: 1 1 10rem; margin: 0; }
@@ -96,6 +96,18 @@ ol { padding-left: 1.4rem; }
   <p class="help">The address contains your token: do not share it or open it on a computer that is not yours. The bot answers only in the chat whose ID you give, and anyone in that chat can read the Wi-Fi password and restart the router.</p>
 </details>
 
+<details id="ts-key-help">
+  <summary>How to make the key</summary>
+  <ul>
+    <li><strong>Reusable:</strong> off. The router uses the key once.</li>
+    <li><strong>Ephemeral:</strong> off, so the router stays in your account while it is offline.</li>
+    <li><strong>Pre-approved:</strong> on, when device approval is on in your account.</li>
+    <li><strong>Expiration:</strong> enough days to last past the day you flash the router, so the key still works then.</li>
+    <li><strong>Tags:</strong> <code>tag:lonewrt</code>, once your access policy has it (see the README). A tagged router never has to sign in again; without a tag, turn off key expiry for the router in the admin console after it joins.</li>
+  </ul>
+  <p class="help">Create the key in the Tailscale admin console. Once the router has signed in with it, the key is used: after a button reset, or a flash that does not keep settings, the bot sends a sign-in link instead.</p>
+</details>
+
 <div id="op-test" class="field">
   <label for="op-reply">Try the reply pattern</label>
   <input type="text" id="op-reply" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-describedby="op-reply-help op-result">
@@ -133,6 +145,8 @@ ol { padding-left: 1.4rem; }
   {"id": "ssh", "title": "SSH keys", "intro": "Public keys of the people who may log in to the router as root. Not a secret."},
   {"id": "mobile", "title": "Mobile data"},
   {"id": "wireguard", "title": "WireGuard", "intro": "A tunnel for remote access to the router. It needs a WireGuard server of your own, which the image never changes."},
+  {"id": "tailscale", "title": "Tailscale", "tail": "ts-key-help",
+   "intro": "Reach the router's settings page and SSH from your own devices, without a server of your own. Needs a free Tailscale account and the app on your laptop or phone."},
   {"id": "telegram", "title": "Telegram & alerts", "intro": "SMS forwarding, balance alerts and a bot you use from a chat.", "slot": "tg-help"},
   {"id": "operator", "title": "Balance check for another operator", "tail": "op-test",
    "intro": "The image can ask one operator for the prepaid balance: Telekom Montenegro (29702). For another operator, describe its balance SMS here; for any other SIM leave all of it empty."},
@@ -202,6 +216,15 @@ ol { padding-left: 1.4rem; }
    "help": "A space-separated CIDR list of the networks reached through the tunnel."},
   {"key": "WG_KEEPALIVE", "group": "wireguard", "default": "", "empty": true, "when": ["WG_ENABLED=1"],
    "help": "The keepalive interval in seconds."},
+
+  {"key": "TS_ENABLED", "group": "tailscale", "default": "0", "empty": false, "options": ["0", "1"],
+   "labels": {"0": "0 (off)", "1": "1 (on)"},
+   "help": "`1`: after the flash the bot sends a sign-in link."},
+  {"key": "TS_ADVERTISE_LAN", "group": "tailscale", "default": "0", "empty": false, "options": ["0", "1"],
+   "labels": {"0": "0 (off)", "1": "1 (on)"}, "when": ["TS_ENABLED=1"], "lan_move": true,
+   "help": "Also reach devices on the router's network, such as a camera. You approve it once in the Tailscale admin page."},
+  {"key": "TS_AUTHKEY", "group": "tailscale", "default": "", "empty": true, "secret": true, "when": ["TS_ENABLED=1"],
+   "help": "Optional: join without a click. A Tailscale auth key (`tskey-auth-...`) signs the router in with no link. How to make it is under this field."},
 
   {"key": "TG_BOT_TOKEN", "group": "telegram", "default": "", "empty": true, "secret": true,
    "help": "The token of your Telegram bot, from @BotFather (steps above). With the chat ID set, SMS forwarding, alerts and the bot commands are on; both empty means no notifications."},
@@ -547,6 +570,59 @@ function previewText(values, reply) {
   return text + '.';
 }
 
+// R70, R70a to R70d, R70b, D138, D147: the Tailscale notes. They warn and mark and stop no text (R57),
+// so refresh counts none of them as a problem.
+const TS_KEY_FORMAT = /^tskey-auth-[A-Za-z0-9-]+$/;
+const TS_KEY_OTHER = /^tskey-(api|client)-/;
+// render.py reads the octets as numbers, so 192.168.01.1 is 192.168.1.0/24 there too
+const HOME_LAN = /^192\.168\.0?[01]\.[0-9]{1,3}$/;
+const TS_SIZE = 'With Tailscale the image is about 18 MB, and the router keeps about 4 to 6 MiB of free space instead of 12.5 MiB.';
+const TS_SSH_ONLY = 'Without Telegram and SMS admins the router cannot send you the sign-in link: log in over SSH and run lw-tailscale link to get it.';
+const TS_LOG = 'With Tailscale on, debug keeps 1 MB of log, like info.';
+const TS_STOP = 'build.sh stops on this profile: a Tailscale key or LAN route is set while Tailscale is off. Set TS_ENABLED to 1, or clear TS_AUTHKEY and set TS_ADVERTISE_LAN to 0.';
+const TS_WRONG_KIND = 'This is a Tailscale API token or OAuth client secret, not an auth key: build.sh refuses it. An auth key starts with tskey-auth-.';
+const TS_BAD_KEY = 'Not a Tailscale auth key: an auth key starts with tskey-auth- and holds only letters, digits and -. build.sh refuses this one.';
+const TS_HOME_LAN = 'LAN_IP is in 192.168.0.x or 192.168.1.x, the network of many homes: a laptop at a home with the same network cannot tell the devices of that home from those behind the router. Set LAN_IP to another network, for example with the button below; the build goes on either way.';
+
+// R70b: the LAN is one of the two networks of many homes, which a route would clash with
+function commonLan(values) {
+  return values.TS_ADVERTISE_LAN === '1' && HOME_LAN.test(values.LAN_IP);
+}
+
+// R70b: a random LAN from 20 to 250, which is 231 values; the modulo of a 32-bit draw is biased by
+// under 1e-7
+function drawLan() {
+  const draw = new Uint32Array(1);
+  crypto.getRandomValues(draw);
+  return '192.168.' + (20 + (draw[0] % 231)) + '.1';
+}
+
+// R70, R70a, R70d, D138, D147: the notes of TS_ENABLED and LOG_LEVEL
+function enabledNotes(values) {
+  if (values.TS_ENABLED !== '1') {
+    const stops = values.TS_AUTHKEY !== '' || values.TS_ADVERTISE_LAN === '1';
+    return stops ? { TS_ENABLED: TS_STOP } : {};
+  }
+  const lines = [TS_SIZE];
+  const telegramOff = values.TG_BOT_TOKEN === '' || values.TG_CHAT_ID === '';
+  if (telegramOff && values.SMS_ADMINS === '') lines.push(TS_SSH_ONLY);
+  return { TS_ENABLED: lines.join(' '), LOG_LEVEL: TS_LOG };
+}
+
+// R70c, R70b: the notes of the auth key's format and of the LAN address
+function keyNotes(values) {
+  const key = values.TS_AUTHKEY;
+  const notes = {};
+  if (TS_KEY_OTHER.test(key)) notes.TS_AUTHKEY = TS_WRONG_KIND;
+  else if (key !== '' && !TS_KEY_FORMAT.test(key)) notes.TS_AUTHKEY = TS_BAD_KEY;
+  if (commonLan(values)) notes.TS_ADVERTISE_LAN = TS_HOME_LAN;
+  return notes;
+}
+
+function tailscaleNotes(values) {
+  return { ...enabledNotes(values), ...keyNotes(values) };
+}
+
 // A field with `when` is shown while every condition holds (`KEY=value`, `KEY!=value`), or while it
 // holds something else than its default, so a value in the text is never out of sight.
 function shown(field, values) {
@@ -668,8 +744,18 @@ function buildField(field) {
     wrap.append(list);
   }
   wrap.append(help, msgs);
+  let move = null;
+  if (field.lan_move) {
+    // R70b: sets LAN_IP to a random 192.168.n.1 outside the two home networks; refresh shows it
+    move = el('button', { type: 'button', class: 'plain move', id: 'mv-' + field.key }, 'Use another LAN address: 192.168.n.1 with a random n');
+    move.addEventListener('click', () => {
+      inputs.LAN_IP.value = drawLan();
+      refresh();
+    });
+    wrap.append(move);
+  }
   inputs[field.key] = input;
-  parts[field.key] = { wrap, slots, draw, isNew: false };
+  parts[field.key] = { wrap, slots, draw, move, isNew: false };
   return wrap;
 }
 
@@ -745,7 +831,7 @@ function fileName() {
 
 function refresh() {
   const values = currentValues();
-  const notes = passwordNotes(values);
+  const notes = { ...passwordNotes(values), ...tailscaleNotes(values) };
   notes.TIMEZONE = zoneNote(values);
   for (const field of FIELDS) parts[field.key].wrap.hidden = !shown(field, values);
   parts.TIMEZONE.wrap.hidden = notes.TIMEZONE === '';
@@ -761,9 +847,11 @@ function refresh() {
     showMessage(slots.new, parts[field.key].isNew ? 'New in this release: your profile had no line for it, so it holds the default.' : '');
     inputs[field.key].setAttribute('aria-invalid', error ? 'true' : 'false');
     if (parts[field.key].draw) parts[field.key].draw.hidden = value !== '';
+    if (parts[field.key].move) parts[field.key].move.hidden = !commonLan(values);
     lines.push(field.key + "='" + value + "'");
   }
   $('op-test').hidden = parts.OP_BALANCE_REPLY_PATTERN.wrap.hidden;
+  $('ts-key-help').hidden = parts.TS_AUTHKEY.wrap.hidden;
   showMessage($('op-result'), previewText(values, $('op-reply').value));
   showNameNote($('name').value.trim());
   // R57: a marked value means no text at all, so a text that build.sh must refuse is never handed out

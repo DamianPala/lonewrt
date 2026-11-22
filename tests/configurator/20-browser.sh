@@ -111,7 +111,10 @@ render_ok cfg
 # R56b, R57: the run fixture typed in: nothing marked, no note, the text equals the fixture
 fill_all "$FILLED"
 expect "marks on the fixture" "$(visible '[data-key] .err')" 0
-expect "notes on the fixture" "$(visible '[data-key] .note')" 0
+# R70: the fixture has Tailscale on at the debug level, so the size and the log notes stand there
+expect "notes on the fixture" "$(visible '[data-key] .note')" 2
+expect "TS_ENABLED note on the fixture" "$(at_key TS_ENABLED note)" 1
+expect "LOG_LEVEL note on the fixture" "$(at_key LOG_LEVEL note)" 1
 diff <(grep -E '^[A-Z]' "$FILLED") <(out_text) >"$SCRATCH/diff" || fail "R56b: the text differs from the fixture: $(head -n 3 "$SCRATCH/diff")"
 save_to "$P/typed.conf"
 render_ok typed
@@ -381,6 +384,90 @@ grep -qx "TIMEZONE=''" <(out_text) || fail "a loaded empty TIMEZONE was changed"
 load_lines "TIMEZONE=''"$'\n'"ZONENAME='Mars/Olympus'"
 expect "empty TIMEZONE shown for an unlisted zone" "$(visible '[data-key=TIMEZONE]')" 1
 expect "empty TIMEZONE note for an unlisted zone" "$(at_key TIMEZONE note)" 1
+
+# R70, R70a to R70d, R70b, R57: the Tailscale group shows its keys with TS_ENABLED=1; its notes and
+# marks come with their conditions, and no mark stops the text
+note_of() { js "document.querySelector('[data-key=$1] .note').textContent"; }
+ab click '#reset-btn' >/dev/null
+expect "only TS_ENABLED on the defaults" "$(visible '[data-key^=TS_]')" 1
+expect "ts key help hidden on the defaults" "$(visible '#ts-key-help')" 0
+ab select '#f-TS_ENABLED' 1 >/dev/null
+expect "TS keys after TS_ENABLED=1" "$(visible '[data-key^=TS_]')" 3
+expect "ts key help shown with TS on" "$(visible '#ts-key-help')" 1
+grep -q '18 MB' <<<"$(note_of TS_ENABLED)" || fail "R70: the size note lacks the image size"
+grep -q 'debug keeps 1 MB of log, like info' <<<"$(note_of LOG_LEVEL)" || fail "D147: no LOG_LEVEL note"
+# R70a: no Telegram and no SMS admins: the link only over SSH, and the text is still made
+grep -q 'lw-tailscale link' <<<"$(note_of TS_ENABLED)" || fail "R70a: no SSH warning without Telegram"
+ab fill '#f-TG_BOT_TOKEN' 1:x >/dev/null
+grep -q 'lw-tailscale link' <<<"$(note_of TS_ENABLED)" || fail "R70a: no SSH warning with the token only"
+ab fill '#f-TG_CHAT_ID' 5 >/dev/null
+expect "no SSH warning with Telegram on" "$(js "document.querySelector('[data-key=TS_ENABLED] .note').textContent.includes('lw-tailscale')")" false
+grep -qx "TS_ENABLED='1'" <(out_text) || fail "R57: the Tailscale notes stopped the text"
+# R70c: a key of the wrong kind is marked at the key, with the words of the kind; the text is made
+ab fill '#f-TS_AUTHKEY' 'tskey-api-q7x9' >/dev/null
+expect "API token marked at the key" "$(at_key TS_AUTHKEY note)" 1
+grep -q 'OAuth client secret' <<<"$(note_of TS_AUTHKEY)" || fail "R70c: no word about an API token"
+ab fill '#f-TS_AUTHKEY' 'tskey-client-q7x9' >/dev/null
+grep -q 'OAuth client secret' <<<"$(note_of TS_AUTHKEY)" || fail "R70c: no word about a client secret"
+ab fill '#f-TS_AUTHKEY' 'tskey_auth-q7x9' >/dev/null
+expect "other format marked at the key" "$(at_key TS_AUTHKEY note)" 1
+grep -q 'Not a Tailscale auth key' <<<"$(note_of TS_AUTHKEY)" || fail "R70c: no word about the format"
+expect "no red mark for a key" "$(visible '[data-key] .err')" 0
+grep -qx "TS_AUTHKEY='tskey_auth-q7x9'" <(out_text) || fail "R57: a marked key stopped the text"
+ab fill '#f-TS_AUTHKEY' 'tskey-auth-' >/dev/null
+expect "a bare prefix marked at the key" "$(at_key TS_AUTHKEY note)" 1
+ab fill '#f-TS_AUTHKEY' 'tskey-auth-Q7x9-ab' >/dev/null
+expect "a valid key is not marked" "$(at_key TS_AUTHKEY note)" 0
+ab fill '#f-TS_AUTHKEY' '' >/dev/null
+expect "an empty key is not marked" "$(at_key TS_AUTHKEY note)" 0
+# R70d: TS_ENABLED=0 with a key or an advertised LAN marks TS_ENABLED with the words of the stop;
+# the hidden LAN and key keep their values (R56g), and the text is still made
+ab fill '#f-TS_AUTHKEY' 'tskey-auth-Q7x9-ab' >/dev/null
+ab select '#f-TS_ADVERTISE_LAN' 1 >/dev/null
+ab select '#f-TS_ENABLED' 0 >/dev/null
+expect "TS_ENABLED marked with TS off and a key" "$(at_key TS_ENABLED note)" 1
+grep -q 'build.sh stops' <<<"$(note_of TS_ENABLED)" || fail "R70d: TS_ENABLED lacks the words of the stop"
+expect "LAN kept visible with its value" "$(visible '[data-key=TS_ADVERTISE_LAN]')" 1
+expect "key kept visible with its value" "$(visible '[data-key=TS_AUTHKEY]')" 1
+expect "no red mark with TS off" "$(visible '[data-key] .err')" 0
+grep -qx "TS_ENABLED='0'" <(out_text) || fail "R57: the TS_ENABLED mark stopped the text"
+ab select '#f-TS_ENABLED' 1 >/dev/null
+grep -q 'build.sh stops' <<<"$(note_of TS_ENABLED)" && fail "R70d: the stop words stay with TS on"
+ab select '#f-TS_ADVERTISE_LAN' 0 >/dev/null
+ab fill '#f-TS_AUTHKEY' '' >/dev/null
+ab select '#f-TS_ENABLED' 0 >/dev/null
+expect "no TS_ENABLED note with TS off and nothing set" "$(at_key TS_ENABLED note)" 0
+# R70b: a LAN of 192.168.0.x or 192.168.1.x with TS_ADVERTISE_LAN=1 shows the warning and the button
+ab click '#reset-btn' >/dev/null
+ab select '#f-TS_ENABLED' 1 >/dev/null
+ab select '#f-TS_ADVERTISE_LAN' 1 >/dev/null
+grep -q 'network of many homes' <<<"$(note_of TS_ADVERTISE_LAN)" || fail "R70b: no warning on the default LAN"
+expect "LAN button on the default LAN" "$(visible '#mv-TS_ADVERTISE_LAN')" 1
+for lan in 192.168.0.7 192.168.1.250 192.168.01.7; do
+    ab fill '#f-LAN_IP' "$lan" >/dev/null
+    expect "warning on $lan" "$(at_key TS_ADVERTISE_LAN note)" 1
+    expect "button on $lan" "$(visible '#mv-TS_ADVERTISE_LAN')" 1
+done
+for lan in 192.168.2.1 192.168.10.1 10.0.0.1; do
+    ab fill '#f-LAN_IP' "$lan" >/dev/null
+    expect "no warning on $lan" "$(at_key TS_ADVERTISE_LAN note)" 0
+    expect "no button on $lan" "$(visible '#mv-TS_ADVERTISE_LAN')" 0
+done
+ab fill '#f-LAN_IP' 192.168.1.1 >/dev/null
+ab select '#f-TS_ADVERTISE_LAN' 0 >/dev/null
+expect "no warning with the LAN off" "$(at_key TS_ADVERTISE_LAN note)" 0
+ab select '#f-TS_ADVERTISE_LAN' 1 >/dev/null
+# the button draws 192.168.<n>.1 with n from 20 to 250 and changes no other value; 5000 draws show
+# every one of the 231 values
+before=$(out_text | grep -v '^LAN_IP=')
+drawn=$(js "(() => { const out = []; for (let i = 0; i < 5000; i++) { document.getElementById('mv-TS_ADVERTISE_LAN').click(); out.push(document.getElementById('f-LAN_IP').value); } return JSON.stringify(out); })()")
+range=$(jq -ec '[.[] | capture("^192[.]168[.](?<n>[0-9]+)[.]1$").n | tonumber] | [min, max, (unique | length)]' <<<"$drawn") ||
+    fail "R70b: a draw is not 192.168.<n>.1: $drawn"
+expect "draws from 20 to 250, all 231 seen" "$range" "[20,250,231]"
+expect "the draws change no other value" "$(out_text | grep -v '^LAN_IP=')" "$before"
+expect "no warning after a draw off the home networks" "$(at_key TS_ADVERTISE_LAN note)" 0
+expect "no button after a draw off the home networks" "$(visible '#mv-TS_ADVERTISE_LAN')" 0
+[ -n "$(out_text)" ] || fail "R57: the LAN warning stopped the text"
 
 # Copy: the text lands on the clipboard (pasted into the load box, since a page may not read it back)
 ab click '#reset-btn' >/dev/null
