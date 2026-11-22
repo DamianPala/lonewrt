@@ -2,8 +2,9 @@
 # The page in a headless browser (agent-browser, bundled Chromium), opened from disk: the unchanged
 # form is accepted by build.sh (R56a), the run fixture typed in comes out key by key and in order
 # (R56b), a loaded profile gets "new" and "left out" (R56d), the rough checks mark and stop the text
-# and the password note does not (R57, R57a), an empty password field draws one (R57b), a reload
-# and the browser's storage are empty (R56c),
+# and the password note does not (R57, R57a), an empty password field draws one (R57b), the preview
+# of a balance reply answers as the router's code does (R56i), a reload and the browser's storage
+# are empty (R56c),
 # and the request log holds only the file itself (R58). Prints SKIP when there is no agent-browser.
 # shellcheck source=tests/build/lib.bash
 source "$(dirname "$0")/../build/lib.bash"
@@ -260,6 +261,99 @@ ab fill '#f-WIFI_KEY' '' >/dev/null
 expect "draw button back at an emptied field" "$(visible '[data-key=WIFI_KEY] .draw')" 1
 ab fill '#f-WIFI_KEY' 'fake-pass-q7x9' >/dev/null
 expect "no draw button at a typed password" "$(visible '[data-key=WIFI_KEY] .draw')" 0
+
+# R56g, R56i: the OP_ keys appear with OP_MCCMNC, and the preview reads a pasted balance reply with
+# the pattern as the router would: the amount with a dot, the currency and the date; a reply that
+# does not fit and a pattern the router would reject are said so. The preview stops no text.
+ab click '#reset-btn' >/dev/null
+expect "OP keys on the defaults" "$(visible '[data-key^=OP_]')" 1
+expect "preview hidden on the defaults" "$(visible '#op-test')" 0
+ab fill '#f-OP_MCCMNC' 99977 >/dev/null
+expect "OP keys after OP_MCCMNC" "$(visible '[data-key^=OP_]')" 8
+expect "preview shown with the OP keys" "$(visible '#op-test')" 1
+ab fill '#f-OP_CURRENCY' USD >/dev/null
+ab fill '#f-OP_BALANCE_REPLY_PATTERN' 'Your balance is {amount} USD, valid till {month}/{day}' >/dev/null
+preview() { # preview REPLY: the text of the preview for a pasted reply
+    ab fill '#op-reply' "$1" >/dev/null
+    js 'document.getElementById("op-result").hidden ? "" : document.getElementById("op-result").textContent'
+}
+expect "preview of a fitting reply" "$(preview 'Your balance is 3,20 USD, valid till 3/27')" \
+    "The router would read: 3.20 USD, valid until 27 Mar."
+grep -q 'does not fit' <<<"$(preview 'hello from the operator')" || fail "R56i: no word about a reply that does not fit"
+expect "preview without a reply" "$(preview '')" ""
+for bad in 'Balance without the amount' 'Balance {amount} {amount}' 'Balance {amount} till {day}' \
+    'Balance {amount} {year}' 'Balance {any} {amount}' 'Balance {any}.{amount}' 'Balance [0-9]*{amount}'; do
+    ab fill '#f-OP_BALANCE_REPLY_PATTERN' "$bad" >/dev/null
+    grep -q 'not valid' <<<"$(preview 'Balance 12.50')" || fail "R56i: the preview took the pattern '$bad'"
+done
+ab fill '#f-OP_BALANCE_REPLY_PATTERN' 'Saldo{any}: {amount}' >/dev/null
+expect "preview without a date" "$(preview 'Saldo na dan 5.1: 12.50 EUR')" "The router would read: 12.50 USD."
+expect "no mark from the preview" "$(visible '[data-key] .err')" 0
+# The preview against the router's own code (operators.sh, notify.sh), run by the shell of the
+# sh -n check: for each pattern and reply both give the same verdict, amount and date.
+ROOTFS=$LW_WORK/dl/x86/rootfs
+if [ -x "$ROOTFS/bin/busybox" ]; then
+    ROUTER_SH=("$ROOTFS/lib/ld-musl-x86_64.so.1" --library-path "$ROOTFS/lib:$ROOTFS/usr/lib" "$ROOTFS/bin/busybox" sh)
+else
+    ROUTER_SH=("$(command -v busybox || fail "no busybox to run the router's preset code")" sh)
+fi
+# shellcheck disable=SC2016  # the $ belong to the script the router's shell runs
+ROUTER_READS='. "$1" && . "$2" || exit 3
+nt_p_set BALANCE_REPLY_PATTERN "$3" && nt_p_compile "$NT_P_PAT" || { echo invalid; exit 0; }
+NT_P_STATE=ok NT_P_FROM=x NT_P_CUR=USD
+amount=$(nt_amount x "$4" store)
+[ -n "$amount" ] || { echo nofit; exit 0; }
+nt_translate "$4" "$amount"'
+router_reads() { # router_reads PATTERN REPLY: invalid, nofit, or the line "= Balance ..." of the chat
+    "${ROUTER_SH[@]}" -c "$ROUTER_READS" sh "$FW/src/files/usr/lib/lw/notify.sh" \
+        "$FW/src/files/usr/lib/lw/operators.sh" "$1" "$2" || fail "the router's preset code did not run"
+}
+page_reads() { # page_reads PATTERN REPLY: the same three answers from the page's preview
+    local text
+    text=$(js "(() => { const set = (id, value) => { const e = document.getElementById(id); e.value = value; e.dispatchEvent(new Event('input')); }; set('f-OP_BALANCE_REPLY_PATTERN', $(jq -Rn --arg v "$1" '$v')); set('op-reply', $(jq -Rn --arg v "$2" '$v')); return document.getElementById('op-result').textContent; })()")
+    case $text in
+        *'not valid'*) echo invalid ;;
+        *'does not fit'*) echo nofit ;;
+        'The router would read: '*.) text=${text#The router would read: } && echo "= Balance ${text%.}" ;;
+        *) echo "unexpected preview: $text" ;;
+    esac
+}
+cases=0
+while IFS='|' read -r pattern reply want; do
+    router=$(router_reads "$pattern" "$reply")
+    expect "the router's code for '$pattern' and '$reply'" "$router" "$want"
+    expect "the preview for '$pattern' and '$reply'" "$(page_reads "$pattern" "$reply")" "$router"
+    cases=$((cases + 1))
+done <<'CASES'
+Imate: {amount} do {day}.{month}.|Imate: 0.31 do 05.01.; ostalo|= Balance 0.31 USD, valid until 5 Jan
+Imate: {amount} do {day}.{month}.|  Imate:0,31 do 5.1.|= Balance 0.31 USD, valid until 5 Jan
+Imate: {amount} do {day}.{month}.|Imate: 0.31 do 05.13.|= Balance 0.31 USD, valid until unknown
+Imate: {amount} do {day}.{month}.|imate: 0.31 do 05.01.|nofit
+Imate: {amount} do {day}.{month}.|Stanje: Imate: 0.31 do 05.01.|nofit
+Saldo{any}: {amount}|Saldo na dan 5.1: 12.50 EUR|= Balance 12.50 USD
+Balance {any}EUR {amount} ({month}/{day})|Balance of your account EUR 7 (3/27) thanks|= Balance 7 USD, valid until 27 Mar
+{any}={amount}|a=1 b=22.5 c=3 d|= Balance 3 USD
+Stanje {any} iznosi {amount}|Stanje racuna iznosi iznosi 4.5|= Balance 4.5 USD
+A+B (x); {amount}|A+B (x); 10|= Balance 10 USD
+Rest {amount} {any}/{day}.{month}|Rest 5 until 1/2/3.4|= Balance 5 USD, valid until 3 Apr
+Bal: {amount}|Bal: 12.|= Balance 12 USD
+Bal: {amount}|Bal: .5|nofit
+Bal: {amount}.|Bal: 12.5|= Balance 12 USD
+Bal: {amount}.|Bal: 12.50.|= Balance 12.50 USD
+Bal_x-y: {amount}|Bal_x-y: 1,5|= Balance 1.5 USD
+Bal {amount} {amount}|Bal 1 2|invalid
+Bal {any} {amount}|Bal x 1|invalid
+Bal {any}1.5{amount}|Bal x1.52|invalid
+Bal {amount} {day}|Bal 1 2|invalid
+Bal {amount} {year}|Bal 1 2|invalid
+Bal {amount} [x]|Bal 1 [x]|invalid
+Bal {amount} *|Bal 1 *|invalid
+Bal {amount} 01234567890123456789012345678901234567890123456789012345678901234567|Bal 1|invalid
+Bal {amount} 0123456789012345678901234567890123456789012345678901234567890123456|Bal 1 0123456789012345678901234567890123456789012345678901234567890123456|= Balance 1 USD
+CASES
+expect "pattern and reply cases" "$cases" 25
+ab click '#reset-btn' >/dev/null
+expect "reply box after a reset" "$(js 'document.getElementById("op-reply").value')" ""
 
 # TIMEZONE follows ZONENAME and stays hidden while it holds the listed string; a loaded profile whose
 # TIMEZONE differs, or whose ZONENAME is not listed, shows it with a note and keeps the loaded values

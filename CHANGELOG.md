@@ -4,6 +4,8 @@
 
 ### Added
 
+- Profile keys `OP_MCCMNC`, `OP_NAME`, `OP_CURRENCY`, `OP_BALANCE_QUERY_NUMBER`, `OP_BALANCE_QUERY_TEXT`, `OP_BALANCE_REPLY_FROM`, `OP_BALANCE_REPLY_PATTERN` and `OP_SHORT_CODES`: a balance check for an operator the image has no preset for, on every way to build, also on GitHub. The build checks the values with the code the router reads presets with and stops with the key's name. Not tried with a real operator other than Telekom Montenegro yet. Add the eight lines with empty values to an existing profile (see `profiles/generic.conf`), or load the profile into the configurator
+- Configurator: a section "Balance check for another operator" with a box where you paste a balance SMS and see the amount and date the router would read from it
 - Profile key `WWAN_PIN` for a SIM card with a PIN, also in the configurator: the router unlocks the card at every start, so a button reset no longer leaves it offline until someone enters the PIN in LuCI. Not tried on a card with a PIN yet. Add the line `WWAN_PIN=''` to an existing profile, or load the profile into the configurator
 - Configurator: a button at an empty `WIFI_KEY` and `ROOT_PASSWORD` draws a password in the browser, in the form the build draws them, so a build on GitHub no longer means making up two passwords
 
@@ -15,7 +17,7 @@
 - Password card and `README.md` ("After flashing"): a new hint says what to do when SSH warns that the router's host key changed after a flash or a button reset
 - Agent skill: it says where the code comes from (for a local build, a checkout of the release the profile was made for), forbids opening the profile, the card, an image or a backup with the agent's own file tools as well, and asks before a flash whether the router will answer on another address and still accept a key login
 - Agent skill: a shorter description, one example instead of two, and the way to build is chosen before the profile is copied
-- Docs: `docs/operators.md` starts with what a preset gives you, says how a preset for another operator gets into an image (a local build; a build on GitHub takes only presets of a release) and how to try one on a running router before building
+- Docs: `docs/operators.md` starts with what a preset gives you, says how a preset for another operator gets into an image (the `OP_*` keys of the profile) and how to try one on a running router before building
 - Docs: `docs/profile.md` states the format of more keys (`LOW_BALANCE`, `HOSTNAME`, `WIFI_SSID`, `TG_CHAT_ID` of a group and others), says what the SSH host key files of a profile's folder are for, and its long table cells are sections below the table
 
 ### Fixed

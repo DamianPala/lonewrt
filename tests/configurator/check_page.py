@@ -261,10 +261,11 @@ def main(argv: list[str]) -> int:
     check_zones(data, defaults, zoneinfo, problems)
     check_links(data, problems)
     for group in data["groups"]:
-        if "slot" in group and group["slot"] not in page.ids:
-            problems.append(
-                f"group {group['id']}: the slot element {group['slot']} is not in the page"
-            )
+        for place in ("slot", "tail"):
+            if place in group and group[place] not in page.ids:
+                problems.append(
+                    f"group {group['id']}: the {place} element {group[place]} is not in the page"
+                )
     check_page(page, problems)
     code = "\n".join(page.code)
     version = version_path.read_text(encoding="ascii").strip()

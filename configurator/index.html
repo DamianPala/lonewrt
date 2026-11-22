@@ -96,6 +96,13 @@ ol { padding-left: 1.4rem; }
   <p class="help">The address contains your token: do not share it or open it on a computer that is not yours. The bot answers only in the chat whose ID you give, and anyone in that chat can read the Wi-Fi password and restart the router.</p>
 </details>
 
+<div id="op-test" class="field">
+  <label for="op-reply">Try the reply pattern</label>
+  <input type="text" id="op-reply" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-describedby="op-reply-help op-result">
+  <p class="help" id="op-reply-help">Paste a balance SMS of your operator here, to see what the router would read from it with <code>OP_BALANCE_REPLY_PATTERN</code> and <code>OP_CURRENCY</code>. A preview only: this text is not part of the profile, and <code>build.sh</code> is the one that checks the keys.</p>
+  <p id="op-result" class="msg note" role="status" aria-live="polite" hidden></p>
+</div>
+
 <div id="groups"></div>
 
 <section class="panel" aria-labelledby="out-title">
@@ -127,6 +134,8 @@ ol { padding-left: 1.4rem; }
   {"id": "mobile", "title": "Mobile data"},
   {"id": "wireguard", "title": "WireGuard", "intro": "A tunnel for remote access to the router. It needs a WireGuard server of your own, which the image never changes."},
   {"id": "telegram", "title": "Telegram & alerts", "intro": "SMS forwarding, balance alerts and a bot you use from a chat.", "slot": "tg-help"},
+  {"id": "operator", "title": "Balance check for another operator", "tail": "op-test",
+   "intro": "The image can ask one operator for the prepaid balance: Telekom Montenegro (29702). For another operator, describe its balance SMS here; for any other SIM leave all of it empty."},
   {"id": "sms", "title": "SMS control"},
   {"id": "advanced", "title": "Advanced", "intro": "The defaults are right for most routers."}
 ],
@@ -199,9 +208,26 @@ ol { padding-left: 1.4rem; }
   {"key": "TG_CHAT_ID", "group": "telegram", "default": "", "empty": true,
    "help": "The ID of your chat or group with the bot (steps above). A group's ID is negative, for example `-1001234567890`."},
   {"key": "LOW_BALANCE", "group": "telegram", "default": "", "empty": true, "when": ["TG_BOT_TOKEN!=", "TG_CHAT_ID!="],
-   "help": "The balance threshold in the currency of the SIM's operator preset, for example `7.50`. It turns on the weekly balance SMS and the low-balance alert, and works only for an operator the image has a preset for."},
+   "help": "The balance threshold in the currency of the SIM's operator preset, for example `7.50`. It turns on the weekly balance SMS and the low-balance alert, and works only for an operator with a preset: the one of the image, or yours under \"Balance check for another operator\"."},
   {"key": "HC_PING_URL", "group": "telegram", "default": "", "empty": true, "secret": true,
    "help": "The https ping address of a check at healthchecks.io, which the router calls every 5 minutes, so that you hear when it stops. Empty: no heartbeat."},
+
+  {"key": "OP_MCCMNC", "group": "operator", "default": "", "empty": true,
+   "help": "The first 5 digits of the SIM's IMSI, which name the operator, for example `26003`. For a SIM without a preset the bot's `/balance` shows them. Empty: only the presets of the image. With a value here, fill in every key below; only `OP_SHORT_CODES` may stay empty."},
+  {"key": "OP_NAME", "group": "operator", "default": "", "empty": true, "when": ["OP_MCCMNC!="],
+   "help": "The operator's name as the chat shows it. Up to 20 ASCII letters, digits, spaces, `.` and `-`, starting with a letter or digit."},
+  {"key": "OP_CURRENCY", "group": "operator", "default": "", "empty": true, "when": ["OP_MCCMNC!="],
+   "help": "The currency shown after amounts, three capital letters, for example `EUR`. `LOW_BALANCE` is a number in this currency."},
+  {"key": "OP_BALANCE_QUERY_NUMBER", "group": "operator", "default": "", "empty": true, "when": ["OP_MCCMNC!="],
+   "help": "The number the balance query goes to, for example `1466`: digits with one optional `+` in front, at least 3 digits."},
+  {"key": "OP_BALANCE_QUERY_TEXT", "group": "operator", "default": "", "empty": true, "when": ["OP_MCCMNC!="],
+   "help": "The text of the query, for example `RACUN`. Up to 40 ASCII letters, digits, spaces and `.,:_-`, starting with a letter or digit."},
+  {"key": "OP_BALANCE_REPLY_FROM", "group": "operator", "default": "", "empty": true, "when": ["OP_MCCMNC!="],
+   "help": "The sender of the reply exactly as the SMS carries it, a number or a name, for example `1466`. A reply from any other sender is not read as a balance."},
+  {"key": "OP_BALANCE_REPLY_PATTERN", "group": "operator", "default": "", "empty": true, "when": ["OP_MCCMNC!="],
+   "help": "The start of the reply, with `{amount}` in place of the balance, `{day}` and `{month}` in place of the date the credit is valid until (both or neither) and `{any}` in place of other text that changes. For the reply `Imate: 0.31 do 05.01.` it is `Imate: {amount} do {day}.{month}.` Up to 80 ASCII letters, digits, spaces and `:.,;/()=+_-`. Between `{any}` and a number there must be a character that is not a space, digit, dot or comma."},
+  {"key": "OP_SHORT_CODES", "group": "operator", "default": "", "empty": true, "when": ["OP_MCCMNC!="],
+   "help": "The operator's short numbers, separated by spaces, for example `1466 1477`: SMS from them show the operator's name. May stay empty."},
 
   {"key": "SMS_ADMINS", "group": "sms", "default": "", "empty": true, "secret": true,
    "help": "The phone numbers that may control the router by SMS (`status`, `reboot`, `help`, any case): a comma list, each number with an optional `+` and 6 to 15 digits, no spaces, for example `+48500000001,48600000002`. Write them in international form. Empty: no SMS control."},
@@ -465,6 +491,62 @@ function drawPassword() {
   return [0, 4, 8].map((start) => chars.slice(start, start + 4).join('')).join('-');
 }
 
+// R56i, D132: what the router would read from a balance reply, by the rules of operators.sh (the
+// characters and length of nt_p_set, nt_p_compile) and of notify.sh (nt_amount, nt_until,
+// nt_translate). It is a preview: it marks no key and stops no text, since build.sh judges the
+// keys (R57). tests/configurator/20-browser.sh compares its answers with the router's code.
+const PATTERN_CHARS = /^[A-Za-z0-9 :.,;\/()=+{}_-]{1,80}$/;
+const PATTERN_SPACE = '[ \\t\\n\\v\\f\\r]*';
+const PATTERN_PARTS = {
+  '{amount}': '(?<amount>[0-9]+(?:[.,][0-9]+)?)',
+  '{day}': '(?<day>[0-9]{1,2})',
+  '{month}': '(?<month>[0-9]{1,2})',
+  '{any}': '.*',
+};
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// The pattern as a regular expression, null for one the router rejects.
+function compilePattern(pattern) {
+  if (!PATTERN_CHARS.test(pattern)) return null;
+  const seen = {};
+  let source = '';
+  let rest = pattern;
+  while (rest !== '') {
+    const part = Object.keys(PATTERN_PARTS).find((name) => rest.startsWith(name));
+    if (part) {
+      rest = rest.slice(part.length);
+      // {any} is greedy, so right before a number it would end inside it: "12.50" read as 50
+      if (part === '{any}' && /^[ .,0-9]*\{(amount|day|month)\}/.test(rest)) return null;
+      if (part !== '{any}' && seen[part]) return null;
+      seen[part] = true;
+      source += PATTERN_PARTS[part];
+    } else if (rest[0] === '{' || rest[0] === '}') {
+      return null;
+    } else {
+      source += rest[0] === ' ' ? PATTERN_SPACE : rest[0].replace(/[^A-Za-z0-9_]/, '\\$&');
+      rest = rest.slice(1);
+    }
+  }
+  if (!seen['{amount}'] || Boolean(seen['{day}']) !== Boolean(seen['{month}'])) return null;
+  return new RegExp('^' + PATTERN_SPACE + source);
+}
+
+function previewText(values, reply) {
+  if (reply === '') return '';
+  const pattern = compilePattern(values.OP_BALANCE_REPLY_PATTERN);
+  if (!pattern) return 'OP_BALANCE_REPLY_PATTERN is not valid, so build.sh refuses the profile: see the rules at that key.';
+  const match = pattern.exec(reply);
+  if (!match) return 'This reply does not fit the pattern: the router would forward it as an ordinary SMS and read no balance.';
+  let text = 'The router would read: ' + match.groups.amount.replace(',', '.') + ' ' + values.OP_CURRENCY;
+  if (match.groups.day !== undefined) {
+    const day = Number(match.groups.day);
+    const month = Number(match.groups.month);
+    const real = day >= 1 && day <= 31 && month >= 1 && month <= 12;
+    text += ', valid until ' + (real ? day + ' ' + MONTHS[month - 1] : 'unknown');
+  }
+  return text + '.';
+}
+
 // A field with `when` is shown while every condition holds (`KEY=value`, `KEY!=value`), or while it
 // holds something else than its default, so a value in the text is never out of sight.
 function shown(field, values) {
@@ -609,6 +691,7 @@ function buildForm() {
     if (group.intro) set.append(el('p', { class: 'intro' }, group.intro));
     if (group.slot) set.append($(group.slot));
     for (const field of groupFields(group.id)) set.append(buildField(field));
+    if (group.tail) set.append($(group.tail));
     host.append(set);
   }
 }
@@ -680,6 +763,8 @@ function refresh() {
     if (parts[field.key].draw) parts[field.key].draw.hidden = value !== '';
     lines.push(field.key + "='" + value + "'");
   }
+  $('op-test').hidden = parts.OP_BALANCE_REPLY_PATTERN.wrap.hidden;
+  showMessage($('op-result'), previewText(values, $('op-reply').value));
   showNameNote($('name').value.trim());
   // R57: a marked value means no text at all, so a text that build.sh must refuse is never handed out
   $('out').value = problems ? '' : lines.join('\n') + '\n';
@@ -764,6 +849,7 @@ function resetForm() {
   }
   $('load-text').value = '';
   $('load-file').value = '';
+  $('op-reply').value = '';
   $('name').value = 'router';
   $('copy-status').textContent = '';
   showReport(null);
@@ -825,6 +911,7 @@ function start() {
   $('copy-btn').addEventListener('click', copyText);
   $('save-btn').addEventListener('click', saveFile);
   $('name').addEventListener('input', refresh);
+  $('op-reply').addEventListener('input', refresh);
   resetForm();
 }
 

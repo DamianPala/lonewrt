@@ -5,7 +5,8 @@ Run by build.sh as `python3 -I src/render.py ...`. Parses profiles/<name>.conf w
 src/files, fills in the @KEY@ placeholders, adds the weekly balance cron job when the profile has
 notifications and a balance threshold (SPEC R35) and the heartbeat job when the profile has a ping
 address (SPEC R42), the profile's SSH key files merged with its SSH_KEYS (SPEC R61) and
-/etc/lw-build with the release version of the VERSION file (SPEC R3b, R7b), fills an empty TIMEZONE
+/etc/lw-build with the release version of the VERSION file (SPEC R3b, R7b), the operator preset of
+the profile's OP_ keys, judged by the image's own reader (SPEC R47d), fills an empty TIMEZONE
 from ZONENAME with the configurator's zone table (SPEC R3c), sets file modes and
 checks every shell script with busybox `sh -n` (SPEC R6).
 Errors name the key, line or file, never a profile value.
@@ -21,6 +22,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -48,7 +50,35 @@ MAY_BE_EMPTY = {
     "SMS_ADMINS",
     "SSH_KEYS",
     "TIMEZONE",
+    "OP_MCCMNC",
+    "OP_NAME",
+    "OP_CURRENCY",
+    "OP_BALANCE_QUERY_NUMBER",
+    "OP_BALANCE_QUERY_TEXT",
+    "OP_BALANCE_REPLY_FROM",
+    "OP_BALANCE_REPLY_PATTERN",
+    "OP_SHORT_CODES",
 }
+# The operator preset a profile carries (SPEC R47d): OP_MCCMNC names the data file, the others are
+# its lines, profile key and key of the file, in the order they are written
+PRESET_FILE_KEY = "OP_MCCMNC"
+PRESET_KEYS = (
+    ("OP_NAME", "OPERATOR_NAME"),
+    ("OP_CURRENCY", "CURRENCY"),
+    ("OP_BALANCE_QUERY_NUMBER", "BALANCE_QUERY_NUMBER"),
+    ("OP_BALANCE_QUERY_TEXT", "BALANCE_QUERY_TEXT"),
+    ("OP_BALANCE_REPLY_FROM", "BALANCE_REPLY_FROM"),
+    ("OP_BALANCE_REPLY_PATTERN", "BALANCE_REPLY_PATTERN"),
+    ("OP_SHORT_CODES", "SHORT_CODES"),
+)
+PRESET_OPTIONAL = "OP_SHORT_CODES"
+PRESET_DIR = "usr/share/lw/operators"
+# Run by the shell of the sh -n check: the image's own reader of preset files judges the file, and
+# says in one line why not. $1 is operators.sh, $2 the file.
+PRESET_CHECK = """. "$1" || exit 3
+if ! nt_p_read "$2"; then printf 'read %s\\n' "$NT_P_ERR"; exit 1; fi
+if ! nt_p_compile "$NT_P_PAT"; then echo pattern; exit 1; fi
+"""
 NOTIFY_KEYS = ("TG_BOT_TOKEN", "TG_CHAT_ID")
 # Weekly balance check (SPEC R35), only in images with notifications and a threshold
 BALANCE_CRON = "0 10 * * 1 /usr/sbin/lw-notify balance"
@@ -109,6 +139,9 @@ FORMATS = {
     "SMS_REBOOT_MAX_PER_DAY": r"[1-9][0-9]{0,3}",
     # seconds until watchcat restarts wwan (SPEC R14a); the range is in RANGES
     "LINK_RESTART_AFTER_S": r"[1-9][0-9]{0,3}",
+    # the file name of the profile's operator preset (SPEC R47d): the first 5 digits of an IMSI.
+    # The other OP_ keys are judged by the router's reader, see check_preset
+    "OP_MCCMNC": r"[0-9]{5}",
 }
 # Inclusive range of a numeric key, checked after FORMATS. LINK_RESTART_AFTER_S (SPEC R14a, D79):
 # the lower bound is two ping periods of the watchcat entry (60 s), the upper bound keeps the
@@ -255,6 +288,63 @@ def validate(values: dict[str, str], required: list[str], name: str) -> None:
         for key in REQUIRED_WHEN_WG_ENABLED:
             if not values[key]:
                 raise RenderError(f"profile {name}: key {key} is empty but WG_ENABLED is 1")
+    preset = [PRESET_FILE_KEY, *(key for key, _ in PRESET_KEYS)]
+    if any(values[key] for key in preset):
+        for key in preset:
+            if not values[key] and key != PRESET_OPTIONAL:
+                raise RenderError(
+                    f"profile {name}: key {key} is empty but another OP_ key is set; set all of "
+                    f"them ({PRESET_OPTIONAL} may stay empty) or none"
+                )
+
+
+def preset_text(values: dict[str, str]) -> str | None:
+    """The preset file of the profile's OP_ keys (R47d); None when the profile carries none."""
+    if not values[PRESET_FILE_KEY]:
+        return None
+    return "".join(f"{file_key}='{values[key]}'\n" for key, file_key in PRESET_KEYS if values[key])
+
+
+def check_preset(values: dict[str, str], reader: Path, shell: list[str], name: str) -> None:
+    """Stop the build when the router would reject the profile's preset (R47d).
+
+    The image's own reader (operators.sh) judges the file, run by the shell of the sh -n check, so
+    the build and the router cannot come to disagree about a rule. The reader takes the file as
+    data and its answer names a line or a key of the file, never a value; the error names the
+    profile key.
+    """
+    lines = [key for key, _ in PRESET_KEYS if values[key]]
+    by_file_key = {file_key: key for key, file_key in PRESET_KEYS}
+    with tempfile.TemporaryDirectory() as scratch:
+        file = Path(scratch) / "preset"
+        file.write_text(preset_text(values) or "", encoding="utf-8")
+        result = subprocess.run(
+            [*shell, "-c", PRESET_CHECK, "sh", str(reader), str(file)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    if result.returncode == 0:
+        return
+    if result.returncode != 1:
+        raise RenderError(f"the preset reader {reader} did not run: {result.stderr.strip()}")
+    answer = result.stdout.strip()
+    if answer == "pattern":
+        raise RenderError(
+            f"profile {name}: key OP_BALANCE_REPLY_PATTERN has an invalid value; see "
+            '"The reply pattern" in docs/operators.md'
+        )
+    by_key = re.fullmatch(r"read line [0-9]+: unknown key or bad value for ([A-Z_]+)", answer)
+    by_line = re.match(r"read line ([0-9]+):", answer)
+    if by_key and by_key.group(1) in by_file_key:
+        key = by_file_key[by_key.group(1)]
+    elif by_line and 0 < int(by_line.group(1)) <= len(lines):
+        key = lines[int(by_line.group(1)) - 1]
+    else:
+        raise RenderError(f"profile {name}: the OP_ keys make no valid operator preset")
+    raise RenderError(
+        f'profile {name}: key {key} has an invalid value; see "File format" in docs/operators.md'
+    )
 
 
 def read_zones(page: Path | None) -> dict[str, str]:
@@ -588,14 +678,20 @@ def render(args: argparse.Namespace) -> None:
     validate(values, list(template), args.name)
     zone_filled = fill_timezone(values, args.zones, args.name)
     version = read_version(args.version_file)
-    card = resolve_passwords(values, args.card_in)
     shell = shell_command(args.rootfs)
+    preset = preset_text(values)
+    if preset is not None:
+        check_preset(values, args.src / "files/usr/lib/lw/operators.sh", shell, args.name)
+    card = resolve_passwords(values, args.card_in)
 
     out: Path = args.out
     if out.exists() and any(out.iterdir()):
         raise RenderError(f"output directory {out} is not empty")
     shutil.copytree(args.src / "files", out, dirs_exist_ok=True)
     fill_placeholders(out, values)
+    if preset is not None:
+        # R47d: also in place of a preset of the image with the same name
+        (out / PRESET_DIR / values[PRESET_FILE_KEY]).write_text(preset, encoding="utf-8")
     balance = add_balance_cron(out, values)
     heartbeat = add_heartbeat_cron(out, values)
     ssh_keys = parse_ssh_keys(values["SSH_KEYS"], args.name)
@@ -615,6 +711,7 @@ def render(args: argparse.Namespace) -> None:
         f"notifications: {notify_state(values)}" + (", weekly balance check" if balance else ""),
         f"heartbeat: {'on' if heartbeat else 'off'}",
         f"TIMEZONE: {'from ZONENAME' if zone_filled else 'from the profile'}",
+        f"operator preset: {'from the profile' if preset is not None else 'only those of the image'}",
     ]
     if card and args.card_out:
         args.card_out.write_text(card[0], encoding="utf-8")

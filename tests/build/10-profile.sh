@@ -191,6 +191,68 @@ for good in 0000 1234 73914826; do
         fail "WWAN_PIN '$good' not written verbatim"
 done
 
+# R47d: the OP_ keys carry one operator preset. With all of them empty the image has only its own
+# presets. With one set, all but OP_SHORT_CODES must be set, and the router's own reader judges the
+# values: a refusal names the key and never shows the value. A good set lands as the data file
+# /usr/share/lw/operators/<OP_MCCMNC>, also in place of a preset of the image.
+variant no-op '/^OP_NAME=/d'
+expect_fail_with "key OP_NAME is missing; add the line OP_NAME=''" build no-op
+build --render-only fake-full "$SCRATCH/op-full" 2>"$SCRATCH/op-full.err" ||
+    fail "R47d: the fixture's OP_ keys were refused: $(tail -n 2 "$SCRATCH/op-full.err")"
+preset=$SCRATCH/op-full/usr/share/lw/operators/99977
+[ -f "$preset" ] || fail "R47d: no preset file from the OP_ keys"
+[ "$(stat -c %a "$preset")" = 644 ] || fail "R47d: the preset file is not 0644"
+diff <(printf '%s\n' "OPERATOR_NAME='Acme-q7x9'" "CURRENCY='USD'" "BALANCE_QUERY_NUMBER='4040'" \
+    "BALANCE_QUERY_TEXT='BAL'" "BALANCE_REPLY_FROM='ACME'" \
+    "BALANCE_REPLY_PATTERN='Your balance is {amount} USD, valid till {month}/{day}'" \
+    "SHORT_CODES='4040 4041'") "$preset" >/dev/null || fail "R47d: the preset file differs from the OP_ keys"
+cmp -s "$SCRATCH/op-full/usr/share/lw/operators/29702" "$FW/src/files/usr/share/lw/operators/29702" ||
+    fail "R47d: the image's own preset changed"
+grep -q 'operator preset: from the profile' "$SCRATCH/op-full.err" || fail "R47d: no render note about the preset"
+variant op-nocodes "s/^OP_SHORT_CODES=.*/OP_SHORT_CODES=''/"
+build --render-only op-nocodes "$SCRATCH/op-nocodes" 2>/dev/null || fail "R47d: an empty OP_SHORT_CODES was refused"
+! grep -q SHORT_CODES "$SCRATCH/op-nocodes/usr/share/lw/operators/99977" ||
+    fail "R47d: an empty OP_SHORT_CODES wrote a line"
+variant op-own "s/^OP_MCCMNC=.*/OP_MCCMNC='29702'/"
+build --render-only op-own "$SCRATCH/op-own" 2>/dev/null || fail "R47d: a preset for 29702 was refused"
+grep -qx "OPERATOR_NAME='Acme-q7x9'" "$SCRATCH/op-own/usr/share/lw/operators/29702" ||
+    fail "R47d: the profile's preset did not replace the image's"
+for key in OP_MCCMNC OP_NAME OP_CURRENCY OP_BALANCE_QUERY_NUMBER OP_BALANCE_QUERY_TEXT \
+    OP_BALANCE_REPLY_FROM OP_BALANCE_REPLY_PATTERN; do
+    variant "op-empty-$key" "s|^$key=.*|$key=''|"
+    expect_fail_with "key $key is empty but another OP_ key is set" build "op-empty-$key"
+done
+i=0
+while IFS='=' read -r key bad; do
+    i=$((i + 1))
+    variant "op-bad-$i" "s|^$key=.*|$key='$bad'|"
+    expect_fail_with "key $key has an invalid value" build "op-bad-$i"
+    err=$(build "op-bad-$i" 2>&1 || true)
+    ! grep -qF -- "'$bad'" <<<"$err" || fail "error message echoes the $key value '$bad'"
+done <<'CASES'
+OP_MCCMNC=2970
+OP_MCCMNC=297021
+OP_MCCMNC=29a02
+OP_NAME=A very long operator name
+OP_NAME=-Acme
+OP_NAME=Acme$(id)
+OP_CURRENCY=usd
+OP_CURRENCY=USDX
+OP_BALANCE_QUERY_NUMBER=14
+OP_BALANCE_QUERY_NUMBER=14 66
+OP_BALANCE_QUERY_TEXT=-h
+OP_BALANCE_QUERY_TEXT=BAL;id
+OP_BALANCE_REPLY_FROM=ACME!
+OP_SHORT_CODES=4040,4041
+OP_BALANCE_REPLY_PATTERN=Balance without the amount
+OP_BALANCE_REPLY_PATTERN=Balance {amount} {amount}
+OP_BALANCE_REPLY_PATTERN=Balance {amount} till {day}
+OP_BALANCE_REPLY_PATTERN=Balance {amount} {year}
+OP_BALANCE_REPLY_PATTERN=Balance {any} {amount}
+OP_BALANCE_REPLY_PATTERN=Balance {any}.{amount}
+OP_BALANCE_REPLY_PATTERN=Balance [0-9]*{amount}
+CASES
+
 # R46b: the two REBOOT limits are keys every profile must have, with a positive whole number of up to
 # 4 ASCII digits; anything else stops the build, and the error never shows the value
 for key in SMS_REBOOT_MAX_AGE_MIN SMS_REBOOT_MAX_PER_DAY; do
@@ -362,13 +424,15 @@ sed -e "s/^\(WWAN_[A-Z]*\)=.*/\1=''/" -e "s/^LTE_BANDS=.*/LTE_BANDS=''/" \
     -e "s/^\(WG_[A-Z_]*\)=.*/\1=''/" -e "s/^WG_ENABLED=''/WG_ENABLED='0'/" \
     -e "s/^\(TG_[A-Z_]*\)=.*/\1=''/" -e "s/^LOW_BALANCE=.*/LOW_BALANCE=''/" \
     -e "s/^HC_PING_URL=.*/HC_PING_URL=''/" -e "s/^SMS_ADMINS=.*/SMS_ADMINS=''/" \
-    -e "s/^SSH_KEYS=.*/SSH_KEYS=''/" \
+    -e "s/^SSH_KEYS=.*/SSH_KEYS=''/" -e "s/^\(OP_[A-Z_]*\)=.*/\1=''/" \
     "$P/fake-full.conf" >"$P/blanks.conf"
 build --render-only blanks "$SCRATCH/blanks" 2>/dev/null || fail "allowed empty values were rejected"
 grep -qx "P_SMS_ADMINS=''" "$SCRATCH/blanks/etc/uci-defaults/zz-lw-config" ||
     fail "an empty SMS_ADMINS is not written as empty"
 grep -qx "P_WWAN_PIN=''" "$SCRATCH/blanks/etc/uci-defaults/zz-lw-config" ||
     fail "an empty WWAN_PIN is not written as empty"
+[ "$(ls "$SCRATCH/blanks/usr/share/lw/operators")" = 29702 ] ||
+    fail "R47d: empty OP_ keys wrote a preset file"
 
 # R3b: VERSION (MAJOR.MINOR.PATCH, optional -prerelease) is read by every build; a missing file or a
 # malformed value stops the build naming VERSION, and a good one lands in /etc/lw-build (R7b)

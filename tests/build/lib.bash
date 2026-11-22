@@ -38,7 +38,7 @@ FAKE_VALUES=(
     RkFLRS13Zy1wZWVyLXB1YmxpYy1rZXktcTd4OS0wMTI= 10.99.77. vpn.fake-q7x9.example
     FAKEauthorizedKEYq7x9 FAKE-dropbear-ed25519-host-key-q7x9 FAKE-dropbear-rsa-host-key-q7x9
     FAKEtgtokenq7x9 -1009977001977 hc-ping.fake-q7x9.example FAKEhcping-q7x9-0001
-    +15550100123 15550100456 fake-a-q7x9 fake-e-q7x9
+    +15550100123 15550100456 fake-a-q7x9 fake-e-q7x9 Acme-q7x9
 )
 
 fail() {
