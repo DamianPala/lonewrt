@@ -35,6 +35,7 @@
 - `profiles/generic.conf`: a comment said that a restart of the mobile connection costs about 40 s without internet; it is about 15 s
 - Password card and `README.md` ("After flashing"): the hint about the network mode said "LTE only"; it now says that the router sets LTE at every start and switches to 2G (EDGE) only while LTE stays dead after a restart
 - `./fetch-deps.sh --help` and `tests/vm/run-all.sh --help` ended with a line of the script's code
+- Tests: the full build test skipped the modem and Wi-Fi packages of the default set when it compared an image with `packages.md`; it now checks them, refuses a table row it cannot read, and compares the package list of the VM bench, whose description claimed three packages it does not install
 
 ## [0.4.0] - 2026-11-20
 

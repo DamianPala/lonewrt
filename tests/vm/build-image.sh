@@ -24,7 +24,8 @@ LW_ROOTFS=${LW_ROOTFS:-$LW_WORK/dl/x86/rootfs}
 # ImageBuilder wants GNU awk; the laptop only has mawk
 export PATH=$LW_WORK/tools/bin:$PATH
 
-# packages.md "Included" plus the MF289F device defaults that exist for x86_64 too
+# packages.md "Included" without the speed test and QR packages, which no VM test uses, plus the
+# MF289F device defaults that exist for x86_64 too; tests/build/60-images.sh compares the list
 PACKAGES=(
     uqmi kmod-usb-net-qmi-wwan kmod-usb-serial-option wpad-basic-mbedtls
     luci luci-ssl luci-proto-qmi luci-proto-wireguard wireguard-tools

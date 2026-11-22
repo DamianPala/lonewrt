@@ -54,10 +54,34 @@ check_qmi() {
     qmi_sh_n "$img" || fail "image /$QMI_SH_REL fails sh -n"
 }
 
+# packages_of FILE: the names in the PACKAGES=( ... ) list of a build script, sorted
+packages_of() {
+    sed -n '/^PACKAGES=(/,/^)/p' "$1" | sed '1d;$d' | tr ' ' '\n' | sed '/^$/d' | sort
+}
+
+# Every row of the two tables starts with a package name in backticks: packages_in reads only such
+# rows, so any other row would drop out of the checks of R2 without a word
+# shellcheck disable=SC2016  # literal backticks of the markdown table
+stray=$(awk '/^## /{on = /Included|Left out/; next}
+    on && /^\|/ && !/^\| `/ && !/^\| Package / && !/^\|---/' "$FW/packages.md")
+[ -z "$stray" ] || fail "packages.md: a table row does not start with a package name in backticks: ${stray:0:60}"
+
 # build.sh installs exactly the "Included" table minus the default-set row
-want=$(packages_in Included | grep -vxE 'uqmi|kmod-.*|wpad-basic-mbedtls|firewall4|dnsmasq|dropbear' | sort)
-have=$(sed -n '/^PACKAGES=(/,/^)/p' "$FW/build.sh" | sed '1d;$d' | tr ' ' '\n' | sed '/^$/d' | sort)
+DEFAULT_SET='uqmi|kmod-.*|wpad-basic-mbedtls|firewall4|dnsmasq|dropbear'
+packages_in Included | grep -qxE "$DEFAULT_SET" || fail "packages.md \"Included\" has no row of the default set"
+want=$(packages_in Included | grep -vxE "$DEFAULT_SET" | sort)
+have=$(packages_of "$FW/build.sh")
 [ "$want" = "$have" ] || fail "build.sh PACKAGES differ from packages.md: $(diff <(echo "$want") <(echo "$have") | tr '\n' ' ')"
+
+# The VM bench installs the same list without the packages no VM test uses, plus the device
+# defaults that the x86 profile does not bring (tests/vm/README.md)
+vm_want=$({
+    grep -vxE 'speedtestcpp|qrencode|libjpeg-turbo-utils' <<<"$have"
+    printf '%s\n' uqmi kmod-usb-net-qmi-wwan kmod-usb-serial-option wpad-basic-mbedtls
+} | sort)
+vm_have=$(packages_of "$FW/tests/vm/build-image.sh")
+[ "$vm_want" = "$vm_have" ] ||
+    fail "tests/vm/build-image.sh PACKAGES differ from build.sh: $(diff <(echo "$vm_want") <(echo "$vm_have") | tr '\n' ' ')"
 
 # Generic image, twice; the card and its passwords stay the same (R33)
 DI=$SCRATCH/generic-image

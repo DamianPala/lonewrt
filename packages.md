@@ -7,7 +7,7 @@ Both tables are binding (SPEC R2): the full build test compares them with the pa
 
 | Package | Why | Source |
 |---|---|---|
-| default 25.12.6 set for the MF289F (`uqmi`, `kmod-usb-net-qmi-wwan`, `kmod-usb-serial-option`, `wpad-basic-mbedtls`, `firewall4`, `dnsmasq`, `dropbear`...) | system, LTE over QMI, Wi-Fi; `uqmi` also serves `lw-linkwatch` (R49), and its `qmi.sh` goes into the image with one line removed (R12d) | official |
+| `uqmi`, `kmod-usb-net-qmi-wwan`, `kmod-usb-serial-option`, `wpad-basic-mbedtls`, `firewall4`, `dnsmasq`, `dropbear` (with the rest of the default 25.12.6 set for the MF289F, which the device profile brings) | system, LTE over QMI, Wi-Fi; `uqmi` also serves `lw-linkwatch` (R49), and its `qmi.sh` goes into the image with one line removed (R12d) | official |
 | `luci`, `luci-proto-qmi` | web panel, LTE interface in LuCI | official |
 | `luci-ssl` | HTTPS in LuCI (pulls in `px5g-mbedtls` for the certificate); without it the router's https:// address does not work | official |
 | `wireguard-tools`, `luci-proto-wireguard` | remote access through a WireGuard server | official |
@@ -49,7 +49,8 @@ What it does not take of the router's system partition (29 MiB) holds the settin
 
 ## Changing the list
 
+- A row starts with the package names in backticks; names in parentheses are pulled in by them and are not asked for.
 - A package from the official feeds: its row here with the reason, and `PACKAGES` in `build.sh`; the full `tests/build/run.sh` fails when the two differ.
 - A package from outside the feeds: also its file in the group `extra` of `deps.lst`, with its sha256.
-- `tests/vm/build-image.sh` keeps its own list for the VM bench.
+- `tests/vm/build-image.sh` keeps its own list for the VM bench: the same without the speed test and QR packages, which no VM test uses. The same test compares it.
 - When the package is a choice between ways to do something, the reason goes into a decision row of `SPEC.md` (D14, D91).

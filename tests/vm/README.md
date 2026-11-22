@@ -36,7 +36,7 @@ Per-guest run directory (disk, console log, AT log, markers): `$VMWORK/run/<scen
 
 ## How it is built
 
-`build-image.sh [OVERLAY_DIR]` takes a rendered overlay (default: `build.sh --render-only generic`), adds `tests/vm/overlay/` on top and runs the official x86/64 ImageBuilder (sha256 checked) with the package list of `packages.md` "Included" plus the MF289F device defaults that exist for x86_64.
+`build-image.sh [OVERLAY_DIR]` takes a rendered overlay (default: `build.sh --render-only generic`), adds `tests/vm/overlay/` on top and runs the official x86/64 ImageBuilder (sha256 checked) with the package list of `packages.md` "Included", without `speedtestcpp`, `qrencode` and `libjpeg-turbo-utils` (no VM test uses them), plus the MF289F device defaults that exist for x86_64.
 All of them install on x86_64; the third-party ones are `noarch`.
 In the ImageBuilder's own `.config` it switches off ext4, tar.gz and EFI images and the GRUB menu delay; packages and kernel stay as released.
 The image is cached under `$VMWORK/image/<hash of inputs>/` (the build date in `/etc/lw-build` is not part of the hash), and `image/current` points to the last one.
