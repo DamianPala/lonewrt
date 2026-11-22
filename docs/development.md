@@ -22,6 +22,7 @@ A build and the VM image also need the network: they fetch the `uqmi` package fr
 | `qmi-handler.sh` | takes `/lib/netifd/proto/qmi.sh` from the `uqmi` package of the ImageBuilder, drops its `--network-scan` line (the build stops unless the line is there exactly once) and checks the image's copy after `make image`; sourced by `build.sh` and `tests/vm/build-image.sh`. The repository holds no copy of the file (SPEC R12d, D82) | yes |
 | `pinned-packages.sh` | the checked copy of the third-party `.apk` files into an ImageBuilder, sourced by `build.sh` and `tests/vm/build-image.sh` | yes |
 | `src/files/` | the files of the image (init scripts, `wwan-recover`, `lw-notify`, `uci-defaults/zz-lw-config`, cron, ...) | yes |
+| `src/files-tailscale/` | the files only an image with `TS_ENABLED='1'` gets (`lw-tailscale`, its init script, `/etc/config/tailscale`) | yes |
 | `src/files/usr/share/lw/operators/` | operator presets, one data file per MCC-MNC (`29702`), see [operators.md](operators.md) | yes |
 | `profiles/generic.conf` | the template profile and the list of all keys, see [profile.md](profile.md) | yes |
 | `profiles/<name>.conf`, `profiles/<name>/` | your profiles and their SSH key files | no |

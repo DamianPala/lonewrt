@@ -24,7 +24,7 @@ The paths in this file (`docs/profile.md`, `README.md`, `./build.sh`) are relati
 ## Ground rules
 
 1. **No secret value ever reaches the chat or your tool output** (SPEC R59c).
-   The secret keys are `WIFI_KEY`, `ROOT_PASSWORD`, `ROOT_PASSWORD_HASH`, `WWAN_PASSWORD`, `WWAN_PIN`, `WG_PRIVATE_KEY`, `TG_BOT_TOKEN`, `HC_PING_URL` and `SMS_ADMINS`.
+   The secret keys are `WIFI_KEY`, `ROOT_PASSWORD`, `ROOT_PASSWORD_HASH`, `WWAN_PASSWORD`, `WWAN_PIN`, `WG_PRIVATE_KEY`, `TG_BOT_TOKEN`, `HC_PING_URL`, `TS_AUTHKEY` and `SMS_ADMINS`.
    Never open the profile, the password card (`image/<name>-passwords.txt`), an image, a downloaded artifact or a backup with any tool: not your harness's file-reading tool or editor, not `cat`, `head`, `tail`, `less`, `grep` (except `grep -q`), `awk`, `sed`, `strings`, `xxd`, `diff` or a script of your own.
    The only commands that touch the profile are the ones of this file: `install`, `gh secret set ... <`, `build.sh`, `grep -q`, and the comparison of Step 7.1, which keeps the values in shell variables and prints key names only.
    Hashing, copying and listing (`sha256sum`, `scp`, `tar -tzf ... >/dev/null`) show no content and are fine.

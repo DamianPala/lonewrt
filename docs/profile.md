@@ -92,5 +92,5 @@ The upper limit keeps this restart ahead of the restart of the whole router.
 ## Log level
 
 `LOG_LEVEL` takes `info` or `debug`, exactly; any other value, `DEBUG` included, stops the build.
-With `debug` the persistent log `/root/openwrt.log` rotates at 2 MB instead of 1 MB, every 5-minute signal sample is written to it as well, and `lw-linkwatch` (the watcher that restores a data session the network dropped) logs each step, a snapshot of the modem and a heartbeat every 5 minutes.
+With `debug` the persistent log `/root/openwrt.log` rotates at 2 MB instead of 1 MB (in an image with Tailscale it stays at 1 MB, because Tailscale takes about half of the free flash), every 5-minute signal sample is written to it as well, and `lw-linkwatch` (the watcher that restores a data session the network dropped) logs each step, a snapshot of the modem and a heartbeat every 5 minutes.
 All of it is extra flash writes, so go back to `info` after the test period.
