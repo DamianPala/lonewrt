@@ -488,7 +488,7 @@ The image relies on these fields of Tailscale's state as `tailscale status --jso
 - **R69:** `/status` of a tailscale image has one Tailscale line after the data of the month (R39c), with the name and without the address (D143).
 - **R69b:** `/tailscale` of an added router answers with the name, the Tailscale address, the account, the date the sign-in ends (or `never`) and, with `TS_ADVERTISE_LAN='1'`, whether the route is approved.
 - **R69d:** While Tailscale is starting or not running, `/tailscale` says which of the two.
-- **R69c:** `/help` of a tailscale image has the line of `/tailscale`, and its keyboard (R37e) has a tenth button `🔒 Tailscale` that acts like `/tailscale`, with the 10 buttons in 3 rows of 4, 3 and 3 as in the layout (D162).
+- **R69c:** `/help` of a tailscale image has a `🔒 Tailscale` line in the keyboard's order, and its keyboard (R37e) has a tenth button `🔒 Tailscale` that acts like `/tailscale`, with the 10 buttons in 3 rows of 4, 3 and 3 as in the layout (D162).
 - **R69a:** The SMS command `tailscale` (R46) in a tailscale image gets within 60 s a reply with a new link when the router is not added, or with the name, the Tailscale address, the account and the date the sign-in ends; when the reply would exceed 160 characters (R46a), the account is left out first; the `help` reply lists `tailscale` in a tailscale image (D148).
 
 #### Configurator and documents
@@ -575,7 +575,7 @@ Router's network <prefix>: reachable        (or: waiting for approval; only with
 🔒 Tailscale is not in this image. Set TS_ENABLED to 1 in the profile and build again.
 
 /status line: 🔒 Tailscale: on as <name> | not added yet (/tailscale) | sign-in ended (/tailscale) | not running
-/help line: /tailscale – remote access from your own devices
+/help line, between Alerts and Reboot as on the keyboard: 🔒 Tailscale – remote access from your own devices
 
 [SMS replies]
 Router: Tailscale sign-in link, open soon: https://login.tailscale.com/a/<code>

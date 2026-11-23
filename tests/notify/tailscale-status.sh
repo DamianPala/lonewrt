@@ -68,8 +68,8 @@ lw_expect_eq "$(last_text)" '❓ <b>What the buttons do</b>
 💶 <b>Balance</b> – ask Telekom (~1 min)
 ✉️ <b>SMS</b> – newest SMS (/sms 10 for more)
 🔔 <b>Alerts</b> – automatic messages, on or off
+🔒 <b>Tailscale</b> – remote access from your own devices
 🔄 <b>Reboot</b> – restart the router (asks first)
-/tailscale – remote access from your own devices
 
 The bot also posts by itself: new SMS, internet back, 2G backup.' "help of a tailscale image"
 lw_expect_eq "$(markup_of "$(sent)" | jsonfilter -e '@.keyboard[*][*].text' | wc -l | tr -d ' ')" 10 \
@@ -78,6 +78,6 @@ case $(markup_of "$(sent)") in *'🔒 Tailscale'*) ;; *) lw_fail "no Tailscale b
 # an unknown command gets the same help
 tg_push "$TG_CHAT" /nonsense
 pass
-case $(last_text) in *'/tailscale – remote access'*) ;; *) lw_fail "unknown command: $(last_text)" ;; esac
+case $(last_text) in *'🔒 <b>Tailscale</b> – remote access'*) ;; *) lw_fail "unknown command: $(last_text)" ;; esac
 expect_all_html
 echo ok

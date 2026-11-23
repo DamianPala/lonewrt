@@ -89,11 +89,11 @@ nt_help() {
         '⚡ <b>Speed</b> – measure the speed (~60 s)' \
         "$_hb" \
         '✉️ <b>SMS</b> – newest SMS (/sms 10 for more)' \
-        '🔔 <b>Alerts</b> – automatic messages, on or off' \
-        '🔄 <b>Reboot</b> – restart the router (asks first)'
-    # R69c: the line of a tailscale image, next to its tenth keyboard button (D162)
-    ! nt_ts_image || printf '%s\n' '/tailscale – remote access from your own devices'
-    printf '%s\n' '' "The bot also posts by itself: $_hf."
+        '🔔 <b>Alerts</b> – automatic messages, on or off'
+    # R69c: a tailscale image's tenth button, in the keyboard's order (D162)
+    ! nt_ts_image || printf '%s\n' '🔒 <b>Tailscale</b> – remote access from your own devices'
+    printf '%s\n' '🔄 <b>Reboot</b> – restart the router (asks first)' '' \
+        "The bot also posts by itself: $_hf."
 }
 # An inline keyboard with no buttons: sent with an edited text, it removes the old buttons
 NT_NOKB='&reply_markup=%7B%22inline_keyboard%22%3A%5B%5D%7D'
