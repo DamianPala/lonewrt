@@ -1610,6 +1610,9 @@ nt_ts_send_item() {
 # off the list, and the link comes by SMS or over SSH (R65e, R69a).
 nt_ts_tick() {
     nt_ts_image || return 0
+    # R72e: nothing is taken off the list before the greeting of the first start is out, so the link
+    # does not come before the reset note and the greeting
+    [ -e "$NT_KB_FLAG" ] || [ -e "$NT_RUN/keyboard" ] || return 0
     timeout 10 "$NT_TS_BIN" due >"$NT_RUN/ts.due" 2>/dev/null || { rm -f "$NT_RUN/ts.due"; return 0; }
     while IFS= read -r _tse; do
         nt_ts_queue "$_tse" || continue

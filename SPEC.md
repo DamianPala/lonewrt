@@ -525,6 +525,7 @@ The image relies on these fields of Tailscale's state as `tailscale status --jso
   - **R72c:** The record of which one-time messages went is kept on flash: a router restart and a power cut keep it, a flash that keeps settings keeps it exactly as it keeps `/etc/tailscale/`, and a button reset or a flash that does not keep settings removes it with `/etc/tailscale/` (unlike the bot's state in `/etc/lw-notify`, R37f).
     - *scenario* given an added router that got its added message, when it is flashed with `sysupgrade` keeping settings, then no added message comes again; after a button reset the link message comes once
   - **R72d:** The texts of the joining, expiry and command rules (R65 to R69d) follow the layout below, which binds: the words may differ, the layout and the information may not; `<name>` is the router's current Tailscale name and `<account>` the account it is in. The menu paths of the admin page in it (`⋯ > Disable key expiry`, `⋯ > Remove`, `⋯ > Edit machine name`, `⋯ > Edit route settings`) are those of the UX review, which did not check them (guess, from: ../lonewrt-notes/tailscale/review-ux.md; Unverified).
+  - **R72e:** At the first start of the image the one-time messages come after the reset note and the greeting of R37f; on the owner's router the link message came before both (measured: flash of 0.6.0, 2026-11-23).
 
 ```
 [link message]
