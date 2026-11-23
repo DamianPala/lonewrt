@@ -114,16 +114,15 @@ The router's own settings page is called LuCI.
 
 ## Remote access
 
-There are two ways to open the router's settings page (LuCI) and SSH from afar. Both are optional and off by default, and both can be on at once.
+WireGuard and Tailscale each open the router's settings page (LuCI) and SSH from afar. Both are off by default, and you can turn on either one or both.
+Choose WireGuard to route the connection through a server you control, Tailscale for remote access without a server of your own.
 
 | | WireGuard | Tailscale |
 |---|---|---|
 | You need | your own WireGuard server with a public address, such as a VPS | a free Tailscale account, with its app on your laptop and phone |
 | How you reach the router | at its tunnel address, through your server | by its name, such as `https://lte-router` |
-| Turn it on | `WG_ENABLED='1'` and the other `WG_*` keys, see [docs/profile.md](docs/profile.md) | `TS_ENABLED='1'`, then sign in with the link the bot sends, see the [Tailscale guide](docs/tailscale.md) |
+| Turn it on | `WG_ENABLED='1'` and the other `WG_*` keys, see [docs/profile.md](docs/profile.md) | `TS_ENABLED='1'`, then sign in with a link that comes by Telegram, SMS or SSH, see the [Tailscale guide](docs/tailscale.md#sign-in) |
 | Who carries the traffic | your server | your devices directly; Tailscale's servers set up the connection and relay it when a direct one fails |
-
-Pick Tailscale when you have no server, WireGuard when you already run one or want no third party in between.
 
 The router holds a key into your network either way, so whoever steals it gets that key. Limit what it can reach there:
 
@@ -162,7 +161,7 @@ Solo project, best effort, no response-time promise. Built with AI coding agents
 ## Security and privacy
 
 Security: use "Report a vulnerability" on the Security tab, not a public issue.
-The build sends nothing about your profile anywhere, and there is no telemetry. The router talks to the operator and the NTP pool, and pings `8.8.8.8` and `1.1.1.1` to check the link. It also talks to what your profile turns on: Telegram, healthchecks.io, speedtest.net, your WireGuard server.
+The build sends nothing about your profile anywhere, and there is no telemetry. The router talks to the operator and the NTP pool, and pings `8.8.8.8` and `1.1.1.1` to check the link. It also talks to what your profile turns on: Telegram, healthchecks.io, speedtest.net, your WireGuard server, Tailscale.
 
 [What goes over the network](docs/network.md) lists each destination, what it gets, and why a built image stays private.
 
