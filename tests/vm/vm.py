@@ -9,6 +9,7 @@ sockets QEMU listens on (console.sock, monitor.sock, modem.sock), qemu.pid, ssh_
   wait-ready  follow the console until this boot's LWVM-READY line, or cut the power on a marker
   sh          run a shell script in the guest over the serial console, print output, exit with rc
   link        set the wwan NIC's link up or down (QEMU monitor set_link)
+  recv        take one line from the guest's unlogged xfer UART (start --xfer) into a 0600 file
   banner      read the SSH banner through the host port forwarded to LAN:22
   kill        power cut: SIGKILL to QEMU, the disk keeps what reached it
   stop        stop QEMU (SIGTERM, then SIGKILL)
@@ -80,11 +81,52 @@ def lan_addresses(lan_ip):
     return f"{net}.0/24", host
 
 
+def link_nic(a):
+    """The NIC that joins two guests: a unix stream socket, the router's end listens."""
+    server = a.link_role == "server"
+    return [
+        "-netdev",
+        f"stream,id=lanlink,addr.type=unix,addr.path={a.link_sock},server={'on' if server else 'off'}"
+        + ("" if server else ",reconnect-ms=1000"),
+        "-device",
+        "virtio-net-pci,netdev=lanlink,id=link-nic,"
+        f"mac=52:54:00:52:48:{'03' if server else '10'},addr=0x5",
+    ]
+
+
+def nic_args(a, ssh_port, lan_net, lan_host):
+    if a.guest:
+        return link_nic(a)
+    # with --internet the wwan side is user-mode NAT to the real internet; without it nothing leaves
+    wwan_restrict = "off" if a.internet else "on"
+    nics = [
+        "-netdev",
+        f"user,id=lan,restrict=on,net={lan_net},host={lan_host},"
+        f"hostfwd=tcp:127.0.0.1:{ssh_port}-{a.lan_ip}:22",
+        "-device",
+        "virtio-net-pci,netdev=lan,id=lan-nic,mac=52:54:00:52:48:01,addr=0x3",
+        "-netdev",
+        f"user,id=wwan,restrict={wwan_restrict},net={WWAN_NET},host={WWAN_GW},dhcpstart=10.0.3.15",
+        "-device",
+        "virtio-net-pci,netdev=wwan,id=wwan-nic,mac=52:54:00:52:48:02,addr=0x4",
+    ]
+    return nics + (link_nic(a) if a.link_role else [])
+
+
 def cmd_start(a):
     run = a.run
+    if a.guest:
+        a.no_modem = True
+        a.lan_ip = a.lan_ip or "0.0.0.0"
+        if not a.link_role:
+            sys.exit("vm: --guest needs --link-role and --link-sock")
+    elif not a.lan_ip:
+        sys.exit("vm: start needs --lan-ip (or --guest)")
+    if a.link_role and not a.link_sock:
+        sys.exit("vm: --link-role needs --link-sock")
     if alive(read_pid(run)):
         sys.exit(f"vm: QEMU already running for {run}")
-    for name in ("console.sock", "monitor.sock", "modem.sock", "qemu.pid"):
+    for name in ("console.sock", "monitor.sock", "modem.sock", "xfer.sock", "qemu.pid"):
         try:
             os.unlink(run_path(run, name))
         except FileNotFoundError:
@@ -122,16 +164,15 @@ def cmd_start(a):
             "-serial",
             "chardev:modem",
         ]
-    argv += [
-        "-netdev",
-        f"user,id=lan,restrict=on,net={lan_net},host={lan_host},"
-        f"hostfwd=tcp:127.0.0.1:{ssh_port}-{a.lan_ip}:22",
-        "-device",
-        "virtio-net-pci,netdev=lan,id=lan-nic,mac=52:54:00:52:48:01,addr=0x3",
-        "-netdev",
-        f"user,id=wwan,restrict=on,net={WWAN_NET},host={WWAN_GW},dhcpstart=10.0.3.15",
-        "-device",
-        "virtio-net-pci,netdev=wwan,id=wwan-nic,mac=52:54:00:52:48:02,addr=0x4",
+    if a.xfer:
+        # a UART nothing is logged from: the way a secret leaves the guest without reaching a log
+        argv += [
+            "-chardev",
+            f"socket,id=xfer,path={run_path(run, 'xfer.sock')},server=on,wait=off",
+            "-serial",
+            "chardev:xfer",
+        ]
+    argv += nic_args(a, ssh_port, lan_net, lan_host) + [
         "-monitor",
         f"unix:{run_path(run, 'monitor.sock')},server=on,wait=off",
         "-pidfile",
@@ -320,6 +361,46 @@ def cmd_banner(a):
     sys.exit(f"vm: no SSH banner on 127.0.0.1:{port} within {a.timeout} s")
 
 
+def write_private(path, lines):
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(b"\n".join(lines) + b"\n")
+    os.chmod(path, 0o600)
+
+
+def cmd_recv(a):
+    """Take what the guest writes to the xfer UART into a 0600 file: its first line, or with --end
+    every line up to a line that is that marker. Prints how much came, never what."""
+    end = a.end.encode() if a.end else None
+    con = connect_unix(run_path(a.run, "xfer.sock"), 10)
+    con.settimeout(0.5)
+    deadline = time.monotonic() + a.timeout
+    buf = b""
+    got = []
+    while time.monotonic() < deadline:
+        try:
+            data = con.recv(65536)
+        except TimeoutError:
+            continue
+        if not data:
+            break
+        buf += data
+        *lines, buf = buf.split(b"\n")
+        for raw in lines:
+            line = raw.strip(b"\r\0 ")
+            if end is not None and line == end:
+                write_private(a.out, got)
+                print(f"received {len(got)} lines")
+                return
+            if line and end is None:
+                write_private(a.out, [line])
+                print(f"received {len(line)} bytes")
+                return
+            if line:
+                got.append(line)
+    sys.exit(f"vm: nothing complete from the xfer UART within {a.timeout} s")
+
+
 def cmd_kill(a):
     power_cut(a.run)
     print("power cut")
@@ -340,12 +421,22 @@ def main():
     ap = argparse.ArgumentParser(description=(__doc__ or "vm").splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("start")
-    p.add_argument("--lan-ip", required=True)
+    p.add_argument("--lan-ip", help="the router's LAN address (not for --guest)")
     p.add_argument(
         "--no-modem", action="store_true", help="no second UART: no AT port in the guest"
     )
     p.add_argument("--mem", type=int, default=256)
+    p.add_argument("--internet", action="store_true", help="wwan NIC with NAT to the real internet")
+    p.add_argument("--xfer", action="store_true", help="an extra, unlogged UART (see recv)")
+    p.add_argument("--guest", action="store_true", help="a small LAN guest: only the link NIC")
+    p.add_argument("--link-role", choices=("server", "client"), help="add the guest-to-guest NIC")
+    p.add_argument("--link-sock", help="unix socket path of the guest-to-guest NIC")
     p.set_defaults(fn=cmd_start)
+    p = sub.add_parser("recv")
+    p.add_argument("--timeout", type=float, default=60)
+    p.add_argument("--out", required=True, help="file for what the guest sends (0600)")
+    p.add_argument("--end", help="collect lines up to this marker line instead of the first line")
+    p.set_defaults(fn=cmd_recv)
     p = sub.add_parser("wait-ready")
     p.add_argument("--timeout", type=float, default=180)
     p.add_argument("--kill-at", help="LWVM-MARK text after which to cut the power")

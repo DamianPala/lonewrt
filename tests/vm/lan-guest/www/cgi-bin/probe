@@ -1,0 +1,4 @@
+#!/bin/sh
+# VM test bench only: writes the source address of the request to /tmp/lwvm-src.log, answers "ok".
+echo "$REMOTE_ADDR" >>/tmp/lwvm-src.log
+printf 'Content-Type: text/plain\r\n\r\nlwvm-lan-guest ok\r\n'

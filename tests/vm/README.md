@@ -31,6 +31,7 @@ Per-guest run directory (disk, console log, AT log, markers): `$VMWORK/run/<scen
 | `50-cron.sh` | crond at log level 9 logs no job starts (R29a); cron really starts `lw-siglog` (new line in `/tmp/lw-signal.log` with the R28 fields), `wwan-recover` and `lw-sms-clean` |
 | `60-log-rotation.sh` | 6000 lines of 200 bytes through `logger`: `/root/openwrt.log.old` appears at 1 MB, no line is lost, both files survive a reboot (R29) |
 | `70-modem-mode.sh` | a modem left in auto mode with B7 and SMS store SM gets LTE-only and ME, bands only from `lonewrt.modem.bands` (R11, R11c); on the next boot only the SMS store command goes (R11a) |
+| `80-tailscale.sh` | a tailscale image with the real x86 `tailscale` package and a LAN guest (below): the settings of R64 in `tailscale debug prefs`, the zone `tailscale` and its masquerade in nftables (R64a, D149, D155), no nftables table of Tailscale, wg0 next to Tailscale in a second image, `lw-tailscale` states, `link` and `due`, the stop and start of the daemon, `sysupgrade -l` (R72c); with `LWVM_INTERNET=1` also the real CLI against Tailscale's servers (link, a refused key, a key with no internet), with `LWVM_TS_LIVE=1` a sign-in by a person |
 
 `10-firstboot.sh` checks the generic profile's values; an overlay rendered from another profile fails the value checks by design.
 
@@ -58,6 +59,24 @@ Each guest gets a fresh copy of `disk.img`, which stands in for the flash.
 | clock for cron | `date -s` back to 75 s before the job's minute | busybox crond starts nothing for a clock that moved back, so each job runs from its own schedule line |
 | crond log | scenario 50 switches crond to log level 8 after checking level 9 | only to see which job started; the image's level 9 is checked first |
 
+## Tailscale (`80-tailscale.sh`)
+
+The scenario builds its own images (cached) from profiles it writes to `$VMWORK/profiles/` from `generic.conf` (`TS_ENABLED='1'`, `TS_ADVERTISE_LAN='1'`, LAN `192.168.213.1`, fixed root hash; a second one with `WG_ENABLED='1'` and a made-up key and peer): `build-image.sh` adds `tailscale` and `kmod-tun` when the overlay has `etc/config/tailscale`, and `LWVM_NO_CURRENT=1` keeps such an image out of `image/current`. The ImageBuilder needs the network for the `tailscale` package.
+
+| Part | How |
+|---|---|
+| LAN guest | `build-lan-guest.sh` builds a second small x86 image from the same ImageBuilder (files in `lan-guest/`: DHCP client, `uhttpd` with a CGI that logs the source of each request to `/tmp/lwvm-src.log`). The router gets a third NIC (`eth2`) joined to the LAN guest's only NIC by a QEMU `-netdev stream` unix socket in the router's run directory (no tap, no root); the scenario puts `eth2` into `br-lan` in place of `eth0`, because the user-net NIC's own DHCP server would make dnsmasq refuse to serve the LAN |
+| internet (`LWVM_INTERNET=1`) | the `wwan` NIC without `restrict=on`: NAT to the real internet, through the host's network (the guest can also reach the host's loopback services at 10.0.3.2); the nft rule for 8.8.8.8 and 1.1.1.1 stays; `vm.py link off` still cuts it |
+| secrets | the sign-in link goes through a second, unlogged UART (`start --xfer`, `recv`) into a 0600 file, never through the console, whose log QEMU keeps |
+
+```
+tests/vm/80-tailscale.sh                         # no internet: SKIP for what needs Tailscale's servers
+LWVM_INTERNET=1 tests/vm/80-tailscale.sh         # the real CLI against Tailscale's servers; nobody signs in
+LWVM_INTERNET=1 LWVM_TS_LIVE=1 LWVM_TS_PEER=100.x.y.z LWVM_TS_WAIT_ROUTE=1 LWVM_TS_REJOIN=1 tests/vm/80-tailscale.sh
+```
+
+`LWVM_TS_LIVE=1` writes the link to `$VMWORK/run/tailscale/ts-link.txt` (0600), prints `LWVM-TS-LINK-READY <path>`, waits up to `LWVM_TS_WAIT_S` (900) for the sign-in and records what it sees in `$VMWORK/run/tailscale/live-report.txt` (0600); `LWVM-TS-STEP <name>` lines mark each step. After the sign-in it keeps both guests up until `$VMWORK/run/tailscale/done` exists or `LWVM_TS_HOLD_S` (1800) passed, then checks the LAN guest's log for the source of the requests. Run it directly: `run-all.sh` keeps a scenario's stdout in a log file.
+
 Everything VM-only lives in `tests/vm/overlay/` and in the marker scripts `build-image.sh` writes; none of it is in the router image.
 
 ## Files
@@ -65,6 +84,7 @@ Everything VM-only lives in `tests/vm/overlay/` and in the marker scripts `build
 - `run-all.sh`: builds the image, runs the scenarios, prints PASS/FAIL with durations.
 - `build-image.sh`: renders, merges, builds and caches the image.
 - `lib.sh`: scenario helpers (guest life cycle, `check`, `gcheck`, `must`, `finish`).
-- `vm.py`: one guest: `start`, `wait-ready` (optionally cutting the power on a marker), `sh`, `link`, `banner`, `kill`, `stop`.
+- `vm.py`: one guest: `start`, `wait-ready` (optionally cutting the power on a marker), `sh`, `link`, `recv`, `banner`, `kill`, `stop`.
+- `build-lan-guest.sh`, `lan-guest/`: the LAN guest of the Tailscale scenario.
 - `modem.py`: the AT modem stand-in.
 - `overlay/`: VM-only files for the image.

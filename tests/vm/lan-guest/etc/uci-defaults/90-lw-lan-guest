@@ -1,0 +1,20 @@
+#!/bin/sh
+# VM test bench only (tests/vm/80-tailscale.sh). The LAN guest: one NIC on the router's LAN, an
+# address by DHCP from the router, nothing else of a router. uhttpd (package default config) serves
+# port 80 and its CGI /cgi-bin/probe logs the source address of every request.
+
+uci -q delete network.wan
+uci -q delete network.wan6
+uci -q delete network.globals.ula_prefix
+uci set network.lan=interface
+uci set network.lan.proto='dhcp'
+uci set network.lan.device='eth0'
+uci -q delete network.lan.ipaddr
+uci -q delete network.lan.netmask
+uci -q delete network.lan.ip6assign
+uci commit network
+
+# no rate limit between probes, no DNS rebinding filter in the way of a request from the router
+uci set uhttpd.main.rfc1918_filter='0'
+uci set uhttpd.main.max_requests='10'
+uci commit uhttpd

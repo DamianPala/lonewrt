@@ -37,6 +37,11 @@ PACKAGES=(
     coreutils-timeout coreutils-stty
 )
 
+# The packages of a tailscale image (R63), added when the overlay has the file only such an image has
+# (build.sh does the same, with the same marker)
+TS_PACKAGES=(tailscale kmod-tun)
+TS_MARKER_REL=etc/config/tailscale
+
 log() { echo "build-image: $*" >&2; }
 die() { log "$*"; exit 1; }
 
@@ -100,7 +105,7 @@ WORK=
 cleanup() { [ -z "$WORK" ] || rm -rf "$WORK"; }
 
 main() {
-    local src=${1:-} stage key img src_note qmi_pkg
+    local src=${1:-} stage key img src_note qmi_pkg pkgs=("${PACKAGES[@]}")
     mkdir -p "$VMWORK/image"
     ensure_ib
     tune_ib
@@ -116,6 +121,7 @@ main() {
         src_note=$(render_overlay "$WORK/overlay")
     fi
     stage=$WORK/files
+    if [ -f "$WORK/overlay/$TS_MARKER_REL" ]; then pkgs+=("${TS_PACKAGES[@]}"); fi
     cp -a "$WORK/overlay/." "$stage/"
     cp -a "$VMDIR/overlay/." "$stage/"
     chmod 0755 "$stage"/etc/init.d/lw-vm-*
@@ -129,14 +135,14 @@ main() {
     key=$( {
         tar -C "$stage" --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner \
             --exclude=./etc/lw-build -cf - .
-        printf '%s\n' "${PACKAGES[@]}"
+        printf '%s\n' "${pkgs[@]}"
         sha256sum "$0" "$IB/.config"
     } | sha256sum | cut -c1-12)
     img=$VMWORK/image/$key
     if [ ! -f "$img/disk.img" ]; then
         log "building image $key ($src_note)"
         mkdir -p "$img.tmp"
-        make -C "$IB" image PROFILE=generic PACKAGES="${PACKAGES[*]}" FILES="$stage" \
+        make -C "$IB" image PROFILE=generic PACKAGES="${pkgs[*]}" FILES="$stage" \
             BIN_DIR="$img.tmp/bin" EXTRA_IMAGE_NAME=lwvm >"$img.tmp/build.log" 2>&1 ||
             die "ImageBuilder failed, see $img.tmp/build.log"
         qmi_verify "$IB"
@@ -144,6 +150,8 @@ main() {
         gzip -dc "$img.tmp"/bin/*-squashfs-combined.img.gz >"$img.tmp/disk.img" 2>/dev/null ||
             [ $? = 2 ]
         cp "$img.tmp"/bin/*.manifest "$img.tmp/manifest"
+        # the version the feed gave, for the report of a tailscale scenario
+        awk '$1 == "tailscale" {print $3}' "$img.tmp/manifest" >"$img.tmp/ts_version"
         # the password card of this render, so tests can compare WiFi key and root hash
         [ -f "$WORK/overlay-passwords.txt" ] && cp "$WORK/overlay-passwords.txt" "$img.tmp/passwords.txt"
         detect_lan_ip "$WORK/overlay" >"$img.tmp/lan_ip"
@@ -154,17 +162,21 @@ main() {
         log "image $key is up to date ($src_note)"
     fi
     touch "$img"
-    ln -sfn "$key" "$VMWORK/image/current"
+    # LWVM_NO_CURRENT=1: an image for one scenario (tests/vm/80-tailscale.sh) that the other
+    # scenarios must not pick up as the default one
+    [ "${LWVM_NO_CURRENT:-0}" = 1 ] || ln -sfn "$key" "$VMWORK/image/current"
     prune_images
     echo "$img"
 }
 
-# Keep the three most recently used images (about 150 MB each); older ones are rebuilt on demand.
+# Keep the five most recently used images (about 150 MB each) and the one `current` names; older ones
+# are rebuilt on demand.
 prune_images() {
-    local d
+    local d keep
+    keep=$(readlink "$VMWORK/image/current" 2>/dev/null || true)
     find "$VMWORK/image" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -rn |
-        tail -n +4 | cut -d' ' -f2- | while read -r d; do
-        rm -rf "$d"
+        tail -n +6 | cut -d' ' -f2- | while read -r d; do
+        [ "$(basename "$d")" = "$keep" ] || rm -rf "$d"
     done
 }
 
