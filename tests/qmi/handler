@@ -1,0 +1,17 @@
+#!/bin/sh
+# Keep netifd's shell options even though the calling tests run with set -eu.
+# shellcheck source=/dev/null
+. /lib/functions.sh
+# shellcheck source=/dev/null
+. /lib/netifd/netifd-proto.sh
+INCLUDE_ONLY=1
+# shellcheck disable=SC2034  # the derived handler reads INCLUDE_ONLY
+export INCLUDE_ONLY
+# shellcheck source=/dev/null
+. /qmi-overlay/lib/netifd/proto/qmi.sh
+
+# The simulated SIM is ready and registration is immediate.
+sleep() { :; }
+
+init_proto qmi "$1" wwan "$2" ""
+add_protocol qmi

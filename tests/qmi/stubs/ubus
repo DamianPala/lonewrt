@@ -1,0 +1,32 @@
+#!/bin/sh
+set -eu
+
+state=$QMI_STATE
+[ "${1:-}" != -S ] || shift
+case "${1:-}:${2:-}:${3:-}:$#" in
+    call:network.interface:notify_proto:4)
+        printf '%s\n' "$4" >>"$state/notify_proto.jsonl"
+        action=$(jsonfilter -s "$4" -e '@.action')
+        if [ "$action" = 0 ]; then
+            if [ "$(jsonfilter -s "$4" -e '@["link-up"]')" = false ]; then
+                printf '{"up":false,"data":{}}\n' >"$state/status.json"
+            else
+                # A later address update can carry only the zone. Keep the CID/PDH pairs.
+                if jsonfilter -s "$4" -e '@.data.cid_4' -e '@.data.cid_6' | grep -q .; then
+                    data=$(jsonfilter -s "$4" -e '@.data')
+                    printf '{"up":true,"data":%s}\n' "$data" >"$state/status.json"
+                fi
+            fi
+        fi
+        ;;
+    call:network:add_dynamic:4)
+        printf '%s\n' "$4" >>"$state/add_dynamic.jsonl"
+        ;;
+    call:network.interface.wwan:status:3)
+        cat "$state/status.json"
+        ;;
+    *)
+        printf 'unsupported ubus invocation: %s\n' "$*" | tee -a "$state/unexpected" >&2
+        exit 2
+        ;;
+esac

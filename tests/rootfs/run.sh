@@ -19,13 +19,20 @@ port=(--dev-bind /dev/null /dev/ttyUSB2)
 . "$FW/tests/rootfs/root.bash"
 scratch=$(mktemp -d)
 trap 'rm -rf -- "$scratch"' EXIT
+
+# R12d, D82: tests/qmi run the image's qmi.sh, derived as build.sh does (the repo keeps no copy)
+qmi_args=()
+if [[ $1 == tests/qmi/* ]]; then
+    "$FW/tests/qmi/derive.bash" "$LW_WORK/ib" "$ROOTFS" "$scratch"
+    qmi_args=(--ro-bind "$scratch/qmi-overlay" /qmi-overlay --dev-bind /dev/null /dev/cdc-wdm0)
+fi
 root_args "$ROOTFS" "$scratch"
 
 # The GitHub runner starts its steps with SIGPIPE ignored, and an ignored signal passes through
 # exec, so `yes | head` in a test never ended there. The router's shell has the default; so does
 # the sandbox (a shell cannot undo an ignore it inherited, env can).
 env --default-signal=PIPE bwrap "${ROOT_ARGS[@]}" \
-    --dev /dev "${port[@]}" --proc /proc --tmpfs /tmp \
+    --dev /dev "${port[@]}" "${qmi_args[@]}" --proc /proc --tmpfs /tmp \
     --ro-bind "$FW" /fw \
     --unshare-user --uid 0 --gid 0 --unshare-net --unshare-pid --die-with-parent \
     --clearenv --setenv PATH /fw/tests/stubs:/usr/sbin:/usr/bin:/sbin:/bin \

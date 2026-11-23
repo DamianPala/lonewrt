@@ -1,0 +1,3 @@
+# The 2026-11-23 spike: IPv4 starts under a dual-stack profile, IPv6 is refused.
+ipv4 ipv4
+ipv4v6 ipv4

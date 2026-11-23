@@ -1,0 +1,222 @@
+#!/bin/sh
+set -eu
+
+# A client file holds its selected family. A call file holds the owning CID and signed handle,
+# separately so releasing a client cannot silently erase an active call.
+state=$QMI_STATE
+clients=$state/clients
+calls=$state/calls
+
+argv=$(
+    # jshn uses unset variables and the status of arithmetic commands internally.
+    set +eu
+    # shellcheck source=/dev/null
+    . /usr/share/libubox/jshn.sh
+    json_init
+    json_add_array argv
+    for arg do json_add_string "" "$arg"; done
+    json_close_array
+    json_dump
+)
+printf '%s\n' "$argv" >>"$state/uqmi.jsonl"
+
+unsupported() {
+    printf 'unsupported uqmi invocation (%s): %s\n' "$1" "$argv" |
+        tee -a "$state/unexpected" >&2
+    exit 2
+}
+
+qmi_error() {
+    printf '"%s"\n' "$1"
+    exit 1
+}
+
+allocate_client() {
+    if [ -f "$state/cid-limit" ]; then
+        active=$(find "$clients" -type f | wc -l)
+        [ "$active" -lt "$(cat "$state/cid-limit")" ] || qmi_error 'Client IDs exhausted'
+    fi
+    next=$(cat "$state/next-cid")
+    printf '%s\n' "$((next + 1))" >"$state/next-cid"
+    : >"$clients/$next"
+    printf '%s\n' "$next"
+}
+
+profile_write() {
+    [ "$1" = 3gpp,1 ] && [ "$2" = --apn ] && [ "$4" = --pdp-type ] ||
+        unsupported 'profile arguments'
+    case $5 in ipv4 | ipv6 | ipv4v6) ;; *) unsupported 'PDP type' ;; esac
+    printf '%s\n' "$3" >"$state/profile.apn"
+    printf '%s\n' "$5" >"$state/profile.pdp"
+}
+
+check_start_options() {
+    for option in --apn --profile --auth-type --username --password; do
+        if [ "${1:-}" = "$option" ]; then
+            [ "$#" -ge 2 ] || unsupported "missing value for $option"
+            case $2 in --*) unsupported "expected a value for $option" ;; esac
+            shift 2
+        fi
+    done
+    [ "${1:-}" != --autoconnect ] || shift
+    [ "$#" = 0 ] || unsupported 'start arguments'
+}
+
+start_call() {
+    check_start_options "$@"
+    [ -n "$family" ] || unsupported 'start without a selected family'
+    [ -f "$state/profile.pdp" ] || unsupported 'start without a stored profile'
+    grep -qxF "$(cat "$state/profile.pdp") $family" "$state/scenario" || qmi_error 'Call failed'
+    [ ! -e "$calls/$family" ] || qmi_error 'No effect'
+    case $family in ipv4) handle=-12345678 ;; ipv6) handle=12345679 ;; esac
+    printf '%s %s\n' "$cid" "$handle" >"$calls/$family"
+    printf '%s\n' "$handle"
+}
+
+call_owned() {
+    [ -n "$family" ] && [ -s "$calls/$family" ] &&
+        read -r owner handle <"$calls/$family" && [ "$owner" = "$cid" ]
+}
+
+stop_wildcard() {
+    # With no CID the initial sweep is family-wide. The CID form is local to its client.
+    if [ -z "$cid" ] || call_owned; then
+        rm -f "$calls/$family"
+    fi
+}
+
+current_settings() {
+    call_owned || qmi_error 'Out of call'
+    cat "/fw/tests/qmi/settings/$family.json"
+}
+
+pin_status() {
+    pin=disabled
+    if [ -f "$state/pin" ]; then
+        pin=not_verified
+        [ ! -e "$state/pin-verified" ] || pin=verified
+    fi
+    printf '{"pin1_status":"%s","pin1_verify_tries":3}\n' "$pin"
+}
+
+sim_command() {
+    case "$1:$#" in
+        --get-pin-status:1) pin_status ;;
+        --uim-get-sim-state:1) echo '{"card_application_state":"ready"}' ;;
+        --verify-pin1:2 | --uim-verify-pin1:2)
+            [ -f "$state/pin" ] && [ "$2" = "$(cat "$state/pin")" ] || qmi_error 'Incorrect PIN'
+            : >"$state/pin-verified"
+            ;;
+        *) unsupported 'SIM command' ;;
+    esac
+}
+
+modem_command() {
+    case "$1:$#" in
+        --set-device-operating-mode:2) [ "$2" = online ] || unsupported 'operating mode' ;;
+        --set-data-format:2 | --wda-set-data-format:2)
+            [ "$2" = 802.3 ] || unsupported 'data format'
+            ;;
+        --wda-get-data-format:1)
+            printf '{"link-layer-protocol":"%s"}\n' "$(cat "$state/data-format")"
+            ;;
+        --sync:1) : ;;
+        *) unsupported 'modem command' ;;
+    esac
+}
+
+network_command() {
+    case "$1:$#" in
+        --network-register:1) : >"$state/registered" ;;
+        --get-serving-system:1)
+            registration=not_registered
+            [ ! -e "$state/registered" ] || registration=registered
+            printf '{"registration":"%s"}\n' "$registration"
+            ;;
+        --set-network-modes:2)
+            [ "$2" = lte ] || unsupported 'network mode'
+            printf '%s\n' "$2" >"$state/modes"
+            ;;
+        *) unsupported 'network command' ;;
+    esac
+}
+
+stop_handle() {
+    case ${1#-} in '' | *[!0-9]*) unsupported 'stop handle' ;; esac
+    call_owned && [ "$handle" = "$1" ] || qmi_error 'No effect'
+    rm "$calls/$family"
+}
+
+client_command() {
+    case "$1:$#" in
+        --start-network:*) shift; start_call "$@" ;;
+        --get-data-status:1)
+            if call_owned; then echo '"connected"'; else echo '"disconnected"'; fi
+            ;;
+        --get-current-settings:1) current_settings ;;
+        --release-client-id:2)
+            [ "$2" = wds ] || unsupported 'release service'
+            rm "$clients/$cid"
+            ;;
+        --stop-network:3)
+            [ "$2" = 0xffffffff ] && [ "$3" = --autoconnect ] || unsupported 'stop arguments'
+            stop_wildcard
+            ;;
+        --stop-network:2) stop_handle "$2" ;;
+        *) unsupported 'client command' ;;
+    esac
+}
+
+with_client() {
+    if [ "$1" = --set-ip-family ]; then
+        case ${2:-} in ipv4 | ipv6) family=$2 ;; *) unsupported 'IP family' ;; esac
+        [ "$#" = 2 ] || { [ "$#" = 3 ] && [ "$3" = --get-data-status ]; } ||
+            unsupported 'family arguments'
+        printf '%s\n' "$family" >"$clients/$cid"
+        shift 2
+        [ "$#" != 0 ] || return 0
+    fi
+    client_command "$@"
+}
+
+[ "${1:-}" != -s ] || shift
+[ "$#" -ge 5 ] && [ "$1" = -d ] && [ "$2" = /dev/cdc-wdm0 ] && [ "$3" = -t ] ||
+    unsupported 'expected -d /dev/cdc-wdm0 -t TIMEOUT'
+case $4 in '' | *[!0-9]*) unsupported 'timeout' ;; esac
+shift 4
+cid=
+case "$1:$#" in
+    --get-client-id:2)
+        [ "$2" = wds ] || unsupported 'client service'
+        allocate_client
+        ;;
+    --modify-profile:6) shift; profile_write "$@" ;;
+    --stop-network:3)
+        [ "$2" = 0xffffffff ] && [ "$3" = --autoconnect ] || unsupported 'stop arguments'
+        family=ipv4
+        stop_wildcard
+        ;;
+    --set-ip-family:5)
+        [ "$2" = ipv6 ] && [ "$3" = --stop-network ] && [ "$4" = 0xffffffff ] &&
+            [ "$5" = --autoconnect ] || unsupported 'family sweep arguments'
+        family=ipv6
+        stop_wildcard
+        ;;
+    --set-client-id:*)
+        [ "$#" -ge 3 ] || unsupported 'missing client or command'
+        cid=${2#wds,}
+        [ "$2" = "wds,$cid" ] || unsupported 'client service'
+        case $cid in '' | *[!0-9]*) unsupported 'client ID' ;; esac
+        [ -f "$clients/$cid" ] || unsupported 'unknown client ID'
+        family=$(cat "$clients/$cid")
+        shift 2
+        with_client "$@"
+        ;;
+    --get-pin-status:* | --uim-get-sim-state:* | --verify-pin1:* | --uim-verify-pin1:*)
+        sim_command "$@"
+        ;;
+    --network-register:* | --get-serving-system:* | --set-network-modes:*)
+        network_command "$@"
+        ;;
+    *) modem_command "$@" ;;
+esac
