@@ -11,6 +11,8 @@
 #              wait (prints nothing and waits for the timeout)
 #   set-fail   `set` fails when the file exists
 #   hang       every command hangs (a daemon that does not answer) when the file exists
+#   offline    Self.Online is false while Running (a router removed in the admin page, R68b, D161);
+#              without the file Self.Online is true
 # Every `set` and `up` is appended to calls with its arguments (a key is only ever passed as file:PATH).
 T=${LW_TEST:-/lwtest}
 D=$T/ts
@@ -41,7 +43,7 @@ status_json() {
     printf '{"Version":"1.104.1","BackendState":"%s"' "$(val backend)"
     [ ! -f "$D/authurl" ] || printf ',"AuthURL":"%s"' "$(val authurl)"
     if [ "$(val backend)" = Running ]; then
-        printf ',"Self":{"ID":"n1","HostName":"x"'
+        printf ',"Self":{"ID":"n1","HostName":"x","Online":%s' "$([ -f "$D/offline" ] && echo false || echo true)"
         [ ! -f "$D/dnsname" ] || printf ',"DNSName":"%s"' "$(val dnsname)"
         [ ! -f "$D/ips" ] || printf ',"TailscaleIPs":%s' "$(list "$(val ips)")"
         [ ! -f "$D/keyexpiry" ] || printf ',"KeyExpiry":"%s"' "$(val keyexpiry)"

@@ -8,7 +8,8 @@
 #   lw-tailscale once         one pass without waiting (tests, manual check)
 #   lw-tailscale status       the state file; exit 3 while the service has written none
 #   lw-tailscale link         the sign-in link (exit 0), the state of an added router (2), or the
-#                             state when Tailscale gives no link (3); this is the way to sign in by hand
+#                             state when Tailscale gives no link (3); this is the way to sign in by hand;
+#                             an added router that Tailscale shows offline is first restarted (R68b)
 #   lw-tailscale due          the one-time messages that are due, one per line
 #   lw-tailscale mark EVENT   that message went (link, refused, added, route, expiry_warning, expired)
 #
@@ -41,6 +42,14 @@ TS_KEY_WAIT=${LW_TS_KEY_WAIT:-25}
 # R65a: the link answers within 30 s
 TS_LINK_WAIT=${LW_TS_LINK_WAIT:-25}
 TS_CALL_LIMIT=${LW_TS_CALL_LIMIT:-10}
+# R68b, D161: the restart of Tailscale on a request, at most once per this many seconds; the time of
+# the last one is kept in RAM, so a reboot clears it
+TS_RESTART_GAP=${LW_TS_RESTART_GAP:-600}
+TS_RESTART_AT=$TS_RUN/restart-at
+TS_RESTART_DONE=$TS_RUN/restart-done
+TS_RESTART_HANG=${LW_TS_RESTART_HANG:-60}
+# R68b: the image's own reading of the internet, the signal log of R28 (RAM)
+TS_SIGLOG=${LW_TS_SIGLOG:-/tmp/lw-signal.log}
 # R68: the expiry warning comes 14 days before the date
 TS_WARN=$((14 * 86400))
 # How Tailscale's refusal of a key reads in the output of `up`; any other failure counts as no
@@ -108,7 +117,7 @@ ts_epoch() {
 # ts_read: Tailscale's state from `status --json` into TS_BS and, for an added router, its fields;
 # returns 1 when the daemon gives no answer (D135, the interface facts of the Tailscale section)
 ts_read() {
-    TS_BS='' TS_URL='' TS_NAME='' TS_IP='' TS_ACCT='' TS_EXP='' TS_EXP_OFF=0 TS_ROUTE=none
+    TS_BS='' TS_URL='' TS_NAME='' TS_IP='' TS_ACCT='' TS_EXP='' TS_EXP_OFF=0 TS_ROUTE=none TS_ONLINE=''
     _tr_json=$(timeout -k 1 "$TS_CALL_LIMIT" tailscale status --json </dev/null 2>/dev/null) || :
     TS_BS=$(printf '%s\n' "$_tr_json" | jsonfilter -e '@.BackendState' 2>/dev/null) || :
     [ -n "$TS_BS" ] || return 1
@@ -124,6 +133,9 @@ ts_read() {
 ts_fields() {
     _tf_dns=$(printf '%s\n' "$1" | jsonfilter -e '@.Self.DNSName' 2>/dev/null) || :
     TS_NAME=$(printf '%s' "${_tf_dns%%.*}" | tr -cd 'A-Za-z0-9-')
+    # R68b, D161: `false` while the router is Running but cut off (a removal in the admin page that
+    # Tailscale has not learned of); empty when the field is missing, which counts as online
+    TS_ONLINE=$(printf '%s\n' "$1" | jsonfilter -e '@.Self.Online' 2>/dev/null) || :
     TS_IP=$(printf '%s\n' "$1" | jsonfilter -e '@.Self.TailscaleIPs[*]' 2>/dev/null | grep -m 1 '^100\.') || :
     TS_ACCT=$(printf '%s\n' "$1" | jsonfilter -e '@.CurrentTailnet.Name' 2>/dev/null | tr -cd 'A-Za-z0-9@._-') || :
     _tf_exp=$(printf '%s\n' "$1" | jsonfilter -e '@.Self.KeyExpiry' 2>/dev/null) || :
@@ -360,16 +372,90 @@ ts_url_from() {
     sed -n 's#.*\(https://[^[:space:]]*/a/[^[:space:]]*\).*#\1#p' "$1" | head -n 1
 }
 
-# cmd_link: R65a, R65e, R72a, D140, D154, D158. The link comes from `up`, which asks Tailscale for one
-# now and prints it; `up` carries the settings of R64, so a sign-in by hand keeps them. An added
-# router never gets one (D158). R65a: the whole answer within TS_LINK_WAIT, also when the daemon
-# stops answering midway; each call gets what is left, 3 s kept for the last read.
+# ts_internet_ok: R68b. The router reaches the internet by the reading the image already has: the
+# newest line of the signal log, whose ping to 1.1.1.1 through wwan0 runs every 5 min (R28). Packet
+# loss below 100 % counts; no line, `?` or 100 % do not, and then nothing restarts. No ping of
+# its own and no loop.
+ts_internet_ok() {
+    _io_loss=$(tail -n 1 "$TS_SIGLOG" 2>/dev/null | sed -n 's/.* loss=\([0-9]*\)%.*/\1/p')
+    [ -n "$_io_loss" ] && [ "$_io_loss" -lt 100 ]
+}
+
+# ts_restart_due: R68b, D161. The router counts as added while Tailscale shows it offline, the router
+# reaches the internet, and the last restart on a request was at least TS_RESTART_GAP seconds ago
+# (none since the boot counts as long ago).
+ts_restart_due() {
+    [ "$TS_ST" = added ] && [ "$TS_ONLINE" = false ] || return 1
+    ts_internet_ok || return 1
+    _rd_last=$(cat "$TS_RESTART_AT" 2>/dev/null) || :
+    case $_rd_last in '' | *[!0-9]*) return 0 ;; esac
+    [ $(($(lw_uptime) - _rd_last)) -ge "$TS_RESTART_GAP" ]
+}
+
+# ts_restart_settle END: R68b, D161. A removal in the admin page reaches the router only with a
+# restart of Tailscale (measured, package 1.104.1: Running and offline for over 5 minutes, then
+# NeedsLogin at once after the restart). Restarts it, waits until the backend has left the starting
+# states, reads the state again and brings the state file and the records up to date, as a pass of
+# the loop would; the loop's own detection of `ended` stays as it was. The restart is never cut short
+# inside the budget: killing the init script halfway (it is a stop and a start, and the start runs
+# the package's cleanup first) could leave tailscaled down for good. So it runs detached, with its
+# fds off the caller (the bot's `$( )` returns when `link` does) and a hang guard of TS_RESTART_HANG
+# seconds, and marks its end in TS_RESTART_DONE. The wait for that mark and the settle poll end about
+# 8 s before END (the budget of R65a), which leaves `up` its part; a restart that is not done or does
+# not settle by then leaves TS_ST at starting and the state file to the loop (the restart goes on
+# and the loop's pass after it sees the result). The time of the restart is kept before it starts, so
+# a failing one counts too. Nothing of the restart's output goes to syslog (R63h).
+ts_restart_settle() {
+    _rs_stop=$(($1 - 8))
+    [ $((_rs_stop - $(lw_uptime))) -ge 2 ] || return 0
+    mkdir -p "$TS_RUN"
+    lw_uptime | lw_write_atomic "$TS_RESTART_AT"
+    rm -f "$TS_RESTART_DONE"
+    # the caller's other fds stay behind too, such as the lock of the bot's queue (fd 8, nt_flush)
+    (
+        timeout -k 1 "$TS_RESTART_HANG" /etc/init.d/tailscale restart
+        : >"$TS_RESTART_DONE"
+    ) </dev/null >/dev/null 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
+    while [ ! -e "$TS_RESTART_DONE" ]; do
+        if [ "$(lw_uptime)" -ge $((_rs_stop - 3)) ]; then
+            TS_ST=starting
+            return 0
+        fi
+        sleep 1
+    done
+    TS_CALL_LIMIT=2
+    while :; do
+        ts_read || :
+        case $TS_BS in
+            NeedsLogin | Stopped) break ;;
+            # the daemon from before the restart may still answer for a moment, Running and offline:
+            # that counts as the answer only once the wait is over
+            Running) [ "$TS_ONLINE" = false ] || break ;;
+        esac
+        if [ "$(lw_uptime)" -ge $((_rs_stop - 3)) ]; then
+            [ "$TS_BS" != Running ] || break
+            TS_ST=starting
+            return 0
+        fi
+        sleep 1
+    done
+    ts_derive
+    ts_track
+    ts_emit | lw_write_atomic "$TS_STATE"
+}
+
+# cmd_link: R65a, R65e, R72a, D140, D154, D158, R68b, D161. The link comes from `up`, which asks
+# Tailscale for one now and prints it; `up` carries the settings of R64, so a sign-in by hand keeps
+# them. An added router never gets one (D158), unless Tailscale shows it offline and the restart of
+# R68b finds it removed. R65a: the whole answer within TS_LINK_WAIT, also when the daemon stops
+# answering midway; each call gets what is left, 3 s kept for the last read.
 cmd_link() {
     _cl_end=$(($(lw_uptime) + TS_LINK_WAIT))
     TS_CALL_LIMIT=5
     ts_conf
     ts_read || :
     ts_derive
+    if ts_restart_due; then ts_restart_settle "$_cl_end"; fi
     case $TS_ST in
         added)
             ts_emit

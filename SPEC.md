@@ -481,6 +481,7 @@ The image relies on these fields of Tailscale's state as `tailscale status --jso
 
 - **R68:** When Tailscale gives the date the router's sign-in ends and the clock is set from NTP (the router has no clock of its own), the chat gets the expiry warning 14 days before that date, once per date (R72b); when key expiry is off for the router, it does not come. When the router first sees a date fewer than 14 days away, the warning comes at once, still once for that date (D143, D151, D160).
 - **R68a:** When an added router stops being added (the sign-in ended, or the router was removed in the admin page), the chat gets the expired message with a new link once per such change.
+  - **R68b:** A removal in the admin page reaches the router only when Tailscale learns of it, which took over 5 minutes and ended only with a restart of Tailscale (measured: `tests/vm/80-tailscale.sh` live, 2026-11-23, 1 run, package 1.104.1). So when `/tailscale`, its button or the SMS `tailscale` asks for the state of a router that counts as added while Tailscale shows it offline and the router reaches the internet, the router restarts Tailscale at most once per 10 minutes and answers from the state after the restart: a removed router answers with a new link (D161).
 
 #### Commands and SMS
 
@@ -1023,6 +1024,7 @@ The "Enough for" line of a speed test result by verdict: `fast` ✅ 4K video on 
 | D158 | Once the router is added, `/tailscale` and the `🔗 New link` button show its state, not a link (R65a) | a new link then serves nobody and would let whoever taps it move the router to their account (owner, 2026-11-22) |
 | D159 | The route message once per sign-in (R67a, R72b) | after a new sign-in the route usually needs approval again, and the owner gets the same confirmation as the first time (owner, 2026-11-22) |
 | D160 | An expiry date fewer than 14 days away when first seen gives the warning at once (R68) | after a long outage or a late clock a late warning is better than none (owner, 2026-11-22) |
+| D161 | An owner's request for the state of an added router that Tailscale shows offline, while the router reaches the internet, restarts Tailscale first, at most once per 10 minutes; no background check (R68b) | without it a removed router keeps answering "added" and gives no link to join again; a restart only on request adds no loop (owner, 2026-11-23) |
 
 ### Builder decides
 

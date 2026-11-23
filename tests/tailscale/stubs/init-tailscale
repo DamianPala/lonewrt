@@ -1,0 +1,25 @@
+#!/bin/sh
+# Test stand-in for /etc/init.d/tailscale (the package's init script): the test copies it there. Only
+# `restart` is known. It is appended to $LW_TEST/ts/init-calls and changes the world of the CLI
+# stand-in: the node is online again (offline still with $LW_TEST/ts/restart-offline) and the
+# backend becomes what $LW_TEST/ts/restart-to holds
+# (default NeedsLogin, as measured for a router removed in the admin page, R68b, D161; the content
+# `none` leaves the backend as it was). With $LW_TEST/ts/restart-hold the restart does nothing more
+# until $LW_TEST/ts/restart-release exists.
+T=${LW_TEST:-/lwtest}
+D=$T/ts
+case ${1:-} in
+    restart)
+        echo restart >>"$D/init-calls"
+        # a restart that is still going on: waits (really, not on the test clock) for the test
+        while [ -f "$D/restart-hold" ] && [ ! -f "$D/restart-release" ]; do /bin/sleep 1; done
+        [ -f "$D/restart-offline" ] || rm -f "$D/offline"
+        to=NeedsLogin
+        [ ! -f "$D/restart-to" ] || to=$(head -n 1 "$D/restart-to")
+        [ "$to" = none ] || echo "$to" >"$D/backend"
+        ;;
+    *)
+        echo "stand-in: unknown command ${1:-}" >&2
+        exit 2
+        ;;
+esac
