@@ -150,6 +150,7 @@ With `TS_ADVERTISE_LAN` set to `1`, your devices can also reach the devices on t
 1. Approve the route once: on the Machines page, open the router and its **Subnets** section, select the route and save.
 2. On Linux, run `sudo tailscale set --accept-routes`. Android, iOS, macOS and Windows pick the route up on their own.
 3. If your home network is `192.168.0.x` or `192.168.1.x`, it clashes with the router's network. The build and the configurator warn about it, and the configurator can set another `LAN_IP`.
+   A device that is itself on a network with the router's addresses, for example a laptop on the router's own Wi-Fi, must not accept the route: its traffic to that network would go through Tailscale, and it can lose the local network. On Linux, turn it off with `sudo tailscale set --accept-routes=false`, or give the router a rare network such as `192.168.213.1`.
 4. Devices on the router's network see the router's address, not yours, because the router passes your traffic on under its own address.
 
 ### Reset or reflash
