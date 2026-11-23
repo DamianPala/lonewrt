@@ -12,7 +12,9 @@
 # Environment: LW_WORK (ImageBuilder and downloads, default work/ next to this script; fill it with
 # ./fetch-deps.sh), LW_ROOTFS (OpenWrt rootfs whose busybox runs the sh -n check). Tests also set
 # LW_PROFILES, LW_SRC, LW_IMAGE, LW_VERSION_FILE (the VERSION file, SPEC R3b), LW_ZONES_PAGE (the
-# configurator page, SPEC R3c) and LW_DEPS_LIST (the pins of deps.lst) to work on copies.
+# configurator page, SPEC R3c) and LW_DEPS_LIST (the pins of deps.lst) to work on copies, and
+# LW_QMI_SHA256 (the sha256 pin of the uqmi package's qmi.sh, SPEC R12e) for tests that build from a
+# made-up package file.
 set -euo pipefail
 
 FW="$(cd "$(dirname "$0")" && pwd)"
@@ -272,7 +274,7 @@ build() {
     prepare_imagebuilder
     # R12d, D82: the package's qmi.sh minus its network scan goes into the overlay; no image otherwise
     qmi_pkg=$(qmi_derive "$IB" "$TMP/files" "$TMP/qmi")
-    echo "build: /$QMI_SH_REL from $qmi_pkg without its network scan (R12d)" >&2
+    echo "build: /$QMI_SH_REL from $qmi_pkg with the edits of R12d to R12f" >&2
     if [ "$WITH_TS" = 1 ]; then
         ts_version=$(ts_feed_version "$IB" "$TMP/qmi") || exit 1
         printf 'tailscale=%s\n' "$ts_version" >>"$TMP/files/etc/lw-build"

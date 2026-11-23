@@ -44,6 +44,8 @@ image:
 EOF
 
 export FAKE_QMI_SH=$FIX/fake-qmi.sh
+LW_QMI_SHA256=$(sha256sum "$FAKE_QMI_SH" | cut -d" " -f1)
+export LW_QMI_SHA256
 # the defaults of a good tailscale build: the feed and the manifest agree, the root is small
 export FAKE_ROOT_SIZE=14397440 FAKE_TS_MANIFEST=1.104.1-r1
 unset FAKE_TS_FEED FAKE_APK_FAIL

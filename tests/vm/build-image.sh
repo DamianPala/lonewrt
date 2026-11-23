@@ -129,7 +129,7 @@ main() {
     # R12d, D82: the VM runs the same handler as the router image, derived from the x86 package
     # (needs the package feeds, so a run with a cached image still reaches the network)
     qmi_pkg=$(qmi_derive "$IB" "$stage" "$WORK/qmi")
-    log "/$QMI_SH_REL from $qmi_pkg without its network scan"
+    log "/$QMI_SH_REL from $qmi_pkg with the edits of R12d"
 
     # the build time in /etc/lw-build changes with every render; it alone does not need a new image
     key=$( {

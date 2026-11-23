@@ -5,7 +5,7 @@
 # its rootfs free of private and fake-profile values (R4, R4a) and its manifest against packages.md (R2);
 # then the fake full profile into another scratch image/ whose rootfs carries the profile's values
 # and SSH keys (R7, R31), the heartbeat line (R42) and the nlbwmon hotplug script (R44a). In both
-# images qmi.sh is the uqmi package's file of that build minus its network-scan line (R12d, D82).
+# images qmi.sh is the uqmi package's file of that build with the edits of qmi-handler.sh (R12d to R12f, D82).
 # The generic image has no Tailscale, the fake one is a tailscale image (R63 to R64b): the packages
 # in its manifest, the version in /etc/lw-build, the key file and the size of the root.
 # shellcheck source=tests/build/lib.bash
@@ -64,18 +64,23 @@ check_manifest() {
     done < <(packages_in Removed)
 }
 
-# check_qmi ROOTFS: R12d, D82. The image's qmi.sh is the file of the uqmi package that went into this
-# very build (root.orig-*, the pristine package rootfs the ImageBuilder copies from) minus exactly
-# its network-scan line, runs under sh -n, and keeps the package's mode. Call it right after the
-# build: the next build replaces root.orig-*.
+# check_qmi ROOTFS: R12d to R12f, D82. The image's qmi.sh is the file of the uqmi package that went
+# into this very build (root.orig-*, the pristine package rootfs the ImageBuilder copies from) with
+# the edits of qmi-handler.sh (that file has the pinned sha256), differs from it in nothing else, runs
+# under sh -n, keeps the package's mode, and has the negotiation of qmi-edits/ (no network-scan line,
+# the injected functions in it). Call it right after the build: the next build replaces root.orig-*.
 check_qmi() {
-    local img=$1/$QMI_SH_REL orig delta
+    local img=$1/$QMI_SH_REL orig want
     orig=$(compgen -G "$LW_WORK/ib/build_dir/target-*/root.orig-*" | head -n1) || true
     [ -f "$orig/$QMI_SH_REL" ] || fail "no pristine /$QMI_SH_REL under $LW_WORK/ib/build_dir (root.orig-*)"
     [ -f "$img" ] || fail "image lacks /$QMI_SH_REL"
-    delta=$(diff "$orig/$QMI_SH_REL" "$img" || true)
-    [ "$(grep -c '^[<>]' <<<"$delta")" = 1 ] && grep -q "^< .*$QMI_SCAN_PATTERN" <<<"$delta" ||
-        fail "image /$QMI_SH_REL is not the package file minus its scan line: $delta"
+    [ "$(sha256sum "$orig/$QMI_SH_REL" | cut -d' ' -f1)" = "$QMI_STOCK_SHA256" ] ||
+        fail "the package's /$QMI_SH_REL is not the pinned file (R12e)"
+    want=$SCRATCH/qmi-want.sh
+    (qmi_transform "$orig/$QMI_SH_REL" "$want" "the package's file") || fail "the pristine /$QMI_SH_REL cannot be transformed"
+    cmp -s "$want" "$img" || fail "image /$QMI_SH_REL is not the package file with the edits: $(diff "$want" "$img" | head -n 6)"
+    ! grep -q -e "$QMI_SCAN_PATTERN" "$img" || fail "image /$QMI_SH_REL still has the network scan"
+    grep -q '^lw_negotiate()' "$img" || fail "image /$QMI_SH_REL has no negotiation function"
     [ "$(stat -c %a "$img")" = "$(stat -c %a "$orig/$QMI_SH_REL")" ] || fail "/$QMI_SH_REL mode differs from the package's"
     qmi_sh_n "$img" || fail "image /$QMI_SH_REL fails sh -n"
 }

@@ -13,5 +13,8 @@ export INCLUDE_ONLY
 # The simulated SIM is ready and registration is immediate.
 sleep() { :; }
 
+# The stand-in modem can kill this process at a chosen call (the kill fault of stubs/uqmi).
+echo $$ >"$QMI_STATE/handler.pid"
+
 init_proto qmi "$1" wwan "$2" ""
 add_protocol qmi

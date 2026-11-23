@@ -39,8 +39,10 @@ GONE=(luci-app-foo-1.0-r1.apk foo-1.0-r1.apk foo-1.9-r2.apk modemband-20250101-r
     libx-16-9.0-r1.apk)
 for f in "${STAY[@]}" "${GONE[@]}"; do printf 'ib %s\n' "$f" >"$PKG/$f"; done
 
+# the pin of the qmi.sh derivation (R12e) is the sha256 of the package file of the run, as the
+# tests' knob LW_QMI_SHA256 takes it; QMI_PIN_FILE names another file to pin
 build() {
-    LW_WORK=$W LW_ROOTFS=$FW/work/dl/x86/rootfs LW_DEPS_LIST=${DEPS:-$SCRATCH/deps.lst} \
+    LW_QMI_SHA256=${QMI_PIN-$(sum "${QMI_PIN_FILE:-$FIX/fake-qmi.sh}")} LW_WORK=$W LW_ROOTFS=$FW/work/dl/x86/rootfs LW_DEPS_LIST=${DEPS:-$SCRATCH/deps.lst} \
         LW_PROFILES=$P LW_IMAGE=$I "$FW/build.sh" generic
 }
 
@@ -83,9 +85,22 @@ grep -qF "odd.apk in deps.lst does not read as name-version.apk" <<<"$err" ||
 
 # R12d: a package file without the scan line stops the build before packages/ changes, with no image
 grep -v -e --network-scan "$FIX/fake-qmi.sh" >"$SCRATCH/no-scan.sh"
-FAKE_QMI_SH=$SCRATCH/no-scan.sh expect_fail_with "qmi.sh of uqmi-1.0-r1.apk has 0 lines with --network-scan" build
+FAKE_QMI_SH=$SCRATCH/no-scan.sh QMI_PIN_FILE=$SCRATCH/no-scan.sh expect_fail_with "qmi.sh of uqmi-1.0-r1.apk has 0 lines with --network-scan" build
 [ "$(listing "$PKG")" = "$before" ] || fail "a missing scan line changed packages/"
 [ -z "$(find "$I" -name '*.bin')" ] || fail "a missing scan line left an image"
+
+# R12e: a package file that is not the reviewed one (another sha256 than the pin) stops the build the
+# same way, and so does a missing anchor of the edits (R12d)
+FAKE_QMI_SH=$SCRATCH/no-scan.sh expect_fail_with "qmi.sh of uqmi-1.0-r1.apk has sha256 " build
+[ "$(listing "$PKG")" = "$before" ] || fail "a package file of another sha256 changed packages/"
+[ -z "$(find "$I" -name '*.bin')" ] || fail "a package file of another sha256 left an image"
+grep -vxF $'\techo "Setting up $ifname"' "$FIX/fake-qmi.sh" >"$SCRATCH/no-anchor.sh"
+FAKE_QMI_SH=$SCRATCH/no-anchor.sh QMI_PIN_FILE=$SCRATCH/no-anchor.sh \
+    expect_fail_with "has 0 lines equal to the anchor end of the negotiation" build
+[ "$(listing "$PKG")" = "$before" ] || fail "a missing anchor changed packages/"
+[ -z "$(find "$I" -name '*.bin')" ] || fail "a missing anchor left an image"
+QMI_PIN=0000000000000000000000000000000000000000000000000000000000000000 \
+    expect_fail_with "the edits were reviewed against 0000" build
 
 # the right set: earlier versions of the pinned packages go by exact package name, the rest stays
 expect_fail_with "ImageBuilder produced no sysupgrade image" build
@@ -101,10 +116,10 @@ done
 want=$((${#PINNED[@]} + ${#STAY[@]}))
 [ "$(listing "$PKG" | wc -l)" = "$want" ] || fail "packages/ holds unexpected files: $(listing "$PKG" | tr '\n' ' ')"
 
-# R12d: after make image, an image file that is not this build's package file minus the scan line
-# (the feed changed between the fetch and make image) stops the build, with no image
+# R12f: after make image, a pristine package file that is not the one the build derived from (the
+# feed changed between the fetch and make image) stops the build, with no image
 sed 's/sleep 3/sleep 4/' "$FIX/fake-qmi.sh" >"$SCRATCH/other-orig.sh"
-FAKE_QMI_ORIG=$SCRATCH/other-orig.sh expect_fail_with "is not the package's file minus its scan line" build
+FAKE_QMI_ORIG=$SCRATCH/other-orig.sh expect_fail_with "the package's file has sha256 " build
 [ -z "$(find "$I" -name '*.bin')" ] || fail "a changed package file left an image"
 
 # the real list: every file it pins for the group is a plain name under dl/extra that reads as

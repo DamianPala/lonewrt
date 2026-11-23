@@ -1,3 +1,6 @@
+# R73j, R13e: dual stack with static addresses (dhcp 0) and a PIN: the addresses, the prefix and
+# the routes of both calls come from the modem, the SIM is unlocked once, the raw-IP driver flag is
+# set, and the teardown releases both clients.
 # shellcheck source=tests/lib.sh
 . /fw/tests/lib.sh
 # shellcheck source=tests/qmi/helpers.inc
@@ -10,7 +13,7 @@ qmi_run setup ipv4v6 '"dhcp":false,"pincode":"2468"' || lw_fail 'static dual-sta
 lw_expect_eq "$(qmi_notify 0 '.ipaddr[*].ipaddr')" 192.0.2.2 'IPv4 address from QMI'
 lw_expect_eq "$(qmi_notify 0 '.ip6addr[*].ipaddr')" 2001:db8::2 'IPv6 address from QMI'
 lw_expect_eq "$(qmi_notify 0 '.ip6prefix[*]')" 2001:db8::2/64 'IPv6 prefix from QMI'
-lw_expect_eq "$(qmi_arg_count --get-current-settings)" 2 'settings reads'
+lw_expect_eq "$(qmi_arg_count --get-current-settings)" 3 'settings reads: IPv6 checked and read, IPv4 read'
 lw_expect_eq "$(qmi_arg_count --verify-pin1)" 1 'SIM unlocks'
 lw_expect_eq "$(cat /sys/class/net/wwan0/qmi/raw_ip)" Y 'raw-IP driver flag'
 

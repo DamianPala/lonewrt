@@ -1,12 +1,16 @@
 #!/bin/sh
 set -eu
 
-# A client file holds its selected family. A call file holds the owning CID and signed handle,
-# separately so releasing a client cannot silently erase an active call.
+# A client file holds its selected family. A call file holds the owning CID, the signed handle and
+# whether it started with autoconnect, separately so releasing a client cannot silently erase an
+# active call. Profile 1 lives in profile.apn, profile.pdp and profile.off (APN disabled).
+# $state/fault holds fault lines "MATCH|ACTION|SKIP|TIMES" (see inject); $state/uptime is the clock
+# the handler reads (LW_UPTIME_FILE), moved only by the faults slow and hang.
 state=$QMI_STATE
 clients=$state/clients
 calls=$state/calls
 
+joined=$*
 argv=$(
     # jshn uses unset variables and the status of arithmetic commands internally.
     set +eu
@@ -31,6 +35,51 @@ qmi_error() {
     exit 1
 }
 
+clock_add() {
+    read -r now _ <"$state/uptime"
+    now=${now%%.*}
+    printf '%s.00 %s.00\n' "$((now + $1))" "$((now + $1))" >"$state/uptime"
+}
+
+# inject: the faults of this call. ACTION is error:TEXT (a QMI error), reply:TEXT (an answer with
+# status 0), hang (no answer in the call's -t: the clock moves by it), block (no answer ever: the
+# caller's own limit has to kill it), slow:N (the call takes N s, then goes on), kill (the handler
+# is killed now), lose (the call is made, its answer is lost), nostick (a profile write that is not
+# kept). The fault applies from its SKIP+1st
+# match, TIMES times (0: always).
+nostick=0
+inject() {
+    [ -f "$state/fault" ] || return 0
+    tms=1000
+    prev=
+    for a in "$@"; do
+        [ "$prev" != -t ] || tms=$a
+        prev=$a
+    done
+    n=0
+    while IFS='|' read -r match action skip times; do
+        n=$((n + 1))
+        case $joined in *"$match"*) ;; *) continue ;; esac
+        c=0
+        [ ! -f "$state/fault.$n" ] || c=$(cat "$state/fault.$n")
+        c=$((c + 1))
+        printf '%s\n' "$c" >"$state/fault.$n"
+        [ "$c" -gt "${skip:-0}" ] || continue
+        [ "${times:-0}" = 0 ] || [ "$c" -le $((${skip:-0} + times)) ] || continue
+        case $action in
+            error:*) qmi_error "${action#error:}" ;;
+            reply:*) printf '%s\n' "${action#reply:}"; exit 0 ;;
+            hang) clock_add $((tms / 1000)); exit 1 ;;
+            block) exec sleep 30 ;;
+            slow:*) clock_add "${action#slow:}" ;;
+            lose) exec >/dev/null ;;
+            kill) kill -KILL "$(cat "$state/handler.pid")"; exit 137 ;;
+            nostick) nostick=1 ;;
+            *) unsupported 'fault action' ;;
+        esac
+    done <"$state/fault"
+}
+
 allocate_client() {
     if [ -f "$state/cid-limit" ]; then
         active=$(find "$clients" -type f | wc -l)
@@ -46,8 +95,24 @@ profile_write() {
     [ "$1" = 3gpp,1 ] && [ "$2" = --apn ] && [ "$4" = --pdp-type ] ||
         unsupported 'profile arguments'
     case $5 in ipv4 | ipv6 | ipv4v6) ;; *) unsupported 'PDP type' ;; esac
-    printf '%s\n' "$3" >"$state/profile.apn"
-    printf '%s\n' "$5" >"$state/profile.pdp"
+    if [ "$nostick" = 0 ]; then
+        printf '%s\n' "$3" >"$state/profile.apn"
+        printf '%s\n' "$5" >"$state/profile.pdp"
+        # a stock modify also clears the APN-disabled flag
+        rm -f "$state/profile.off"
+    fi
+}
+
+profile_read() {
+    [ "$1" = 3gpp,1 ] || unsupported 'profile number'
+    [ -f "$state/profile.pdp" ] || qmi_error 'Invalid profile'
+    apn=$(cat "$state/profile.apn")
+    off=false
+    [ ! -e "$state/profile.off" ] || off=true
+    # uqmi leaves an empty APN out
+    printf '{'
+    [ -z "$apn" ] || printf '"apn":"%s",' "$apn"
+    printf '"pdp-type":"%s","apn-disabled":%s}\n' "$(cat "$state/profile.pdp")" "$off"
 }
 
 check_start_options() {
@@ -58,7 +123,8 @@ check_start_options() {
             shift 2
         fi
     done
-    [ "${1:-}" != --autoconnect ] || shift
+    auto=0
+    [ "${1:-}" != --autoconnect ] || { auto=1; shift; }
     [ "$#" = 0 ] || unsupported 'start arguments'
 }
 
@@ -67,27 +133,41 @@ start_call() {
     [ -n "$family" ] || unsupported 'start without a selected family'
     [ -f "$state/profile.pdp" ] || unsupported 'start without a stored profile'
     grep -qxF "$(cat "$state/profile.pdp") $family" "$state/scenario" || qmi_error 'Call failed'
+    # need-apn: a network that grants calls only with this APN in profile 1
+    [ ! -f "$state/need-apn" ] || [ "$(cat "$state/profile.apn")" = "$(cat "$state/need-apn")" ] ||
+        qmi_error 'Call failed'
     [ ! -e "$calls/$family" ] || qmi_error 'No effect'
     case $family in ipv4) handle=-12345678 ;; ipv6) handle=12345679 ;; esac
-    printf '%s %s\n' "$cid" "$handle" >"$calls/$family"
+    printf '%s %s %s\n' "$cid" "$handle" "$auto" >"$calls/$family"
     printf '%s\n' "$handle"
 }
 
 call_owned() {
     [ -n "$family" ] && [ -s "$calls/$family" ] &&
-        read -r owner handle <"$calls/$family" && [ "$owner" = "$cid" ]
+        read -r owner handle _ <"$calls/$family" && [ "$owner" = "$cid" ]
 }
 
 stop_wildcard() {
-    # With no CID the initial sweep is family-wide. The CID form is local to its client.
-    if [ -z "$cid" ] || call_owned; then
+    # With no CID the initial sweep is family-wide. The CID form is local to its client, unless the
+    # state file wide-wildcard says the modem's wildcard also reaches the other client's call
+    # (unmeasured on the MF289F, SPEC Unverified).
+    if [ -z "$cid" ]; then
+        rm -f "$calls/$family"
+    elif [ -e "$state/wide-wildcard" ]; then
+        rm -f "$calls"/*
+    elif call_owned; then
         rm -f "$calls/$family"
     fi
 }
 
 current_settings() {
     call_owned || qmi_error 'Out of call'
-    cat "/fw/tests/qmi/settings/$family.json"
+    # a test can put its own report (incomplete, invalid) into the state directory
+    if [ -f "$state/settings-$family.json" ]; then
+        cat "$state/settings-$family.json"
+    else
+        cat "/fw/tests/qmi/settings/$family.json"
+    fi
 }
 
 pin_status() {
@@ -107,6 +187,7 @@ sim_command() {
             [ -f "$state/pin" ] && [ "$2" = "$(cat "$state/pin")" ] || qmi_error 'Incorrect PIN'
             : >"$state/pin-verified"
             ;;
+        --get-iccid:1) printf '"%s"\n' "$(cat "$state/iccid")" ;;
         *) unsupported 'SIM command' ;;
     esac
 }
@@ -120,14 +201,15 @@ modem_command() {
         --wda-get-data-format:1)
             printf '{"link-layer-protocol":"%s"}\n' "$(cat "$state/data-format")"
             ;;
-        --sync:1) : ;;
+        # releases every client of the device, calls stay
+        --sync:1) rm -f "$clients"/* ;;
         *) unsupported 'modem command' ;;
     esac
 }
 
 network_command() {
     case "$1:$#" in
-        --network-register:1) : >"$state/registered" ;;
+        --network-register:1) [ -e "$state/no-register" ] || : >"$state/registered" ;;
         --get-serving-system:1)
             registration=not_registered
             [ ! -e "$state/registered" ] || registration=registered
@@ -156,7 +238,7 @@ client_command() {
         --get-current-settings:1) current_settings ;;
         --release-client-id:2)
             [ "$2" = wds ] || unsupported 'release service'
-            rm "$clients/$cid"
+            rm -f "$clients/$cid"
             ;;
         --stop-network:3)
             [ "$2" = 0xffffffff ] && [ "$3" = --autoconnect ] || unsupported 'stop arguments'
@@ -184,6 +266,7 @@ with_client() {
     unsupported 'expected -d /dev/cdc-wdm0 -t TIMEOUT'
 case $4 in '' | *[!0-9]*) unsupported 'timeout' ;; esac
 shift 4
+inject -t "$(printf '%s' "$joined" | sed -n 's/.* -t \([0-9][0-9]*\).*/\1/p')" "$@"
 cid=
 case "$1:$#" in
     --get-client-id:2)
@@ -191,6 +274,7 @@ case "$1:$#" in
         allocate_client
         ;;
     --modify-profile:6) shift; profile_write "$@" ;;
+    --get-profile-settings:2) profile_read "$2" ;;
     --stop-network:3)
         [ "$2" = 0xffffffff ] && [ "$3" = --autoconnect ] || unsupported 'stop arguments'
         family=ipv4
@@ -207,12 +291,13 @@ case "$1:$#" in
         cid=${2#wds,}
         [ "$2" = "wds,$cid" ] || unsupported 'client service'
         case $cid in '' | *[!0-9]*) unsupported 'client ID' ;; esac
-        [ -f "$clients/$cid" ] || unsupported 'unknown client ID'
+        # a released or never allocated client is an error of the modem
+        [ -f "$clients/$cid" ] || qmi_error 'Invalid client ID'
         family=$(cat "$clients/$cid")
         shift 2
         with_client "$@"
         ;;
-    --get-pin-status:* | --uim-get-sim-state:* | --verify-pin1:* | --uim-verify-pin1:*)
+    --get-pin-status:* | --uim-get-sim-state:* | --verify-pin1:* | --uim-verify-pin1:* | --get-iccid:*)
         sim_command "$@"
         ;;
     --network-register:* | --get-serving-system:* | --set-network-modes:*)
