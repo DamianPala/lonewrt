@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- The router's log no longer fills with IPv6 warnings: the LAN is IPv4 only, like the LTE link. The router sent no IPv6 default route, so its address service logged a warning about 230 times a day, over a quarter of the persistent log. The image no longer turns on router advertisements, DHCPv6 or a local IPv6 prefix on the LAN. Devices on the LAN keep their IPv4 addresses and internet access
+- The data counters of `/devices` no longer start with a warning about a capped buffer and no longer lose a stretch of traffic when many connections open at once: the image raises the kernel's receive buffer limit (`net.core.rmem_max`) to the 524288 bytes the counters ask for
+
 ## [0.6.0] - 2026-11-23
 
 ### Added

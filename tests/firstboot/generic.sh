@@ -12,6 +12,7 @@ fb_uci_defaults
 # LAN, system, persistent log
 fb_expect network.lan.ipaddr 192.168.1.1/24
 fb_expect network.lan.netmask "<unset>"
+fb_expect_lan_ipv4_only
 fb_expect system.@system[0].hostname lte-router
 fb_expect system.@system[0].zonename Europe/Warsaw
 fb_expect system.@system[0].log_file /root/openwrt.log

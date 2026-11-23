@@ -64,6 +64,10 @@ set_list() {
 # LAN, in the CIDR list form config_generate writes on 25.12
 uci -q delete network.lan.netmask
 set_list network.lan.ipaddr "$P_LAN_IP/24"
+# R7, D165: the LAN is IPv4 only. The LTE session is IPv4, so a ULA prefix and the router
+# advertisements it feeds led nowhere, and odhcpd warned about the missing IPv6 default route about
+# 230 times a day. preinit makes the prefix; it is deleted here so the image never advertises one.
+uci -q delete network.globals.ula_prefix
 
 # LTE over QMI; an empty APN lets the network assign one (SPEC R13a), modes=lte (SPEC R10).
 # timeout=30 (R7, D82): qmi.sh's registration loop gives up after that many tries, about a second
@@ -127,6 +131,12 @@ uci set firewall.vpn_lan=forwarding
 uci set firewall.vpn_lan.src='vpn'
 uci set firewall.vpn_lan.dest='lan'
 uci commit firewall
+
+# R7, D165: odhcpd stays installed but sends no router advertisements and serves no DHCPv6 on the
+# LAN, so it has no IPv6 default route to complain about
+uci set dhcp.lan.ra='disabled'
+uci set dhcp.lan.dhcpv6='disabled'
+uci commit dhcp
 
 # LuCI: luci-ssl adds the HTTPS listener but leaves plain HTTP on port 80 answering with the login
 # form. The redirect keeps the root password from crossing the Wi-Fi in clear text (SPEC R30, D19).

@@ -19,6 +19,9 @@ fb_prepare() {
     /bin/board_detect
     /bin/config_generate >/dev/null
     cp /fw/tests/firstboot/fixtures/etc-config/* /etc/config/
+    # what 12_network-generate-ula makes of config_generate's 'auto' (the sandbox may lack IPv6)
+    uci set network.globals.ula_prefix='fd12:3456:789a::/48'
+    uci commit network
     cp -a "$RENDER/$1/." /
 }
 
@@ -49,4 +52,16 @@ fb_get() {
 # fb_expect OPTION VALUE
 fb_expect() {
     lw_expect_eq "$(fb_get "$1")" "$2" "$1"
+}
+
+# fb_expect_lan_ipv4_only: R7, D165 (no router advertisements, DHCPv6 or ULA prefix on the LAN) and
+# R44d, D166 (the sysctl file that lifts net.core.rmem_max for nlbwmon), after the first start
+fb_expect_lan_ipv4_only() {
+    fb_expect dhcp.lan.ra disabled
+    fb_expect dhcp.lan.dhcpv6 disabled
+    fb_expect dhcp.lan.dhcpv4 server
+    fb_expect network.globals.ula_prefix "<unset>"
+    [ -f /etc/sysctl.d/20-lw-netlink.conf ] || lw_fail "no /etc/sysctl.d/20-lw-netlink.conf"
+    lw_expect_eq "$(grep -v '^#' /etc/sysctl.d/20-lw-netlink.conf)" "net.core.rmem_max=524288" \
+        "the setting in /etc/sysctl.d/20-lw-netlink.conf"
 }

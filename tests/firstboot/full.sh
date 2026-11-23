@@ -8,6 +8,7 @@ fb_prepare fake-full
 fb_uci_defaults
 
 fb_expect network.lan.ipaddr 192.168.77.1/24
+fb_expect_lan_ipv4_only
 fb_expect system.@system[0].hostname fakelw-q7x9
 fb_expect system.@system[0].zonename Europe/Berlin
 
