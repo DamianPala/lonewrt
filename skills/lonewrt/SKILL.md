@@ -221,6 +221,17 @@ ssh root@<router> 'sysupgrade -n /tmp/fw.bin </dev/null >/tmp/lw-flash.log 2>&1 
 ```
 
 `-n` drops the old settings: the image sets everything from the profile at its first start.
+
+**Tailscale kept (R59b, D164).** When the new image has Tailscale (`grep -q '^tailscale ' image/<name>.manifest`, or the artifact's manifest) and the router is in an account (`ssh root@<router> test -s /etc/tailscale/tailscaled.state` exits 0), keep only the Tailscale state, so the router stays in the account with its name, tag and key expiry; everything else still comes from the profile:
+
+```sh
+ssh root@<router> 'tar -czf /tmp/lw-ts-keep.tar.gz -C / etc/tailscale && tar -tzf /tmp/lw-ts-keep.tar.gz | grep -qx etc/tailscale/tailscaled.state && echo kept'
+ssh root@<router> 'sysupgrade -f /tmp/lw-ts-keep.tar.gz /tmp/fw.bin </dev/null >/tmp/lw-flash.log 2>&1 &'
+```
+
+No `kept` line means no flash: report it. When the person wants the router out of the account (another account, a router given away), use `-n` as above.
+After the start, `ssh root@<router> lw-tailscale status` shows `state=added` with the same `name=` within about 5 minutes, and the chat gets no new link.
+
 The router is back after about 2 minutes; LTE and the tunnel are up then or within another minute. Tell the person; do not poll in a loop for longer than a few minutes.
 A lost connection during the flash is expected at first. If the router does not come back, report it with the recovery note of `README.md`: flash any other OpenWrt sysupgrade image the same way and restore the backup with `sysupgrade -r`; this model has no failsafe, and a broken image means the case and a serial console (`docs/development.md`, "Recovery"). Do not retry the flash.
 
