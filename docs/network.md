@@ -41,4 +41,4 @@ With `TS_ENABLED='1'` the image gives Tailscale these rules:
 - Tailscale's own firewall handling is off, and it takes no DNS settings or routes from your account, so the firewall and DNS stay as the image sets them.
 - Outgoing, the router uses UDP port 41641 (Tailscale's default), UDP port 3478 to learn its public address, and HTTPS port 443 to the control and relay servers. It opens no port on its internet side for Tailscale.
 
-Tailscale's own access policy, which limits what your devices reach in the account, is in the README under "Limit what the router can reach".
+To limit what the router can reach in your account, [set the Tailscale access policy](tailscale.md#limit-what-the-router-can-reach).
