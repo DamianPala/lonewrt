@@ -19,6 +19,8 @@ umask 077
 
 # shellcheck source=src/files/usr/lib/lw/common.sh
 . /usr/lib/lw/common.sh
+# shellcheck source=src/files/usr/lib/lw/probe.sh
+. /usr/lib/lw/probe.sh
 # shellcheck source=src/files/usr/lib/lw/notify.sh
 . /usr/lib/lw/notify.sh
 # shellcheck source=src/files/usr/lib/lw/operators.sh
@@ -36,17 +38,14 @@ umask 077
 # shellcheck source=src/files/usr/lib/lw/smsctl.sh
 . /usr/lib/lw/smsctl.sh
 
-# nt_ping_try: the "online" of the recovery script: ping 8.8.8.8 or 1.1.1.1 through wwan0. On
-# success NT_PING_MS holds the average round trip in whole ms (empty when ping printed none).
+# nt_ping_try: the "online" of the recovery script (R77, probe.sh): a cellular answer for one of the
+# families of the session. It serves the verdict of /status, the SMS status reply, the 2G message and
+# the speed test's failure line. On success NT_PING_MS holds the average round trip of the first
+# answer in whole ms (empty when ping printed none).
 nt_ping_try() {
-    for _h in 8.8.8.8 1.1.1.1; do
-        _po=$(timeout 5 ping -c 2 -w 3 -I wwan0 "$_h" 2>/dev/null) || continue
-        NT_PING_MS=$(printf '%s\n' "$_po" |
-            sed -n 's|^.* = [0-9.]*/\([0-9.]*\)/.*|\1|p' | head -n 1)
-        NT_PING_MS=$(nt_st_int "$NT_PING_MS")
-        return 0
-    done
-    return 1
+    lw_probe_round notify || return 1
+    NT_PING_MS=$(nt_st_int "$LW_P_MS")
+    return 0
 }
 
 nt_online() { nt_ping_try; }

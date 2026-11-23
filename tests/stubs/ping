@@ -1,15 +1,73 @@
 #!/bin/sh
-# Test stand-in for ping. The network seen depends on the modem model: ZSNT 6 is LTE, anything else
-# is $LW_TEST/net/auto (default edge). $LW_TEST/net/<lte|edge> holds up or down (default down).
-# Every call adds $LW_TEST/net/txbump packets to tx (default 0), and rx 3 when the link is up.
+# Test stand-in for ping, in two modes.
+#
+# Without $LW_TEST/net/paths: the network seen depends on the modem model: ZSNT 6 is LTE, anything
+# else is $LW_TEST/net/auto (default edge). $LW_TEST/net/<lte|edge> holds up or down (default down).
+# The family, the device (-I) and the target are ignored.
+#
+# With $LW_TEST/net/paths (SPEC R77, D185): the answer depends on the family (-4, -6, else the
+# colon in the target), the bound device (-I, "-" for none) and the target. Each line of the file
+# is "FAMILY DEVICE TARGET [partial]": a ping that matches it gets replies, DEVICE and TARGET may be
+# "*". "partial" gives one reply of the packets sent and exit status 1, as busybox does with -w
+# and -c when fewer replies come than asked. A ping that matches no line gets none, so an
+# empty file is a dead link, and an answer that exists only for another device never reaches a
+# ping bound to the session's own.
+#
+# Both modes: every call adds $LW_TEST/net/txbump packets to tx (default 0), and rx 3 when it is
+# answered, and one line "ping ARGS" to $LW_TEST/net-calls.
 T=${LW_TEST:-/lwtest}
 S=${LW_NET_STATS:-$T/stats}
-net=lte
-case $(cat "$T/modem/zsnt" 2>/dev/null) in 6*) ;; *) net=$(cat "$T/net/auto" 2>/dev/null || echo edge) ;; esac
 add() { n=$(cat "$S/$1" 2>/dev/null || echo 0); echo $((n + $2)) >"$S/$1"; }
 mkdir -p "$S"
 add tx_packets "$(cat "$T/net/txbump" 2>/dev/null || echo 0)"
 echo "ping $*" >>"$T/net-calls"
+
+if [ -f "$T/net/paths" ]; then
+    fam='' dev=- count=3 target=''
+    while [ $# -gt 0 ]; do
+        case $1 in
+            -4) fam=4 ;;
+            -6) fam=6 ;;
+            -I) dev=$2; shift ;;
+            -c) count=$2; shift ;;
+            -w | -W | -s | -i | -t | -p) shift ;;
+            -*) ;;
+            *) target=$1 ;;
+        esac
+        shift
+    done
+    if [ -z "$fam" ]; then
+        case $target in *:*) fam=6 ;; *) fam=4 ;; esac
+    fi
+    ans=''
+    while read -r f d t m; do
+        [ "$f" = "$fam" ] || continue
+        [ "$d" = '*' ] || [ "$d" = "$dev" ] || continue
+        [ "$t" = '*' ] || [ "$t" = "$target" ] || continue
+        ans=${m:-full}
+        break
+    done <"$T/net/paths"
+    case $fam in 6) rtt=20.000/21.500/23.000 ;; *) rtt=30.100/36.459/40.000 ;; esac
+    case $ans in
+        full)
+            add rx_packets 3
+            echo "$count packets transmitted, $count packets received, 0% packet loss"
+            echo "round-trip min/avg/max = $rtt ms"
+            exit 0
+            ;;
+        partial)
+            add rx_packets 1
+            echo "$count packets transmitted, 1 packets received, 50% packet loss"
+            echo "round-trip min/avg/max = $rtt ms"
+            exit 1
+            ;;
+    esac
+    echo "$count packets transmitted, 0 packets received, 100% packet loss"
+    exit 1
+fi
+
+net=lte
+case $(cat "$T/modem/zsnt" 2>/dev/null) in 6*) ;; *) net=$(cat "$T/net/auto" 2>/dev/null || echo edge) ;; esac
 if [ "$(cat "$T/net/$net" 2>/dev/null)" = up ]; then
     add rx_packets 3
     echo "3 packets transmitted, 3 packets received, 0% packet loss"

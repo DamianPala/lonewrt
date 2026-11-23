@@ -20,6 +20,8 @@ fi
 
 # shellcheck source=src/files/usr/lib/lw/common.sh
 . /usr/lib/lw/common.sh
+# shellcheck source=src/files/usr/lib/lw/probe.sh
+. /usr/lib/lw/probe.sh
 
 TAG=wwan-recover
 STATE=/etc/wwan-recover.state
@@ -31,7 +33,6 @@ SIGLOG=/tmp/lw-signal.log
 STATS=${LW_NET_STATS:-/sys/class/net/wwan0/statistics}
 FALLBACK=/usr/sbin/lw-fallback
 IFACE=wwan0
-HOSTS="8.8.8.8 1.1.1.1"
 DNS_NAME=openwrt.org
 GRACE=600
 LADDER="6 18 42 90 162 234"
@@ -213,20 +214,20 @@ lock_release() {
     return 0
 }
 
-# Any reply counts (SPEC Terms "online"). It is read from the statistics line, because with -w the
-# exit code can also report fewer replies than -c asked for.
+# Any reply counts (SPEC Terms "online"), for each family the session has, through the session's own
+# devices (R77, D173); the round is in probe.sh.
 online_now() {
-    for _h in $HOSTS; do
-        ping -I "$IFACE" -c 2 -w 3 -q "$_h" 2>/dev/null | grep -q ' [1-9][0-9]* packets received' &&
-            return 0
-    done
-    return 1
+    lw_probe_round
 }
 
+# R18c: the operator DNS of the session (native IPv4 lease, else its IPv6 settings), asked only when
+# its route leaves on the session's own device, else it is no evidence either way (the class then
+# comes from the watchdog and the packets, as for a silent server). The packets of the cycle are
+# counted on IFACE before this query.
 dns_ok() {
-    _dns=$(ifstatus wwan_4 2>/dev/null | jsonfilter -e '@["dns-server"][0]' 2>/dev/null)
-    [ -n "$_dns" ] || return 1
-    timeout 5 nslookup "$DNS_NAME" "$_dns" >/dev/null 2>&1
+    lw_probe_dns || return 1
+    lw_probe_dns_path || return 1
+    timeout 5 nslookup "$DNS_NAME" "$LW_P_DNS" >/dev/null 2>&1
 }
 
 zsnt_lte() {

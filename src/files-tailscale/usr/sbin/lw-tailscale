@@ -373,12 +373,17 @@ ts_url_from() {
 }
 
 # ts_internet_ok: R68b. The router reaches the internet by the reading the image already has: the
-# newest line of the signal log, whose ping to 1.1.1.1 through wwan0 runs every 5 min (R28). Packet
-# loss below 100 % counts; no line, `?` or 100 % do not, and then nothing restarts. No ping of
-# its own and no loop.
+# newest line of the signal log, whose ping through the session's own device runs every 5 min (R28).
+# Packet loss below 100 % counts, for the family of `loss` (IPv4, or IPv6 on a session without IPv4
+# service) and for `loss6` that a session with both families adds (R77); no line, `?` or 100 % do
+# not, and then nothing restarts. No ping of its own and no loop.
 ts_internet_ok() {
-    _io_loss=$(tail -n 1 "$TS_SIGLOG" 2>/dev/null | sed -n 's/.* loss=\([0-9]*\)%.*/\1/p')
-    [ -n "$_io_loss" ] && [ "$_io_loss" -lt 100 ]
+    _io_line=$(tail -n 1 "$TS_SIGLOG" 2>/dev/null)
+    for _io_key in loss loss6; do
+        _io_loss=$(printf '%s\n' "$_io_line" | sed -n "s/.* $_io_key=\([0-9]*\)%.*/\1/p")
+        [ -n "$_io_loss" ] && [ "$_io_loss" -lt 100 ] && return 0
+    done
+    return 1
 }
 
 # ts_restart_due: R68b, D161. The router counts as added while Tailscale shows it offline, the router

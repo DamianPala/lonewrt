@@ -1,3 +1,9 @@
 #!/bin/sh
 # Test stand-in for ifstatus: prints $LW_TEST/ifstatus/<iface>.json, fails when it is missing.
-cat "${LW_TEST:-/lwtest}/ifstatus/$1.json" 2>/dev/null || { echo "Interface $1 not found" >&2; exit 1; }
+statuses=${LW_TEST:-/lwtest}/ifstatus
+# R77c: ignore TERM to exercise the hard limit as well as the initial timeout.
+if [ -e "$statuses/hang" ]; then
+    trap '' TERM
+    exec sleep 3
+fi
+cat "$statuses/$1.json" 2>/dev/null || { echo "Interface $1 not found" >&2; exit 1; }

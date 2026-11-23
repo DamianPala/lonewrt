@@ -1,0 +1,17 @@
+#!/bin/sh
+# Test stand-in for ip: `ip -4|-6 route get DEST` answers from $LW_TEST/net/routes, lines "DEST DEV"
+# (a DEST without a line is unreachable); without that file every destination leaves on wwan0, the
+# one device of the sessions before the IP family rule (R18c). Every other call goes to the real ip.
+T=${LW_TEST:-/lwtest}
+if [ "$2 $3" = "route get" ]; then
+    if [ -f "$T/net/routes" ]; then
+        dev=$(awk -v d="$4" '$1 == d { print $2; exit }' "$T/net/routes")
+    else
+        dev=wwan0
+    fi
+    [ -n "$dev" ] || { echo "RTNETLINK answers: Network is unreachable" >&2; exit 2; }
+    echo "$4 via 192.0.2.1 dev $dev src 192.0.2.10 uid 0"
+    [ ! -e "$T/net/route-error" ] || exit 2
+    exit 0
+fi
+exec /sbin/ip "$@"
