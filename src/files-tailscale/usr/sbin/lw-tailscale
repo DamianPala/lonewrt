@@ -44,7 +44,9 @@ TS_CALL_LIMIT=${LW_TS_CALL_LIMIT:-10}
 # R68: the expiry warning comes 14 days before the date
 TS_WARN=$((14 * 86400))
 # How Tailscale's refusal of a key reads in the output of `up`; any other failure counts as no
-# answer and the key is tried again (R66a). Unverified against the real CLI (see the slice report).
+# answer and the key is tried again (R66a). 1.104.1 with a key it does not know: exit 1 and
+# "backend error: invalid key: unable to validate API key"; with no internet: exit 1 after the wait
+# and "timeout waiting for Tailscale service to enter a Running state" (tests/vm/80-tailscale.sh).
 TS_REFUSED_RE='backend error|invalid key|key.*(expired|revoked|invalid|not valid)|not authorized|unauthorized|forbidden'
 
 TS_NAP=
@@ -352,9 +354,10 @@ cmd_status() {
     cat "$TS_STATE"
 }
 
-# ts_url_from FILE: the first https address in FILE
+# ts_url_from FILE: the sign-in link in FILE, an https address with /a/ in its path. 1.104.1 prints
+# other addresses before it, in the hints of its warnings (https://tailscale.com/s/ethtool-config-udp-gro).
 ts_url_from() {
-    sed -n 's#.*\(https://[^[:space:]]*\).*#\1#p' "$1" | head -n 1
+    sed -n 's#.*\(https://[^[:space:]]*/a/[^[:space:]]*\).*#\1#p' "$1" | head -n 1
 }
 
 # cmd_link: R65a, R65e, R72a, D140, D154, D158. The link comes from `up`, which asks Tailscale for one

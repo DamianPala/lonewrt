@@ -66,7 +66,13 @@ case $cmd in
             url)
                 url=https://login.example.invalid/a/FAKELINK01
                 echo "$url" >"$D/authurl"
-                printf 'To authenticate, visit:\n\n\t%s\n\n' "$url" >&2
+                # as 1.104.1 prints it: warnings on stdout, one with a hint address that is not the
+                # link, then the link and the failed wait on stderr (tests/vm/80-tailscale.sh)
+                printf 'Warning: netfilter=off; configure iptables yourself.\n'
+                printf 'Warning: UDP GRO forwarding is suboptimally configured on wwan0.\n'
+                printf 'See https://tailscale.com/s/ethtool-config-udp-gro\n'
+                printf '\nTo authenticate, visit:\n\n\t%s\n\n' "$url" >&2
+                echo 'timeout waiting for Tailscale service to enter a Running state; check health with "tailscale status"' >&2
                 exit 1
                 ;;
             accept)
@@ -80,7 +86,8 @@ case $cmd in
                 exec sleep 3600
                 ;;
             refuse)
-                echo "backend error: invalid key: API key tskey-auth-FAKE not valid" >&2
+                echo 'Warning: netfilter=off; configure iptables yourself.'
+                echo "backend error: invalid key: unable to validate API key" >&2
                 exit 1
                 ;;
             *)
