@@ -1,12 +1,21 @@
 # Changelog
 
-## [0.5.1] - 2026-11-22
+## [0.6.0] - 2026-11-23
 
 ### Added
 
-- Optional Tailscale remote access (profile key `TS_ENABLED`, default off): the bot sends a sign-in link, and then you reach the router's settings page and SSH by its name from your own devices, with no server of your own. The README section "Remote access with Tailscale" has the steps, including the access policy that keeps a stolen router out of your other devices
-- Tailscale can also share the router's LAN with your devices (`TS_ADVERTISE_LAN`), after you approve the route in the admin console
+- Optional Tailscale remote access (profile key `TS_ENABLED`, default off): the bot sends a sign-in link, and then you reach the router's settings page and SSH by its name from your own devices, with no server of your own. The router cannot open connections to your other devices, only they can reach it, and the README section "Remote access with Tailscale" has the steps, including the access policy that keeps a stolen router out of your other devices. Tried in a virtual machine with a real Tailscale account, not on a real router yet
+- Optional auth key `TS_AUTHKEY` adds the router to your account without the link; the router uses it once
+- Tailscale can also share the router's LAN with your devices (`TS_ADVERTISE_LAN`), after you approve the route in the admin console; the devices on the LAN see the router's address. If the router's LAN is `192.168.0.x` or `192.168.1.x`, the build and the configurator warn you, because the route then clashes with the network of most homes you connect from
+- The bot tells you once each when the router waits for a sign-in, when it was added, when the LAN route was approved, 14 days before the sign-in ends and when the router dropped out of your account, with a new link where you need one; `/tailscale` and its button give a fresh link or the router's Tailscale state, `/status` has a Tailscale line, and owners without Telegram text `tailscale` to the SIM
+- Configurator: a Tailscale section, with warnings about the router's free space and a LAN that many homes share, and a button that moves the router to a rarer LAN address
 - With Tailscale on, the image is about 18 MB and the free space on the router is about 4 to 6 MiB instead of 12.5 MiB, so install few extra packages later
+
+### Changed
+
+- **BREAKING:** a profile made for 0.5.x lacks three keys, and the build stops with the name of the first one. Migration: add `TS_ENABLED='0'`, `TS_ADVERTISE_LAN='0'` and `TS_AUTHKEY=''` (copy them from `profiles/generic.conf`), or load the profile into the configurator and download it again
+
+## [0.5.1] - 2026-11-22
 
 ### Fixed
 
@@ -105,6 +114,7 @@ First public release, experimental: it runs on one router in daily use.
 - Listed phone numbers can text `status` or `reboot` to the SIM, at most 5 restarts a day
 - Optional WireGuard tunnel for remote access, LuCI apps for the modem, the LTE bands and SMS, persistent logs, and the release version in `/etc/lw-build`
 
+[0.6.0]: https://github.com/DamianPala/lonewrt/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/DamianPala/lonewrt/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/DamianPala/lonewrt/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/DamianPala/lonewrt/compare/v0.3.0...v0.4.0
