@@ -532,10 +532,12 @@ live_route_step() {
 # live_hold: the person's steps from a laptop (LuCI and SSH by name, a LAN device through the route)
 # happen now; the guests stay up until $RUN/done exists or LWVM_TS_HOLD_S passed
 live_hold() {
-    local end=$((SECONDS + HOLD_S))
+    local end=$((SECONDS + HOLD_S)) lgip
     LG_N0=$(lg_count)
+    lgip=$(vm_sh 'cut -d" " -f3 /tmp/dhcp.leases | head -n1' 2>/dev/null || true)
     lr_step hold
-    echo "LWVM-TS-HOLD create $RUN/done when the laptop steps are finished"
+    # only /cgi-bin/probe logs the source of a request; a request for / is no proof (a false SKIP)
+    echo "LWVM-TS-HOLD open http://${lgip:-<lan-guest-ip>}/cgi-bin/probe from the laptop (through the route); create $RUN/done when the laptop steps are finished"
     while [ ! -e "$RUN/done" ] && [ "$SECONDS" -lt "$end" ]; do sleep 5; done
     if [ ! -e "$RUN/done" ]; then
         skip "hold: no $RUN/done within $HOLD_S s"

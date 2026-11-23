@@ -75,7 +75,7 @@ LWVM_INTERNET=1 tests/vm/80-tailscale.sh         # the real CLI against Tailscal
 LWVM_INTERNET=1 LWVM_TS_LIVE=1 LWVM_TS_PEER=100.x.y.z LWVM_TS_WAIT_ROUTE=1 LWVM_TS_REJOIN=1 tests/vm/80-tailscale.sh
 ```
 
-`LWVM_TS_LIVE=1` writes the link to `$VMWORK/run/tailscale/ts-link.txt` (0600), prints `LWVM-TS-LINK-READY <path>`, waits up to `LWVM_TS_WAIT_S` (900) for the sign-in and records what it sees in `$VMWORK/run/tailscale/live-report.txt` (0600); `LWVM-TS-STEP <name>` lines mark each step. After the sign-in it keeps both guests up until `$VMWORK/run/tailscale/done` exists or `LWVM_TS_HOLD_S` (1800) passed, then checks the LAN guest's log for the source of the requests. Run it directly: `run-all.sh` keeps a scenario's stdout in a log file.
+`LWVM_TS_LIVE=1` writes the link to `$VMWORK/run/tailscale/ts-link.txt` (0600), prints `LWVM-TS-LINK-READY <path>`, waits up to `LWVM_TS_WAIT_S` (900) for the sign-in and records what it sees in `$VMWORK/run/tailscale/live-report.txt` (0600); `LWVM-TS-STEP <name>` lines mark each step. After the sign-in it keeps both guests up until `$VMWORK/run/tailscale/done` exists or `LWVM_TS_HOLD_S` (1800) passed (the `LWVM-TS-HOLD` line names the URL to open from the laptop: `http://<lan-guest-ip>/cgi-bin/probe`, because only that path logs the source of a request and `/` gives a false SKIP), then checks the LAN guest's log for the source of the requests. Run it directly: `run-all.sh` keeps a scenario's stdout in a log file.
 
 Everything VM-only lives in `tests/vm/overlay/` and in the marker scripts `build-image.sh` writes; none of it is in the router image.
 
