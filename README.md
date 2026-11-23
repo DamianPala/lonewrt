@@ -115,19 +115,13 @@ The router's own settings page is called LuCI.
 ## Remote access
 
 WireGuard and Tailscale each open the router's settings page (LuCI) and SSH from afar. Both are off by default, and you can turn on either one or both.
-Choose WireGuard to route the connection through a server you control, Tailscale for remote access without a server of your own.
 
-| | WireGuard | Tailscale |
-|---|---|---|
-| You need | your own WireGuard server with a public address, such as a VPS | a free Tailscale account, with its app on your laptop and phone |
-| How you reach the router | at its tunnel address, through your server | by its name, such as `https://lte-router` |
-| Turn it on | `WG_ENABLED='1'` and the other `WG_*` keys, see [docs/profile.md](docs/profile.md) | `TS_ENABLED='1'`, then sign in with a link that comes by Telegram, SMS or SSH, see the [Tailscale guide](docs/tailscale.md#sign-in) |
-| Who carries the traffic | your server | your devices directly; Tailscale's servers set up the connection and relay it when a direct one fails |
+- **WireGuard**, through a server you run: set `WG_ENABLED='1'` and the other `WG_*` keys ([docs/profile.md](docs/profile.md)).
+- **Tailscale**, with no server of your own: set `TS_ENABLED='1'`, then sign in with a link that comes by Telegram, SMS or SSH ([Tailscale guide](docs/tailscale.md)).
 
-The router holds a key into your network either way, so whoever steals it gets that key. Limit what it can reach there:
-
-- WireGuard: on your server, allow the router's peer only its own tunnel address and block its connections into your network, see [docs/network.md](docs/network.md).
-- Tailscale: **[limit what the router can reach](docs/tailscale.md#limit-what-the-router-can-reach) in your account's access policy**.
+Whoever steals the router gets its key into your network, so limit what it can reach there.
+On your WireGuard server, allow the router's peer only its own tunnel address and block its connections into your network ([docs/network.md](docs/network.md)).
+In Tailscale, **[limit what the router can reach](docs/tailscale.md#limit-what-the-router-can-reach) in your account's access policy**.
 
 ## Limits
 
