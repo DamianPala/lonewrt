@@ -91,7 +91,7 @@ nt_help() {
         '✉️ <b>SMS</b> – newest SMS (/sms 10 for more)' \
         '🔔 <b>Alerts</b> – automatic messages, on or off' \
         '🔄 <b>Reboot</b> – restart the router (asks first)'
-    # R69c: the line of a tailscale image; no button, the keyboard stays at 9 (R37e)
+    # R69c: the line of a tailscale image, next to its tenth keyboard button (D162)
     ! nt_ts_image || printf '%s\n' '/tailscale – remote access from your own devices'
     printf '%s\n' '' "The bot also posts by itself: $_hf."
 }
@@ -106,7 +106,16 @@ NT_KB='{"keyboard":[[{"text":"🟢 Status"},{"text":"📶 Wi-Fi"},{"text":"📱 
 [{"text":"⚡ Speed"},{"text":"💶 Balance"},{"text":"✉️ SMS"}],
 [{"text":"🔔 Alerts"},{"text":"🔄 Reboot"},{"text":"❓ Help"}]],
 "is_persistent":true,"resize_keyboard":true}'
-# label|command; read with the variation selector U+FE0F removed from both sides (nt_fe_strip)
+# The keyboard of a tailscale image (R69c, D162): the same 9 buttons and `🔒 Tailscale`, in rows of 4,
+# 3 and 3, which keeps the height of the 3 x 3 keyboard (a fourth row covered too much of the chat).
+NT_KB_TS='{"keyboard":[[{"text":"🟢 Status"},{"text":"📶 Wi-Fi"},{"text":"📱 Devices"},
+{"text":"⚡ Speed"}],
+[{"text":"💶 Balance"},{"text":"✉️ SMS"},{"text":"🔔 Alerts"}],
+[{"text":"🔒 Tailscale"},{"text":"🔄 Reboot"},{"text":"❓ Help"}]],
+"is_persistent":true,"resize_keyboard":true}'
+# label|command; read with the variation selector U+FE0F removed from both sides (nt_fe_strip). The
+# Tailscale label is in the table of every image but nt_button_cmd drops it where there is no
+# Tailscale (R69c), so there it is text without a slash like any other.
 NT_BUTTONS='🟢 Status|/status
 📶 Wi-Fi|/wifi
 📱 Devices|/devices
@@ -114,6 +123,7 @@ NT_BUTTONS='🟢 Status|/status
 💶 Balance|/balance
 ✉️ SMS|/sms
 🔔 Alerts|/alerts
+🔒 Tailscale|/tailscale
 🔄 Reboot|/reboot
 ❓ Help|/help'
 # U+FE0F as the three bytes of its UTF-8 form: Telegram clients send an emoji such as the envelope
@@ -530,8 +540,11 @@ nt_edit() {
 # nt_markup JSON: the reply_markup field for nt_send and nt_edit.
 nt_markup() { printf '&reply_markup=%s' "$(nt_urlencode "$1")"; }
 
-# nt_kb_markup: the reply_markup field with the keyboard of R37e.
-nt_kb_markup() { nt_markup "$NT_KB"; }
+# nt_kb_markup: the reply_markup field with the keyboard of R37e, the 10-button one in a tailscale
+# image (R69c, D162).
+nt_kb_markup() {
+    if nt_ts_image; then nt_markup "$NT_KB_TS"; else nt_markup "$NT_KB"; fi
+}
 
 # nt_fe_strip TEXT: TEXT without U+FE0F, in $NT_STRIP (a global, so the hot path forks nothing).
 nt_fe_strip() {
@@ -559,8 +572,11 @@ nt_button_cmd() {
     _bt=${NT_STRIP#"${NT_STRIP%%[![:space:]]*}"}
     _bt=${_bt%"${_bt##*[![:space:]]}"}
     [ -n "$_bt" ] || return 0
-    printf '%s\n' "$NT_BUTTONS_BARE" |
-        BTN_TEXT=$_bt awk -F'|' '$1 == ENVIRON["BTN_TEXT"] { print $2; exit }'
+    _bc=$(printf '%s\n' "$NT_BUTTONS_BARE" |
+        BTN_TEXT=$_bt awk -F'|' '$1 == ENVIRON["BTN_TEXT"] { print $2; exit }')
+    # R69c: no Tailscale, no such button
+    [ "$_bc" != /tailscale ] || nt_ts_image || return 0
+    printf '%s\n' "$_bc"
 }
 
 # nt_bot_name: the bot's own username in lower case, from getMe once per run (kept in RAM); empty

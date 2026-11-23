@@ -1,6 +1,7 @@
 # R69, R69c, R39c: /status of a tailscale image has one Tailscale line, the name and no address, after
 # the data of the month and before the start line; /help has the /tailscale line after the buttons and
-# the keyboard has no button for it (R37e); an image without Tailscale has neither (R37).
+# the keyboard has its tenth button (D162, tests/notify/tailscale-keyboard.sh); an image without
+# Tailscale has neither (R37).
 # shellcheck source=tests/lib.sh
 . /fw/tests/lib.sh
 # shellcheck source=tests/notify/helpers.inc
@@ -56,7 +57,7 @@ case $(status) in
     '🟢 <b>Internet works</b>'*'Tech: '*'</blockquote>') ;;
     *) lw_fail "/status of a tailscale image: $(last_text)" ;;
 esac
-# --- /help: the line after the buttons, before the footer (R69c); the keyboard keeps 9 buttons (R37e)
+# --- /help: the line after the buttons, before the footer (R69c); the keyboard has 10 buttons (D162)
 tg_push "$TG_CHAT" /help
 pass
 lw_expect_eq "$(last_text)" '❓ <b>What the buttons do</b>
@@ -71,9 +72,9 @@ lw_expect_eq "$(last_text)" '❓ <b>What the buttons do</b>
 /tailscale – remote access from your own devices
 
 The bot also posts by itself: new SMS, internet back, 2G backup.' "help of a tailscale image"
-lw_expect_eq "$(markup_of "$(sent)" | jsonfilter -e '@.keyboard[*][*].text' | wc -l | tr -d ' ')" 9 \
+lw_expect_eq "$(markup_of "$(sent)" | jsonfilter -e '@.keyboard[*][*].text' | wc -l | tr -d ' ')" 10 \
     "buttons of the keyboard"
-case $(markup_of "$(sent)") in *ailscale*) lw_fail "a Tailscale button on the keyboard" ;; esac
+case $(markup_of "$(sent)") in *'🔒 Tailscale'*) ;; *) lw_fail "no Tailscale button on the keyboard" ;; esac
 # an unknown command gets the same help
 tg_push "$TG_CHAT" /nonsense
 pass

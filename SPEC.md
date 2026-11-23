@@ -488,7 +488,7 @@ The image relies on these fields of Tailscale's state as `tailscale status --jso
 - **R69:** `/status` of a tailscale image has one Tailscale line after the data of the month (R39c), with the name and without the address (D143).
 - **R69b:** `/tailscale` of an added router answers with the name, the Tailscale address, the account, the date the sign-in ends (or `never`) and, with `TS_ADVERTISE_LAN='1'`, whether the route is approved.
 - **R69d:** While Tailscale is starting or not running, `/tailscale` says which of the two.
-- **R69c:** `/help` of a tailscale image has the line of `/tailscale`.
+- **R69c:** `/help` of a tailscale image has the line of `/tailscale`, and its keyboard (R37e) has a tenth button `🔒 Tailscale` that acts like `/tailscale`, with the 10 buttons in 3 rows of 4, 3 and 3 as in the layout (D162).
 - **R69a:** The SMS command `tailscale` (R46) in a tailscale image gets within 60 s a reply with a new link when the router is not added, or with the name, the Tailscale address, the account and the date the sign-in ends; when the reply would exceed 160 characters (R46a), the account is left out first; the `help` reply lists `tailscale` in a tailscale image (D148).
 
 #### Configurator and documents
@@ -678,7 +678,7 @@ Some operators send no SMS when data runs low and renew a package only with enou
 - **R45:** `/reboot` answers with a question with the buttons `🔄 Restart` and `Cancel`; the restart happens only after a tap on `Restart` within 60 s by a member of the chat `TG_CHAT_ID`; after the tap, a cancel or 60 s the message changes its text and loses its buttons; a tap on an expired button gives the Telegram popup `This button expired, send /reboot again` and does nothing (D60).
   - **R45a:** After the start from such a restart the chat gets one message with the name of the person who tapped and the length of the break; a normal restart (power, link repair) gives no such message.
 - **R37d:** `/alerts` shows the 2G message switch also as a button that changes the state and the text of the same message; the command `/alerts 2g on|off` keeps working (D60).
-- **R37e:** The chat has a persistent bot keyboard with 9 buttons as in the layout below; the bot sends it with the answer to `/help` and `/start` and once after the first start of the image, and a button acts like its command (`🟢 Status` like `/status` and so on); the bot skips other text without `/`; the keyboard works with the bot's privacy mode on, because the Telegram app sends a tap as a reply to the bot's message that carries the keyboard, and typed commands work in both modes (D64).
+- **R37e:** The chat has a persistent bot keyboard with 9 buttons as in the layout below (10 in a tailscale image, R69c); the bot sends it with the answer to `/help` and `/start` and once after the first start of the image, and a button acts like its command (`🟢 Status` like `/status` and so on); the bot skips other text without `/`; the keyboard works with the bot's privacy mode on, because the Telegram app sends a tap as a reply to the bot's message that carries the keyboard, and typed commands work in both modes (D64).
 - **R37f:** After the first start of the image, when the state on flash was fresh at that start (no flag of R37e and nothing else in `/etc/lw-notify` at the first pass of the service), the chat first gets a message of its own with two lines, `🔄 Router was reset to its built-in settings.` (bold) and `Earlier logs and saved SMS are gone.`, and then the greeting of R37e with the keyboard as a second message, which has no reset lines (D75, D84). The note is not part of the greeting because a tap on the keyboard arrives as a reply to the message that carries the keyboard, and the app shows the start of that message above every tap; with the note in it, each tap would quote `Router was reset`. The note goes out once: after a Telegram outage or a restart of the router before the greeting went out only the greeting is still due when the note had already gone, and the note is still due when it had not; an image flashed with its state kept (`sysupgrade -o`: files in `/etc/lw-notify`, no flag) gets the greeting without the note, while a plain `sysupgrade` without `-n` keeps `/etc/config` but not `/etc/lw-notify` and gets the note; a flash that cannot be written leaves the note out.
   - *scenario* given a router after a button reset, when the service has started and Telegram answers, then the chat gets the message `🔄 Router was reset to its built-in settings.` / `Earlier logs and saved SMS are gone.` and after it the message `🤖 The router bot is ready. ...` with the keyboard, and neither after a later restart of the service or of the router
 - **R37g:** Every message and every edit of the bot goes out with `parse_mode=HTML`; the tags in use are `b`, `i`, `code` and `blockquote`. Text that the code did not write itself (the text and sender of an SMS, DHCP names, the names the owner gives devices, the names and passwords of the WiFi networks, the first name of the person who taps `Restart`, the operator's name, the server of a speed test) has `&`, `<` and `>` written as entities, so it shows as it is and cannot change the layout or make Telegram refuse the message; a long reply is cut between messages, never inside a tag or an entity. When Telegram answers a message with HTTP 400, the same text goes once more as plain text (tags removed, entities decoded) and one `lw-notify` syslog entry says that the markup was refused (ASCII, no token and no text of the message); if that is rejected too, R34f goes on, and an edit that is rejected is not repeated as an edit (the balance message then goes as a new message, R36) (D83, D85).
@@ -861,6 +861,11 @@ Keyboard under the message field (R37e), persistent, resized:
 [ 🟢 Status ] [ 📶 Wi-Fi ]  [ 📱 Devices ]
 [ ⚡ Speed ]  [ 💶 Balance ] [ ✉️ SMS ]
 [ 🔔 Alerts ] [ 🔄 Reboot ] [ ❓ Help ]
+
+In a tailscale image (R69c), 10 buttons in 3 rows:
+[ 🟢 Status ] [ 📶 Wi-Fi ] [ 📱 Devices ] [ ⚡ Speed ]
+[ 💶 Balance ] [ ✉️ SMS ] [ 🔔 Alerts ]
+[ 🔒 Tailscale ] [ 🔄 Reboot ] [ ❓ Help ]
 ```
 
 The "Enough for" line of a speed test result by verdict: `fast` ✅ 4K video on several devices and video calls; `OK` ✅ HD video and video calls; `slow` ⚠️ browsing and low-quality video; `very slow` ❌ messages only.
@@ -1026,6 +1031,7 @@ The "Enough for" line of a speed test result by verdict: `fast` ✅ 4K video on 
 | D159 | The route message once per sign-in (R67a, R72b) | after a new sign-in the route usually needs approval again, and the owner gets the same confirmation as the first time (owner, 2026-11-22) |
 | D160 | An expiry date fewer than 14 days away when first seen gives the warning at once (R68) | after a long outage or a late clock a late warning is better than none (owner, 2026-11-22) |
 | D161 | An owner's request for the state of an added router that Tailscale shows offline, while the router reaches the internet, restarts Tailscale first, at most once per 10 minutes; no background check (R68b) | without it a removed router keeps answering "added" and gives no link to join again; a restart only on request adds no loop (owner, 2026-11-23) |
+| D162 | A tailscale image's keyboard has a `🔒 Tailscale` button, the 10 buttons in rows of 4, 3 and 3 (R69c) | a fourth row covered too much of the chat, while 4, 3 and 3 keeps the height of the 3 x 3 keyboard and every label fit on the owner's phone (owner, 2026-11-23, two test keyboards) |
 
 ### Builder decides
 
