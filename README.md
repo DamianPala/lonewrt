@@ -20,13 +20,13 @@ For a router you cannot walk up to: a rental flat, a holiday home, a cabin, a sm
 - **Someone asks for the Wi-Fi password at 23:00.** You tap a button in Telegram and the bot posts the Wi-Fi name and password with a QR code that a phone camera scans to join. Other buttons give the link state, the connected devices, the newest SMS, a speed test (about 330 MB of your data) and a restart.
 - **The internet is down and so is the bot.** A healthchecks.io heartbeat tells you from the outside, and the router posts when it is back and how long it was gone.
 - **Telegram is not an option.** Phone numbers you list can text `status` or `reboot` to the SIM. The router checks only the sender's number, and numbers can be faked, so SMS can only ask for the state and a restart, 5 restarts a day by default.
-- **You want to reach the router yourself.** With Tailscale on, you open its settings page and SSH from your own laptop or phone by its name, with no server of your own. Optional, see [Remote access with Tailscale](#remote-access-with-tailscale).
+- **You want to reach the router yourself.** Through a WireGuard tunnel to your own server, or through Tailscale with no server at all, you open its settings page and SSH from your laptop or phone. Optional, see [Remote access](#remote-access).
 
 ## What you need
 
 - A ZTE MF289F that already runs OpenWrt. The build targets OpenWrt 25.12.6.
 - Either a Linux x86_64 build host, or no Linux at all: a web browser, a GitHub account and the router's web page (LuCI), see [Build without Linux](#build-without-linux). The tools the Linux host needs are listed in [docs/development.md](docs/development.md#build-host).
-- For the notifications, a Telegram bot token and a chat. For remote access, a WireGuard server or a free Tailscale account, see [Remote access with Tailscale](#remote-access-with-tailscale). For the heartbeat, a healthchecks.io check. Each is optional.
+- For the notifications, a Telegram bot token and a chat. For remote access, your own WireGuard server or a free Tailscale account, see [Remote access](#remote-access). For the heartbeat, a healthchecks.io check. Each is optional.
 
 | You have | Start at |
 |---|---|
@@ -112,12 +112,23 @@ The router's own settings page is called LuCI.
 - **The Wi-Fi country.** It is the `WIFI_COUNTRY` of the profile. To change it without a new image, go to LuCI: Network > Wireless > Edit on each radio > Advanced Settings > Country Code.
 - **SSH warns that the host key changed.** Expected after every flash and button reset, because the router gets a new key. Run `ssh-keygen -R <router address>` and connect again.
 
-## Remote access with Tailscale
+## Remote access
 
-Use Tailscale to open LuCI and connect over SSH from your laptop or phone without running a server.
-Tailscale is off by default. Set `TS_ENABLED='1'` in your profile to include it.
-**[Limit what the router can reach](docs/tailscale.md#limit-what-the-router-can-reach) in your account's access policy** to protect your other devices if the router is stolen.
-Follow the [Tailscale setup guide](docs/tailscale.md) to build, sign in and connect.
+There are two ways to open the router's settings page (LuCI) and SSH from afar. Both are optional and off by default, and both can be on at once.
+
+| | WireGuard | Tailscale |
+|---|---|---|
+| You need | your own WireGuard server with a public address, such as a VPS | a free Tailscale account, with its app on your laptop and phone |
+| How you reach the router | at its tunnel address, through your server | by its name, such as `https://lte-router` |
+| Turn it on | `WG_ENABLED='1'` and the other `WG_*` keys, see [docs/profile.md](docs/profile.md) | `TS_ENABLED='1'`, then sign in with the link the bot sends, see the [Tailscale guide](docs/tailscale.md) |
+| Who carries the traffic | your server | your devices directly; Tailscale's servers set up the connection and relay it when a direct one fails |
+
+Pick Tailscale when you have no server, WireGuard when you already run one or want no third party in between.
+
+The router holds a key into your network either way, so whoever steals it gets that key. Limit what it can reach there:
+
+- WireGuard: on your server, allow the router's peer only its own tunnel address and block its connections into your network, see [docs/network.md](docs/network.md).
+- Tailscale: **[limit what the router can reach](docs/tailscale.md#limit-what-the-router-can-reach) in your account's access policy**.
 
 ## Limits
 
