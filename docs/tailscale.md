@@ -116,5 +116,5 @@ A tag that comes with the auth key also turns key expiry off. A tag added later 
 ## Cost
 
 The Tailscale packages make the image about 18 MB.
-The free space on the router drops from about 12.5 MiB to about 4 to 6 MiB, so install few extra packages later.
+The free space on the router drops from about 12 MiB to about 4 MiB, so install few extra packages later.
 How much data Tailscale uses while idle is not measured yet; on a prepaid SIM it counts against your data.

@@ -23,6 +23,17 @@ Both tables are binding (SPEC R2): the full build test compares them with the pa
 | `speedtestcpp` (pulls in `libspeedtestcpp`, `libcurl4`, `libstdcpp6`; about 3.6 MB installed) | `/speedtest` from the bot (R41); speedtest.net client, nearest server, about 330 MB of data per test | official |
 | `coreutils-timeout`, `coreutils-stty` | busybox has neither. `timeout` bounds the calls of the image's scripts that can hang. `stty` is not used by the image's scripts: `sms_tool_calllogd` of `luci-app-sms-tool-js` calls it without declaring it | official |
 | `qrencode`, `libjpeg-turbo-utils` (pull in `libqrencode`, `libjpeg-turbo`; 540 KiB installed in all) | the QR photo of `/wifi` (R51, D91): `qrencode` draws the code, `cjpeg` packs it as a JPEG | official |
+| `tmux` | a terminal multiplexer: an SSH session and what runs in it survive a dropped link (D167) | official |
+| `mtr-nojson` | a traceroute that shows the loss of each hop, for diagnosing the LTE path; the OpenWrt build without JSON output (D167) | official |
+| `vim` | a fuller editor than busybox `vi`; the small `vim` package of OpenWrt (D167) | official |
+
+## Removed from the default set
+
+The device profile brings these packages; `build.sh` removes them (`-name` in the ImageBuilder's package list), and the manifest of a built image has none of them.
+
+| Package | Why |
+|---|---|
+| `ppp`, `ppp-mod-pppoe`, `kmod-ppp`, `kmod-pppoe`, `kmod-pppox` | the LTE link is QMI, and no interface of the image uses PPP or PPPoE (D167) |
 
 ## Left out (present in eko.one.pl, not needed here)
 
@@ -46,13 +57,14 @@ They are the only packages in the image that do not come from OpenWrt's signed f
 ## Size
 
 An image is about 9.9 MB.
-What it does not take of the router's system partition (29 MiB) holds the settings, the persistent log, the data counters and the SMS archive: about 12.5 MiB with this package set, measured on release 0.2.1.
-An image with `TS_ENABLED='1'` has a root file system about 8 MB larger (D134), and `build.sh` stops above 15 000 000 bytes of it (R63a).
+What it does not take of the router's system partition (29 MiB) holds the settings, the persistent log, the data counters and the SMS archive: about 12.5 MiB with the package set of release 0.2.1, where it was measured; `tmux`, `mtr-nojson` and `vim` add about 0.7 MB to the root, so expect about 0.6 MiB less (estimate, D167).
+An image with `TS_ENABLED='1'` has a root file system about 8 MB larger (D134), and `build.sh` stops above 15 500 000 bytes of it (R63a).
 
 ## Changing the list
 
 - A row starts with the package names in backticks; names in parentheses are pulled in by them and are not asked for.
 - A package from the official feeds: its row here with the reason, and `PACKAGES` in `build.sh`; the full `tests/build/run.sh` fails when the two differ.
 - A package from outside the feeds: also its file in the group `extra` of `deps.lst`, with its sha256.
-- `tests/vm/build-image.sh` keeps its own list for the VM bench: the same without the speed test and QR packages, which no VM test uses. The same test compares it.
+- `tests/vm/build-image.sh` keeps its own list for the VM bench: the same without the speed test, QR and power-user packages (`tmux`, `mtr-nojson`, `vim`), which no VM test uses. The same test compares it.
+- A package of the device's default set that the image does not want: a row of "Removed from the default set" and `REMOVED_PACKAGES` in `build.sh`; the same test compares the two and checks the manifest.
 - When the package is a choice between ways to do something, the reason goes into a decision row of `SPEC.md` (D14, D91).

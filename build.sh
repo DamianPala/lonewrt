@@ -44,7 +44,11 @@ PACKAGES=(
     coreutils-timeout coreutils-stty
     speedtestcpp
     qrencode libjpeg-turbo-utils
+    tmux mtr-nojson vim
 )
+# The "Removed" table of packages.md (SPEC R2, D167): packages of the device's default set the image
+# does not want; run_imagebuilder passes each to ImageBuilder as -name
+REMOVED_PACKAGES=(ppp ppp-mod-pppoe kmod-ppp kmod-pppoe kmod-pppox)
 # The "Included" rows marked "only with TS_ENABLED='1'" (SPEC R63): added for a tailscale image only
 TS_PACKAGES=(tailscale kmod-tun)
 # A file only a tailscale image has, in the overlay render.py made (src/render.py TS_CONFIG_REL): the
@@ -55,7 +59,7 @@ TS_MARKER_REL=etc/config/tailscale
 # stand-in against it.
 TS_STANDIN_VERSIONS=(1.104.1)
 # R63a, D138: the most the root file system of a tailscale image may take, in bytes
-TS_ROOT_MAX_BYTES=15000000
+TS_ROOT_MAX_BYTES=15500000
 
 # Scratch directory of this run: the rendered overlay with the profile's secrets, ImageBuilder output
 TMP=
@@ -226,6 +230,7 @@ ts_check_image() {
 run_imagebuilder() {
     local rc=0 pkgs=("${PACKAGES[@]}")
     if [ "$WITH_TS" = 1 ]; then pkgs+=("${TS_PACKAGES[@]}"); fi
+    pkgs+=("${REMOVED_PACKAGES[@]/#/-}")
     exec 9<"$IB"
     flock 9
     SCRUB=$1

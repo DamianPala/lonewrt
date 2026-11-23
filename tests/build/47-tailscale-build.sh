@@ -7,7 +7,7 @@
 #   - /etc/lw-build of a tailscale image gets the line tailscale=<package version> (R63b), another
 #     image keeps its four lines, and the overlay of the other image holds no Tailscale file;
 #   - the key file is 0600 (R64b);
-#   - a root file system of 15 000 000 bytes passes, one byte more stops the build with no new
+#   - a root file system of 15 500 000 bytes passes, one byte more stops the build with no new
 #     image (R63a), and only for a tailscale image;
 #   - a package version other than 1.104.1 builds with a warning that names it, a revision of
 #     1.104.1 and 1.104.10 are told apart (R63g);
@@ -61,8 +61,13 @@ tsbuild() {
     LW_WORK=$W LW_ROOTFS=$FW/work/dl/x86/rootfs LW_DEPS_LIST=$SCRATCH/deps.lst LW_PROFILES=$P \
         LW_IMAGE=$I "$FW/build.sh" "$@"
 }
-# the sorted package names of a list
-base_packages() { sed -n '/^PACKAGES=(/,/^)/p' "$FW/build.sh" | sed '1d;$d' | tr ' ' '\n' | sed '/^$/d' | sort; }
+# the sorted package names of a list: PACKAGES, and the removals of REMOVED_PACKAGES as -name (D167)
+base_packages() {
+    {
+        sed -n '/^PACKAGES=(/,/^)/p' "$FW/build.sh" | sed '1d;$d' | tr ' ' '\n' | sed '/^$/d'
+        sed -n 's/^REMOVED_PACKAGES=(\(.*\))$/\1/p' "$FW/build.sh" | tr ' ' '\n' | sed '/^$/d;s/^/-/'
+    } | sort
+}
 sent_packages() { tr ' ' '\n' <"$FAKE_LOG/packages" | sed '/^$/d' | sort; }
 
 # a profile without Tailscale: the base packages, four lines in /etc/lw-build, no Tailscale file, and
@@ -92,12 +97,12 @@ key=$FAKE_LOG/files/etc/tailscale/lw-authkey
 [ -f "$I/fake-full-sysupgrade.bin" ] || fail "a good tailscale build published no image"
 ! grep -qF "$FAKE_TS_AUTHKEY" <<<"$err" || fail "the build output shows the auth key"
 
-# R63a: 15 000 000 bytes pass, one more stops the build with nothing new in image/
+# R63a: 15 500 000 bytes pass, one more stops the build with nothing new in image/
 newlog
-FAKE_ROOT_SIZE=15000000 tsbuild fake-full >/dev/null 2>&1 || fail "R63a: a root of 15 000 000 bytes was refused"
+FAKE_ROOT_SIZE=15500000 tsbuild fake-full >/dev/null 2>&1 || fail "R63a: a root of 15 500 000 bytes was refused"
 before=$(listing "$I")
 newlog
-FAKE_ROOT_SIZE=15000001 expect_fail_with "the root file system of the image is 15000001 bytes, over the limit of 15000000" \
+FAKE_ROOT_SIZE=15500001 expect_fail_with "the root file system of the image is 15500001 bytes, over the limit of 15500000" \
     tsbuild fake-full
 [ "$(listing "$I")" = "$before" ] || fail "R63a: a root over the limit changed image/: $(listing "$I")"
 

@@ -128,6 +128,7 @@ In Tailscale, **[limit what the router can reach](docs/tailscale.md#limit-what-t
 - **Only the MF289F.** Another LTE router that runs OpenWrt can be a starting point too, with a fork and some work: see [docs/porting.md](docs/porting.md).
 - **OpenWrt must run already.** Installing OpenWrt over the stock firmware is not covered here.
 - **No button recovery.** A broken image means opening the case and a serial console, so do not use lonewrt on a router you cannot afford to open.
+- **IPv4 only.** The router asks the operator for an IPv4 address only, so an operator that gives only IPv6 (for example Orange or Bouygues in France by default) does not work yet.
 - **Settings live in the image.** A button reset brings back the profile's settings, so a lasting change means a new build and a flash.
 
 ## Docs

@@ -576,7 +576,7 @@ const TS_KEY_FORMAT = /^tskey-auth-[A-Za-z0-9-]+$/;
 const TS_KEY_OTHER = /^tskey-(api|client)-/;
 // render.py reads the octets as numbers, so 192.168.01.1 is 192.168.1.0/24 there too
 const HOME_LAN = /^192\.168\.0?[01]\.[0-9]{1,3}$/;
-const TS_SIZE = 'With Tailscale the image is about 18 MB, and the router keeps about 4 to 6 MiB of free space instead of 12.5 MiB.';
+const TS_SIZE = 'With Tailscale the image is about 18 MB, and the router keeps about 4 MiB of free space instead of about 12 MiB.';
 const TS_SSH_ONLY = 'Without Telegram and SMS admins the router cannot send you the sign-in link: log in over SSH and run lw-tailscale link to get it.';
 const TS_LOG = 'With Tailscale on, debug keeps 1 MB of log, like info.';
 const TS_STOP = 'build.sh stops on this profile: a Tailscale key or LAN route is set while Tailscale is off. Set TS_ENABLED to 1, or clear TS_AUTHKEY and set TS_ADVERTISE_LAN to 0.';

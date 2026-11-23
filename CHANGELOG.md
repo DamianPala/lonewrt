@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- `tmux`, `mtr-nojson` and `vim` in every image, for working on the router over SSH: `tmux` keeps a session alive when the link drops, `mtr` shows the packet loss of each hop on the LTE path, and `vim` is a fuller editor than the router's `vi`. They take about 0.7 MB of the router's free space
+
+### Changed
+
+- The packages `ppp`, `ppp-mod-pppoe`, `kmod-ppp`, `kmod-pppoe` and `kmod-pppox` are no longer in the image: the LTE link is QMI and does not use PPP. A router with a PPP or PPPoE connection set up by hand would need them installed again
+- The size limit of a Tailscale image's root is 15 500 000 bytes instead of 15 000 000, so the tools above fit. The free space with Tailscale on is about 4 MiB (about 3.9 MiB at the limit; estimates until measured on a router)
+
 ### Fixed
 
 - The router's log no longer fills with IPv6 warnings: the LAN is IPv4 only, like the LTE link. The router sent no IPv6 default route, so its address service logged a warning about 230 times a day, over a quarter of the persistent log. The image no longer turns on router advertisements, DHCPv6 or a local IPv6 prefix on the LAN. Devices on the LAN keep their IPv4 addresses and internet access

@@ -57,6 +57,11 @@ check_manifest() {
             if [[ $name == $pkg ]]; then fail "manifest has rejected $name"; fi
         done <<<"$installed"
     done < <(packages_in 'Left out')
+    # D167: the packages the image removes from the default set are not installed (a dependency that
+    # needs one of them would bring it back, and then the build fails or the manifest has it)
+    while read -r pkg; do
+        ! grep -qx -- "$pkg" <<<"$installed" || fail "D167: the manifest has the removed package $pkg"
+    done < <(packages_in Removed)
 }
 
 # check_qmi ROOTFS: R12d, D82. The image's qmi.sh is the file of the uqmi package that went into this
@@ -87,6 +92,21 @@ stray=$(awk '/^## /{on = /Included|Left out/; next}
     on && /^\|/ && !/^\| `/ && !/^\| Package / && !/^\|---/' "$FW/packages.md")
 [ -z "$stray" ] || fail "packages.md: a table row does not start with a package name in backticks: ${stray:0:60}"
 
+# D167: build.sh removes exactly the "Removed" table from the default set, and asks for the power-user tools
+removed_want=$(packages_in Removed | sort)
+[ -n "$removed_want" ] || fail "packages.md has no \"Removed from the default set\" rows"
+removed_have=$(sed -n 's/^REMOVED_PACKAGES=(\(.*\))$/\1/p' "$FW/build.sh" | tr ' ' '\n' | sort)
+[ "$removed_want" = "$removed_have" ] ||
+    fail "build.sh REMOVED_PACKAGES differ from packages.md: $(diff <(echo "$removed_want") <(echo "$removed_have") | tr '\n' ' ')"
+for pkg in ppp ppp-mod-pppoe kmod-ppp kmod-pppoe kmod-pppox; do
+    grep -qxF "$pkg" <<<"$removed_have" || fail "D167: $pkg is not removed"
+    ! packages_of "$FW/build.sh" | grep -qxF "$pkg" || fail "D167: PACKAGES of build.sh asks for the removed $pkg"
+done
+for pkg in tmux mtr-nojson vim; do
+    packages_in Included | grep -qxF "$pkg" || fail "D167: packages.md does not include $pkg"
+    packages_of "$FW/build.sh" | grep -qxF "$pkg" || fail "D167: build.sh does not install $pkg"
+done
+
 # build.sh installs exactly the "Included" table minus the default-set row and the rows marked as a
 # tailscale image's only, which it adds as TS_PACKAGES for a tailscale profile (R63)
 DEFAULT_SET='uqmi|kmod-.*|wpad-basic-mbedtls|firewall4|dnsmasq|dropbear'
@@ -102,7 +122,7 @@ ts_have=$(sed -n 's/^TS_PACKAGES=(\(.*\))$/\1/p' "$FW/build.sh" | tr ' ' '\n' | 
 # The VM bench installs the same list without the packages no VM test uses, plus the device
 # defaults that the x86 profile does not bring (tests/vm/README.md)
 vm_want=$({
-    grep -vxE 'speedtestcpp|qrencode|libjpeg-turbo-utils' <<<"$have"
+    grep -vxE 'speedtestcpp|qrencode|libjpeg-turbo-utils|tmux|mtr-nojson|vim' <<<"$have"
     printf '%s\n' uqmi kmod-usb-net-qmi-wwan kmod-usb-serial-option wpad-basic-mbedtls
 } | sort)
 vm_have=$(packages_of "$FW/tests/vm/build-image.sh")
@@ -203,6 +223,6 @@ grep -qF "option log_stdout '0'" "$R/etc/config/tailscale" || fail "R63h: the im
 [ "$(grep -rlaF "$FAKE_TS_AUTHKEY" "$R")" = "$R/etc/tailscale/lw-authkey" ] ||
     fail "R64b: the auth key is in other files than lw-authkey"
 root_bytes=$(tar -tvf "$I/fake-full-sysupgrade.bin" --wildcards '*/root' | awk '{print $3}')
-[ "$root_bytes" -le 15000000 ] || fail "R63a: the root of the tailscale image is $root_bytes bytes"
+[ "$root_bytes" -le 15500000 ] || fail "R63a: the root of the tailscale image is $root_bytes bytes"
 echo "tailscale image: tailscale $ts_version, root $root_bytes bytes" >&2
 echo "ok: $(stat -c %s "$DI/generic-sysupgrade.bin") bytes (scratch image, removed with the test)"
