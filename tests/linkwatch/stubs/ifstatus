@@ -1,0 +1,16 @@
+#!/bin/sh
+# Test stand-in for ifstatus in the linkwatch tests: prints $LW_TEST/ifstatus/<iface>.json like the
+# stand-in of tests/stubs, and when $LW_TEST/ifbirth holds a second of the test clock, puts an
+# "uptime" into the status of wwan that grows with the clock, as netifd's does (a start of the
+# interface that came up at that second). A test changes the birth to model another start.
+T=${LW_TEST:-/lwtest}
+out=$(cat "$T/ifstatus/$1.json" 2>/dev/null) || {
+    echo "Interface $1 not found" >&2
+    exit 1
+}
+if [ "$1" = wwan ] && [ -s "$T/ifbirth" ]; then
+    read -r now _ <"${LW_UPTIME_FILE:-$T/uptime}"
+    up=$((${now%%.*} - $(cat "$T/ifbirth")))
+    out=$(printf '%s' "$out" | sed "s/^{/{\"uptime\":$up,/")
+fi
+printf '%s\n' "$out"

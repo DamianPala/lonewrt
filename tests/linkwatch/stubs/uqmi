@@ -13,13 +13,19 @@
 # a call takes the first line and removes it, the last line stays for every later call. Special
 # lines: @EMPTY (no output), @FAIL (exit 1), @HANG (never answers), @SLOW N (the test clock moves
 # N seconds, then the normal answer). A numeric answer to start turns the session up.
-# Every call is recorded in $LW_TEST/uqmi-calls, the arguments as they came.
+# Sessions per client: a file session-<cid> (the number of --set-client-id wds,<cid>) overrides
+# `session` for that client, so a test can keep the IPv6 client (18) up while IPv4 (17) is lost. A
+# wildcard stop (0xffffffff) takes down every session file, the widest effect it may have on the
+# real modem (unmeasured, SPEC Unverified), so a test sees a watcher that sends it next to a sibling.
+# Hook: an executable $LW_TEST/on-uqmi runs after each answered call with the kind as its argument.
+# Every call is recorded in $LW_TEST/uqmi-calls, the arguments as they came, and in
+# $LW_TEST/uqmi-calls.<cid> for a call on a client.
 T=${LW_TEST:-/lwtest}
 U=$T/uqmi
 mkdir -p "$U"
 echo "$*" >>"$T/uqmi-calls"
 
-dev='' kind='' cid=''
+dev='' kind='' cid='' stoparg=''
 while [ $# -gt 0 ]; do
     case $1 in
         -s) shift ;;
@@ -30,13 +36,17 @@ while [ $# -gt 0 ]; do
         --get-current-settings) kind=settings; shift ;;
         --get-serving-system) kind=serving; shift ;;
         --start-network) kind=start; shift ;;
-        --stop-network) kind=clear; shift 2 ;;
-        --apn | --auth-type | --username | --password) shift 2 ;;
+        --stop-network) kind=clear; stoparg=$2; shift 2 ;;
+        --apn | --profile | --auth-type | --username | --password) shift 2 ;;
         --autoconnect) shift ;;
         *) echo "stub uqmi: unsupported $1" >&2; exit 2 ;;
     esac
 done
 [ -e "$dev" ] || { echo "Failed to connect to service" >&2; exit 1; }
+n=${cid#wds,}
+[ -z "$n" ] || echo "$*" >>"$T/uqmi-calls.$n"
+sf=$U/session
+[ -z "$n" ] || [ ! -e "$U/session-$n" ] || sf=$U/session-$n
 
 get() { cat "$U/$1" 2>/dev/null || echo "$2"; }
 
@@ -62,13 +72,14 @@ esac
 if [ -n "$a" ]; then
     case $kind:$a in
         start:*[!0-9]*) ;;
-        start:*) echo up >"$U/session"; get newaddr 10.4.5.6 >"$U/addr" ;;
+        start:*) echo up >"$sf"; get newaddr 10.4.5.6 >"$U/addr" ;;
     esac
     printf '%s\n' "$a"
+    [ ! -x "$T/on-uqmi" ] || "$T/on-uqmi" "$kind"
     exit 0
 fi
 
-up=$(get session up)
+up=$(cat "$sf" 2>/dev/null || echo up)
 case $kind in
     data) [ "$up" = up ] && echo '"connected"' || echo '"disconnected"' ;;
     settings)
@@ -83,12 +94,17 @@ case $kind in
     serving) printf '{"registration":"%s","plmn_mcc":297}\n' "$(get reg registered)" ;;
     start)
         if [ "$(get reg registered)" = registered ]; then
-            echo up >"$U/session"
+            echo up >"$sf"
             get newaddr 10.4.5.6 >"$U/addr"
             get handle 3203210528
         else
             echo '"Call failed"'
         fi
         ;;
-    clear) : ;;
+    clear)
+        if [ "$stoparg" = 0xffffffff ]; then
+            for f in "$U"/session*; do [ ! -e "$f" ] || echo down >"$f"; done
+        fi
+        ;;
 esac
+[ ! -x "$T/on-uqmi" ] || "$T/on-uqmi" "$kind"

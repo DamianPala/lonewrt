@@ -1,7 +1,6 @@
 # R49d: a session not restored 20 s after the loss was seen gets exactly one `ifup wwan` and one info
 # line, and nothing more for this incident, however many passes follow; a new incident acts again
-# only after a pass has seen the session healthy. A PDP type other than IPv4 goes straight to the
-# escalation, and an `ip` or `ipv4` of any letter case does not.
+# only after a pass has seen the session healthy. The PDP type of the configuration changes nothing.
 # shellcheck source=tests/lib.sh
 . /fw/tests/lib.sh
 # shellcheck source=tests/linkwatch/helpers.inc
@@ -66,18 +65,11 @@ rm -f /tmp/lw-linkwatch/escalated
 lw-linkwatch once
 ! grep -q '^kill' "$EVENTS" || lw_fail "a signal without a pid file"
 
-# PDP types: ipv6 and ipv4v6 are not restored in place, at once and without start-network
-for t in ipv6 ipv4v6; do
-    lk_setup
-    uci set network.wwan.pdptype=$t
-    uci commit network
-    lk_lost
-    lw-linkwatch once
-    lw_expect_eq "$(cat "$EVENTS")" "ifup wwan" "events with pdptype $t"
-    lw_expect_eq "$(lk_calls_of --start-network)" 0 "start-network calls with pdptype $t"
-    lk_lines | grep -qF "data session lost, pdptype $t is not restored in place, ifup wwan" || lw_fail "info line: $(lk_lines)"
-done
-for t in ip IP ipv4 IPv4; do
+# R49a, D177: the configured PDP type does not decide, the session does. A session with the IPv4
+# call alone (netifd's data, the fixture of lk_setup) is restored in place with auto and forced
+# IPv6 configured as with forced IPv4: start-network, no ifup (tests/linkwatch/r49a-session-gate.sh
+# has the sessions without a native IPv4 call)
+for t in ipv6 ipv4v6 ip IP ipv4 IPv4; do
     lk_setup
     uci set network.wwan.pdptype=$t
     uci commit network

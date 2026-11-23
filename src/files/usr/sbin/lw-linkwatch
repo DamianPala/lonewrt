@@ -1,5 +1,5 @@
 #!/bin/sh
-# Data session watcher (SPEC R49 to R49g, D80). When the mobile network detaches the modem and the
+# Data session watcher (SPEC R49 to R49i, D80, D177). When the mobile network detaches the modem and the
 # modem attaches again by itself, the call of netifd stays dead: wwan0 keeps its old address and
 # netifd shows wwan as up, but the modem is "Out of call". This script looks every 5 s, and when the
 # session is lost with the modem registered it starts the call again on netifd's own QMI client and
@@ -15,6 +15,12 @@
 # shows wwan as up, because qmi.sh uses uqmi while it sets the interface up (R49a). Every call has
 # -t and a timeout around it: uqmi is known to hang. State lives in RAM under $LK_RUN, written only
 # when something changes, so a healthy pass writes nothing to syslog or flash (R49f).
+#
+# The session decides, not network.wwan.pdptype (D177): the watcher works on the native IPv4 call
+# in netifd's data (cid_4, pdh_4), on that client alone, and checks before every modem call, signal
+# and escalation that netifd still shows the same session (R49h). An IPv6 call next to it (cid_6)
+# is never polled, stopped or restarted, and `ifup wwan` never goes out for it unless a family
+# check of this session says IPv6 is silent (R49d, D196, D200).
 
 # shellcheck source=src/files/usr/lib/lw/common.sh
 . /usr/lib/lw/common.sh
@@ -32,6 +38,8 @@ LK_HEARTBEAT=${LW_LINKWATCH_HEARTBEAT:-300}
 LK_AT_LIMIT=${LW_LINKWATCH_AT_LIMIT:-5}
 # timeout around each uqmi call; empty = the call's own -t plus 2 s
 LK_UQMI_LIMIT=${LW_LINKWATCH_UQMI_LIMIT:-}
+# R49d: the latest family check of the IPv6 call (lk_v6_silent); tests put theirs here
+LK_V6_RESULT=${LW_LINKWATCH_V6_RESULT:-/tmp/lw-family/ipv6}
 # R49d: seconds from the first sight of the loss to `ifup wwan`
 LK_GIVE_UP=20
 # R49c: a renew that did not bring the address is repeated after this many seconds
@@ -51,6 +59,13 @@ LK_SLOWEST=0
 LK_NAP=
 LK_NOTED=
 LK_OUT=
+# R49h: why an incident ended without being ours any more (2 down, 3 another session), the session
+# it began in, and whether another call (IPv6) may exist next to its IPv4 call
+LK_ENDED=
+LK_SID0=
+LK_BIRTH0=
+LK_SIB=
+LK_STATIC=
 
 # lk_cs: uptime in centiseconds in LK_CS, with shell builtins only (no fork per reading); the clock
 # is the uptime file of common.sh because the router has no RTC (D9) and tests move that file.
@@ -113,15 +128,70 @@ lk_uqmi() {
     return "$_lk_rc"
 }
 
-# lk_netifd: LK_UP, LK_L3, LK_CID, LK_PDH from the status of wwan; fails unless netifd shows it up.
-# cid_4 is the QMI client of netifd's session, pdh_4 the call handle it started (qmi.sh).
+# lk_netifd: the status of wwan in LK_UP, LK_L3, LK_UPT (seconds up), LK_CID, LK_PDH (the IPv4 call
+# of netifd's session, the client and the handle the handler started) and LK_CID6, LK_PDH6 (the
+# IPv6 call, R73e); fails unless netifd shows the interface up.
 lk_netifd() {
-    LK_UP='' LK_L3='' LK_CID='' LK_PDH=''
+    LK_UP='' LK_L3='' LK_UPT='' LK_CID='' LK_PDH='' LK_CID6='' LK_PDH6=''
     _lk_j=$(timeout 5 ifstatus "$LK_IFACE" 2>/dev/null) || return 1
     eval "$(printf '%s\n' "$_lk_j" | jsonfilter -e 'LK_UP=@.up' -e 'LK_L3=@.l3_device' \
-        -e 'LK_CID=@.data.cid_4' -e 'LK_PDH=@.data.pdh_4' 2>/dev/null)"
+        -e 'LK_UPT=@.uptime' -e 'LK_CID=@.data.cid_4' -e 'LK_PDH=@.data.pdh_4' \
+        -e 'LK_CID6=@.data.cid_6' -e 'LK_PDH6=@.data.pdh_6' 2>/dev/null)"
     # jsonfilter writes a JSON true as 1
-    [ "$LK_UP" = 1 ]
+    [ "$LK_UP" = 1 ] || return 1
+    lk_session
+}
+
+# lk_session: LK_SID, the IPv4 call as netifd published it, and LK_BIRTH, the second on the clock of
+# lk_cs at which this start of the interface came up (empty when netifd gives no uptime). The same
+# client and handle with another birth are another start (R49h): a start can get the numbers again.
+lk_session() {
+    LK_SID=$LK_CID/$LK_PDH
+    LK_BIRTH=
+    case $LK_UPT in '' | *[!0-9]*) return 0 ;; esac
+    lk_cs
+    LK_BIRTH=$((LK_CS / 100 - LK_UPT))
+}
+
+# lk_native4: R49a, netifd's data holds a native IPv4 call, a client and a numeric (signed) handle.
+lk_native4() {
+    case $LK_CID in '' | *[!0-9]*) return 1 ;; esac
+    case ${LK_PDH#-} in '' | *[!0-9]*) return 1 ;; esac
+}
+
+# lk_same SID BIRTH: that session is the one netifd shows now; the births may differ by the rounding
+# of two readings and by how long a status read took (up to its 5 s limit), and are not compared
+# when one is unknown. A new start of the interface takes about 14 s (D82), well apart from that.
+lk_same() {
+    [ "$1" = "$LK_SID" ] || return 1
+    [ -n "$2" ] && [ "$2" != - ] && [ -n "$LK_BIRTH" ] || return 0
+    _lk_d=$(($2 - LK_BIRTH))
+    [ "$_lk_d" -ge -6 ] && [ "$_lk_d" -le 6 ]
+}
+
+# lk_own: R49h. netifd shows wwan up with the IPv4 call the incident began with (0); else 1, and
+# LK_ENDED is 2 (wwan is down) or 3 (another session, or no IPv4 call any more). It runs before
+# every modem call, signal to udhcpc and escalation. Another call of the session, once seen in this
+# incident, stays in LK_SIB, whatever the data says later (R49c, D196).
+lk_own() {
+    [ -z "$LK_ENDED" ] || return 1
+    if ! lk_netifd; then
+        LK_ENDED=2
+        return 1
+    fi
+    if ! lk_native4 || ! lk_same "$LK_SID0" "$LK_BIRTH0"; then
+        LK_ENDED=3
+        return 1
+    fi
+    [ -z "$LK_CID6$LK_PDH6" ] || LK_SIB=1
+    return 0
+}
+
+# lk_call LABEL MS ARGS...: lk_uqmi after the ownership check; nothing is asked of the modem when
+# the session is not ours any more (LK_ENDED says so).
+lk_call() {
+    lk_own || return 1
+    lk_uqmi "$@" || :
 }
 
 # lk_dev_addr DEVICE: the first IPv4 address of the network device.
@@ -174,12 +244,49 @@ lk_snapshot() {
     done
 }
 
+# lk_v6_silent: R49d, true only when a family check of this very session, taken after the loss was
+# seen, got no IPv6 answer. The checks write one line to $LK_V6_RESULT: the session (client/handle
+# of the IPv4 call as netifd published it), its birth (or -), the second on the clock of
+# common.sh when the check ended, and `answer` or `none`. A missing or unreadable file, another
+# word, an older check, one of another session: not silent, so the sibling is kept (D196).
+lk_v6_silent() {
+    [ -r "$LK_V6_RESULT" ] || return 1
+    _lk_rs='' _lk_rb='' _lk_rt='' _lk_rr=''
+    read -r _lk_rs _lk_rb _lk_rt _lk_rr <"$LK_V6_RESULT" || :
+    [ "$_lk_rr" = none ] || return 1
+    case $_lk_rt in '' | *[!0-9]*) return 1 ;; esac
+    # a birth that is not a number would end the shell in lk_same's arithmetic
+    case $_lk_rb in -) ;; '' | *[!0-9]*) return 1 ;; esac
+    lk_same "$_lk_rs" "$_lk_rb" || return 1
+    [ "$_lk_rt" -ge $((LK_T0 / 100)) ]
+}
+
+# lk_ended: an incident that stops because the session is not ours (R49f).
+lk_ended() {
+    if [ "$LK_ENDED" = 2 ]; then
+        lk_elapsed
+        lw_log "$LK_TAG" "data session lost, netifd took $LK_IFACE down after $LK_EL s, nothing more to do"
+    else
+        lw_log "$LK_TAG" "data session lost, the session changed, nothing more to do"
+    fi
+}
+
 # lk_escalate REASON: R49d. One `ifup wwan`, then nothing more for this incident: the marker stays
-# until a pass sees the session healthy.
+# until a pass sees the session healthy. While another call of the session may exist, `ifup` goes
+# out only on a session-matched IPv6 result of silence; otherwise the incident ends with IPv6 kept
+# (D177, D196, D200). The marker names the session, so another session is not held by it (R49h).
 lk_escalate() {
-    lw_log "$LK_TAG" "data session lost, $1, ifup $LK_IFACE"
+    if ! lk_own; then
+        lk_ended
+        return
+    fi
     mkdir -p "$LK_RUN"
-    : >"$LK_RUN/escalated"
+    echo "$LK_SID0 ${LK_BIRTH0:--}" >"$LK_RUN/escalated"
+    if [ -n "$LK_SIB" ] && ! lk_v6_silent; then
+        lw_log "$LK_TAG" "data session lost, $1, IPv6 kept, no ifup"
+        return
+    fi
+    lw_log "$LK_TAG" "data session lost, $1, ifup $LK_IFACE"
     timeout 20 ifup "$LK_IFACE"
 }
 
@@ -230,6 +337,14 @@ lk_release_wait() {
 # The pid file is netifd's own; the name check keeps a stale pid file from sending a signal that
 # kills some other process.
 lk_dhcp_kick() {
+    if [ -n "$LK_STATIC" ]; then
+        # R73p: dhcp is 0, netifd holds a static address and no udhcpc runs for it
+        lk_elapsed
+        [ "$LK_KICK_AT" -ge 0 ] || lk_idbg "static IPv4 (dhcp 0), no lease to renew"
+        LK_KICK_AT=$LK_EL
+        return 0
+    fi
+    lk_own || return 1
     _lk_pf=/var/run/udhcpc-$LK_NET.pid
     _lk_pid=
     [ ! -r "$_lk_pf" ] || read -r _lk_pid <"$_lk_pf"
@@ -245,6 +360,13 @@ lk_dhcp_kick() {
     _lk_before=$(lk_dev_addr "$LK_NET")
     "$LK_KILL" -USR2 "$_lk_pid" || return 1
     lk_release_wait "$_lk_before"
+    # the release took a moment: only a session seen to be another one loses the renew; after a
+    # failed status read or with wwan down the released udhcpc would otherwise sit without an
+    # address until watchcat acts, and a renew on a dying udhcpc does no harm (R49c, R49h)
+    if ! lk_own && [ "$LK_ENDED" = 3 ]; then
+        return 1
+    fi
+    [ "$(cat "/proc/$_lk_pid/comm" 2>/dev/null)" = udhcpc ] || return 1
     "$LK_KILL" -USR1 "$_lk_pid" || return 1
     lk_elapsed
     LK_KICK_AT=$LK_EL
@@ -254,7 +376,8 @@ lk_dhcp_kick() {
 # lk_start: one try to start the call again on netifd's client. The arguments are those of qmi.sh,
 # each only when the option of network.wwan is set.
 lk_start() {
-    lk_uqmi serving 3000 --get-serving-system
+    lk_call serving 3000 --get-serving-system
+    [ -z "$LK_ENDED" ] || return
     _lk_reg=$(printf '%s\n' "$LK_OUT" | jsonfilter -e '@.registration' 2>/dev/null)
     if [ "$_lk_reg" != registered ]; then
         LK_UNREG=1
@@ -262,17 +385,22 @@ lk_start() {
         return
     fi
     set -- --set-client-id "wds,$LK_CID" --start-network
-    for _lk_o in apn:--apn auth:--auth-type username:--username password:--password; do
+    for _lk_o in apn:--apn profile:--profile auth:--auth-type username:--username password:--password; do
         _lk_v=$(uci -q get "network.$LK_IFACE.${_lk_o%%:*}")
         [ -z "$_lk_v" ] || set -- "$@" "${_lk_o#*:}" "$_lk_v"
     done
-    lk_uqmi start 5000 "$@" --autoconnect
+    # R73g: the IPv4 call has the autoconnect unless the option is 0
+    [ "$(uci -q get "network.$LK_IFACE.autoconnect")" = 0 ] || set -- "$@" --autoconnect
+    lk_call start 5000 "$@"
+    [ -z "$LK_ENDED" ] || return
     # uqmi prints the handle as a signed number: -882662896 on the router
     case ${LK_OUT#-} in '' | *[!0-9]*)
         lk_idbg "start-network answered '$(lk_ascii "$LK_OUT")'"
-        # qmi.sh clears this state the same way before it tries again
-        [ "$LK_OUT" != '"No effect"' ] ||
+        # qmi.sh clears this state the same way before it tries again; the wildcard stop is for a
+        # session with this call alone (R49c, D196): next to another call it may take that down too
+        if [ "$LK_OUT" = '"No effect"' ] && lk_own && [ -z "$LK_SIB" ]; then
             lk_uqmi clear 3000 --set-client-id "wds,$LK_CID" --stop-network 0xffffffff --autoconnect
+        fi
         return
         ;;
     esac
@@ -285,7 +413,8 @@ lk_start() {
 # lk_verify: the call is up; done (0) when the device has the address the modem reports, else the
 # lease is renewed again every LK_KICK_EVERY seconds.
 lk_verify() {
-    lk_uqmi settings 3000 --set-client-id "wds,$LK_CID" --get-current-settings
+    lk_call settings 3000 --set-client-id "wds,$LK_CID" --get-current-settings
+    [ -z "$LK_ENDED" ] || return 1
     LK_NEW=$(printf '%s\n' "$LK_OUT" | jsonfilter -e '@.ipv4.ip' 2>/dev/null)
     if [ -z "$LK_NEW" ]; then
         lk_idbg "connected, no IPv4 address in the settings ('$(lk_ascii "$LK_OUT")')"
@@ -306,10 +435,10 @@ lk_verify() {
 }
 
 # lk_step: one look and, when needed, one action. 0 = restored, 1 = not yet, 2 = netifd took wwan
-# down meanwhile (someone restarted the interface, so the session is not ours any more).
+# down meanwhile (someone restarted the interface, so the session is not ours any more); a session
+# that is not ours also sets LK_ENDED, which lk_incident reads first.
 lk_step() {
-    lk_netifd || return 2
-    lk_uqmi data 3000 --get-data-status
+    lk_call data 3000 --set-client-id "wds,$LK_CID" --get-data-status || return 1
     case $LK_OUT in
         '"connected"')
             lk_verify
@@ -326,7 +455,9 @@ lk_incident() {
     lk_cs
     LK_T0=$LK_CS
     LK_KICK_AT=-100
-    LK_HANDLE='' LK_NEW='' LK_UNREG=''
+    LK_HANDLE='' LK_NEW='' LK_UNREG='' LK_SIB='' LK_STATIC=''
+    [ -z "$LK_CID6$LK_PDH6" ] || LK_SIB=1
+    [ "$(uci -q get "network.$LK_IFACE.dhcp")" != 0 ] || LK_STATIC=1
     LK_NET=$LK_L3
     if [ -z "$LK_NET" ]; then
         LK_NET=$(timeout 5 ifstatus "${LK_IFACE}_4" 2>/dev/null | jsonfilter -e '@.l3_device' 2>/dev/null)
@@ -334,18 +465,10 @@ lk_incident() {
     LK_OLD=
     [ -z "$LK_NET" ] || LK_OLD=$(lk_dev_addr "$LK_NET")
     lk_idbg "lost: data status disconnected, settings Out of call, device ${LK_NET:-unknown}, address ${LK_OLD:-none}, client $LK_CID, handle ${LK_PDH:-none}"
-    # busybox tr has no character classes
-    # shellcheck disable=SC2018,SC2019
-    _lk_pdp=$(uci -q get "network.$LK_IFACE.pdptype" | tr 'A-Z' 'a-z')
     if [ -z "$LK_NET" ]; then
         lk_escalate "no network device name from netifd"
         return
     fi
-    case $_lk_pdp in '' | ip | ipv4) ;; *)
-        lk_escalate "pdptype $_lk_pdp is not restored in place"
-        return
-        ;;
-    esac
     while :; do
         lk_elapsed
         if [ "$LK_EL" -ge "$LK_GIVE_UP" ]; then
@@ -355,14 +478,13 @@ lk_incident() {
         LK_WAIT=$LK_STEP
         _lk_s=0
         lk_step || _lk_s=$?
+        if [ -n "$LK_ENDED" ]; then
+            lk_ended
+            return
+        fi
         case $_lk_s in
             0)
                 lk_restored
-                return
-                ;;
-            2)
-                lk_elapsed
-                lw_log "$LK_TAG" "data session lost, netifd took $LK_IFACE down after $LK_EL s, nothing more to do"
                 return
                 ;;
         esac
@@ -383,11 +505,16 @@ lk_healthy() {
 lk_pass() {
     LK_PASSES=$((LK_PASSES + 1))
     lk_netifd || return 0
+    # R49a, D177: the session decides, not the configured pdptype. Without a native IPv4 call in
+    # netifd's data (an IPv6-only session, or a start that has not published yet) no call at all.
+    lk_native4 || return 0
     LK_DEV=$(uci -q get "network.$LK_IFACE.device")
     [ -n "$LK_DEV" ] || LK_DEV=/dev/cdc-wdm0
     [ -e "$LK_DEV" ] || return 0
     ! lk_paused || return 0
-    lk_uqmi data 3000 --get-data-status
+    # R49h: this is the session of the pass, and of the incident that may follow
+    LK_ENDED='' LK_SID0=$LK_SID LK_BIRTH0=$LK_BIRTH
+    lk_uqmi data 3000 --set-client-id "wds,$LK_CID" --get-data-status
     case $LK_OUT in
         '"connected"')
             lk_healthy
@@ -399,19 +526,25 @@ lk_pass() {
             return 0
             ;;
     esac
-    if [ -z "$LK_CID" ]; then
-        lk_dbg "no cid_4 in the data of netifd, cannot look at the call, no action"
-        return 0
-    fi
-    lk_uqmi settings 3000 --set-client-id "wds,$LK_CID" --get-current-settings
+    lk_call settings 3000 --set-client-id "wds,$LK_CID" --get-current-settings
+    [ -z "$LK_ENDED" ] || return 0
     if [ "$LK_OUT" != '"Out of call"' ]; then
         lk_dbg "data status disconnected but settings answer '$(lk_ascii "$LK_OUT")', no action"
         return 0
     fi
     if [ -f "$LK_RUN/escalated" ]; then
-        [ -n "$LK_NOTED" ] || lk_dbg "session still lost, no action after the escalation until it is healthy"
-        LK_NOTED=1
-        return 0
+        _lk_ms='' _lk_mb=''
+        read -r _lk_ms _lk_mb <"$LK_RUN/escalated" || :
+        if lk_same "$_lk_ms" "$_lk_mb"; then
+            [ -n "$LK_NOTED" ] || lk_dbg "session still lost, no action after the escalation until it is healthy"
+            LK_NOTED=1
+            return 0
+        fi
+        # R49h: the marker is that of an earlier session (a start gave the same numbers again, or
+        # the service was replaced); this session is a new incident
+        rm -f "$LK_RUN/escalated"
+        LK_NOTED=
+        lk_dbg "the escalation was for another session, watching this one"
     fi
     lk_incident
 }

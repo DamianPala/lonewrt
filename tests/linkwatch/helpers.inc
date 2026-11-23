@@ -19,14 +19,16 @@ lk_setup() {
     lw_setup
     # a test may set the world up more than once: nothing of the earlier one stays
     rm -rf "$T/uqmi" "$T/addr" "$T/on-sleep" "$T/naps" "$T/syslog.prio" "$T/dhcp-deaf" "$T/release-delay" \
-        "$T/release-never" "$T/release-replace" "$T/release-pending" "$T/iplooks" "$T/usr1-saw" "$T/usr1-sleeps" "$T/usr1-looks" /tmp/lw-linkwatch
+        "$T/release-never" "$T/release-replace" "$T/release-pending" "$T/iplooks" "$T/usr1-saw" "$T/usr1-sleeps" "$T/usr1-looks" /tmp/lw-linkwatch \
+        "$T/on-uqmi" "$T/on-kill" /tmp/lw-family "$T"/uqmi-calls.*
+    unset LK_IFBIRTH LK_CID4 LK_PDH4
     PATH=/fw/tests/linkwatch/stubs:$PATH
     export PATH LW_LINKWATCH_KILL=/fw/tests/linkwatch/stubs/lwkill LW_LINKWATCH_UQMI_LIMIT=2
     mkdir -p "$T/uqmi" "$T/addr" /var/run
     : >/tmp/cdc-wdm0
     uci set network.wwan.device=/tmp/cdc-wdm0
     uci set network.wwan.pdptype=ipv4
-    for o in apn auth username password; do uci -q delete network.wwan.$o || :; done
+    for o in apn auth username password profile autoconnect dhcp; do uci -q delete network.wwan.$o || :; done
     uci commit network
     lk_netifd up
     lk_healthy
@@ -40,10 +42,37 @@ lk_setup() {
     echo bound >"$T/dhcp-state"
 }
 
-# lk_netifd up|down: what `ifstatus wwan` says
+# lk_netifd up|down [SHAPE]: what `ifstatus wwan` says. SHAPE is the data the handler published
+# (R73e): v4 (default: client 17, handle 3203210528), dual (also client 18, handle 3203210529), v6
+# (the IPv6 call alone), v4half (IPv4 and an IPv6 client without a handle: its state is unknown).
+# LK_IFBIRTH, when set, is the clock second at which this start of the interface came up (the
+# stand-in ifstatus then reports an "uptime"); LK_CID4 and LK_PDH4 change the numbers.
 lk_netifd() {
-    printf '{"up":%s,"l3_device":"wwan0","data":{"cid_4":"17","pdh_4":"3203210528"}}\n' \
-        "$([ "$1" = up ] && echo true || echo false)" >"$T/ifstatus/wwan.json"
+    if [ -n "${LK_IFBIRTH:-}" ]; then echo "$LK_IFBIRTH" >"$T/ifbirth"; else rm -f "$T/ifbirth"; fi
+    _d4=\"cid_4\":\"${LK_CID4:-17}\",\"pdh_4\":\"${LK_PDH4:-3203210528}\"
+    _d6=\"cid_6\":\"18\",\"pdh_6\":\"3203210529\"
+    case ${2:-v4} in
+        v4) _d=$_d4 ;;
+        dual) _d=$_d4,$_d6 ;;
+        v6) _d=$_d6 ;;
+        v4half) _d=$_d4,\"cid_6\":\"18\" ;;
+        *) lw_fail "lk_netifd: shape $2" ;;
+    esac
+    printf '{"up":%s,"l3_device":"wwan0","data":{%s}}\n' \
+        "$([ "$1" = up ] && echo true || echo false)" "$_d" >"$T/ifstatus/wwan.json"
+}
+
+# lk_dual: both calls published, the IPv6 client (18) up in the modem's model
+lk_dual() {
+    lk_netifd up dual
+    echo up >"$T/uqmi/session-18"
+}
+
+# lk_v6result SESSION BIRTH SECONDS WORD: the latest family check of the IPv6 call, as the
+# watcher reads it (R49d)
+lk_v6result() {
+    mkdir -p /tmp/lw-family
+    echo "$1 $2 $3 $4" >/tmp/lw-family/ipv6
 }
 
 # lk_healthy / lk_lost: the modem's call is up at the old address, or lost while the device keeps

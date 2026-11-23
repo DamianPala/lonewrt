@@ -8,7 +8,8 @@
 # $LW_TEST/release-replace instead of going when that file exists.
 # What the watcher had done when USR1 came is kept for the tests: $LW_TEST/usr1-saw (gone or
 # present), usr1-sleeps (naps so far), usr1-looks (looks at the address since USR2). Nothing is
-# signalled for real.
+# signalled for real. An executable $LW_TEST/on-kill runs after each signal (the tests change the
+# world from there) with the signal name as its argument.
 T=${LW_TEST:-/lwtest}
 sig=${1#-}
 pid=$2
@@ -35,3 +36,4 @@ case $sig in
         echo bound >"$T/dhcp-state"
         ;;
 esac
+[ ! -x "$T/on-kill" ] || "$T/on-kill" "$sig"
