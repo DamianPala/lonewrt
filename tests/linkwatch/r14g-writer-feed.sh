@@ -63,6 +63,73 @@ lw_expect_eq "$(cat /var/run/lw-family/ipv6)" "17/3203210528 400 1000 nodev" "th
 lw-linkwatch once
 lw_expect_eq "$(ifups)" 0 "ifup wwan events after the writer's nodev"
 
+# R14g, R49d, R77d, D198, D200: the line that watchcat's own check writes (lw_wc_check, which takes
+# the traffic measure before the writer) in a dual-stack session whose IPv4 call is lost and whose IPv6
+# probes get no answer. IPv6 traffic since the previous check reports `answer`; a valid sample with no
+# traffic reports `none`; no valid sample (the first check, no counters, another session) reports
+# `unknown`. The watcher restarts wwan only on an exact `none`; the other two keep IPv6.
+# shellcheck source=src/files/usr/lib/lw/watchcat-family.sh
+. /usr/lib/lw/watchcat-family.sh
+wc_check() {
+    # shellcheck disable=SC2034  # the worker's variables, read by watchcat-family.sh
+    time_now=$(lw_uptime)
+    time_lastcheck_withinternet=$time_now
+    iface=wwan
+    ping_size=56
+    failure_period=120
+    # shellcheck disable=SC2034  # the same
+    ping_frequency_interval=60
+    lw_wc_check
+}
+# two checks, the second after the counters rose by RECEIVED TRANSMITTED ICMP_IN ICMP_OUT
+two_checks() {
+    _lw_wc_base=''
+    snmp6-add wwan0 0 0 0 0
+    wc_check
+    snmp6-add wwan0 "$@"
+    wc_check
+}
+line() { cat /var/run/lw-family/ipv6; }
+
+failing
+two_checks 60 60 0 0
+lw_expect_eq "$(line)" "17/3203210528 400 1000 answer" "the line of the check after traffic"
+lw-linkwatch once
+lw_expect_eq "$(ifups)" 0 "ifup wwan events when IPv6 carried traffic"
+
+failing
+two_checks 0 0 0 0
+lw_expect_eq "$(line)" "17/3203210528 400 1000 none" "the line of the check without traffic"
+lw-linkwatch once
+lw_expect_eq "$(ifups)" 1 "ifup wwan events when IPv6 was quiet"
+
+# ICMPv6 alone is quiet
+failing
+two_checks 60 60 60 60
+lw_expect_eq "$(line)" "17/3203210528 400 1000 none" "the line of the check with ICMPv6 only"
+
+# the first check has no baseline: unknown, and the watcher keeps IPv6 (D196, D200)
+failing
+_lw_wc_base=''
+snmp6-add wwan0 0 0 0 0
+wc_check
+lw_expect_eq "$(line)" "17/3203210528 400 1000 unknown" "the line of the first check"
+lw-linkwatch once
+lw_expect_eq "$(ifups)" 0 "ifup wwan events after an unknown IPv6 result"
+lw_expect_eq "$(lk_info)" 1 "watcher syslog lines after an unknown IPv6 result"
+lk_lines | grep -qE " lw-linkwatch: data session lost, not restored in place after 20 s, IPv6 kept, no ifup\$" ||
+    lw_fail "info line: $(lk_lines)"
+
+# no counters: unknown too
+failing
+rm -rf "$LW_TRAFFIC_SNMP6"
+_lw_wc_base=''
+wc_check
+wc_check
+lw_expect_eq "$(line)" "17/3203210528 400 1000 unknown" "the line of a check without counters"
+lw-linkwatch once
+lw_expect_eq "$(ifups)" 0 "ifup wwan events without counters"
+
 # a family directory that is a link: the writer writes nothing through it, and the watcher has no
 # silence to act on (a result was in the target before: it is not believed there either)
 failing

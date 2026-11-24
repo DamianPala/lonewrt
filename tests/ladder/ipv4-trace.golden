@@ -1,0 +1,255 @@
+--- run 1
+(no state)
+wd_base=0
+wd_seen=0
+edge_boot=0
+edge_cycles=0
+probe=
+- events
+- pings
+ping -4 -I wwan0 -c 2 -w 3 -q 8.8.8.8
+- log
+--- run 2
+(no state)
+wd_base=0
+wd_seen=0
+edge_boot=0
+edge_cycles=0
+probe=
+- events
+- pings
+ping -4 -I wwan0 -c 2 -w 3 -q 8.8.8.8
+- log
+--- run 3
+(no state)
+wd_base=0
+wd_seen=0
+edge_boot=0
+edge_cycles=0
+probe=
+- events
+- pings
+ping -4 -I wwan0 -c 2 -w 3 -q 8.8.8.8
+- log
+--- run 4
+cycles=1
+reboots=0
+class=hang
+passive=0
+uptime=1900
+wd_base=0
+wd_seen=0
+edge_boot=0
+edge_cycles=0
+probe=
+- events
+- pings
+ping -4 -I wwan0 -c 2 -w 3 -q 8.8.8.8
+ping -4 -I wwan0 -c 2 -w 3 -q 1.1.1.1
+nslookup openwrt.org 192.0.2.53
+- log
+wwan-recover: offline, failure starts (tx+0 rx+0, operator DNS silent or skipped, watchdog this boot=0) cycle=1 reboots=0 class=hang mode=lte uptime=1900
+--- run 5
+cycles=2
+reboots=0
+class=hang
+passive=0
+uptime=2200
+wd_base=0
+wd_seen=0
+edge_boot=0
+edge_cycles=0
+probe=
+- events
+- pings
+ping -4 -I wwan0 -c 2 -w 3 -q 8.8.8.8
+ping -4 -I wwan0 -c 2 -w 3 -q 1.1.1.1
+nslookup openwrt.org 192.0.2.53
+- log
+wwan-recover: offline (tx+0 rx+0, operator DNS silent or skipped, watchdog this boot=0) cycle=2 reboots=0 class=hang mode=lte uptime=2200
+--- run 6
+cycles=3
+reboots=0
+class=hang
+passive=0
+uptime=2500
+wd_base=0
+wd_seen=0
+edge_boot=0
+edge_cycles=0
+probe=
+- events
+- pings
+ping -4 -I wwan0 -c 2 -w 3 -q 8.8.8.8
+ping -4 -I wwan0 -c 2 -w 3 -q 1.1.1.1
+nslookup openwrt.org 192.0.2.53
+- log
+wwan-recover: offline (tx+0 rx+0, operator DNS silent or skipped, watchdog this boot=0) cycle=3 reboots=0 class=hang mode=lte uptime=2500
+--- run 7
+cycles=4
+reboots=0
+class=hang
+passive=0
+uptime=2800
+wd_base=0
+wd_seen=0
+edge_boot=0
+edge_cycles=0
+probe=
+- events
+- pings
+ping -4 -I wwan0 -c 2 -w 3 -q 8.8.8.8
+ping -4 -I wwan0 -c 2 -w 3 -q 1.1.1.1
+nslookup openwrt.org 192.0.2.53
+- log
+wwan-recover: offline (tx+0 rx+0, operator DNS silent or skipped, watchdog this boot=0) cycle=4 reboots=0 class=hang mode=lte uptime=2800
+--- run 8
+cycles=5
+reboots=0
+class=hang
+passive=0
+uptime=3100
+wd_base=0
+wd_seen=0
+edge_boot=0
+edge_cycles=0
+probe=
+- events
+- pings
+ping -4 -I wwan0 -c 2 -w 3 -q 8.8.8.8
+ping -4 -I wwan0 -c 2 -w 3 -q 1.1.1.1
+nslookup openwrt.org 192.0.2.53
+- log
+wwan-recover: offline (tx+0 rx+0, operator DNS silent or skipped, watchdog this boot=0) cycle=5 reboots=0 class=hang mode=lte uptime=3100
+--- run 9
+cycles=6
+reboots=1
+class=hang
+passive=0
+uptime=3400
+(no run file)
+- events
+reboot 
+- pings
+ping -4 -I wwan0 -c 2 -w 3 -q 8.8.8.8
+ping -4 -I wwan0 -c 2 -w 3 -q 1.1.1.1
+nslookup openwrt.org 192.0.2.53
+- log
+wwan-recover: offline (tx+0 rx+0, operator DNS silent or skipped, watchdog this boot=0) cycle=6 reboots=0 class=hang mode=lte uptime=3400
+wwan-recover: REBOOT 1 of 6: failure reached 6 cycles cycle=6 reboots=1 class=hang mode=lte uptime=3400
+--- run 10
+cycles=7
+reboots=1
+class=hang
+passive=0
+uptime=360
+wd_base=0
+wd_seen=0
+edge_boot=0
+edge_cycles=0
+probe=
+- events
+- pings
+ping -4 -I wwan0 -c 2 -w 3 -q 8.8.8.8
+ping -4 -I wwan0 -c 2 -w 3 -q 1.1.1.1
+- log
+wwan-recover: no LTE in the first 600s after boot (tx+0 rx+0); counting only cycle=7 reboots=1 class=hang mode=lte uptime=360
+--- run 11
+(no state)
+wd_base=0
+wd_seen=0
+edge_boot=0
+edge_cycles=0
+probe=
+- events
+- pings
+ping -4 -I wwan0 -c 2 -w 3 -q 8.8.8.8
+- log
+wwan-recover: online on LTE, failure over after 7 cycles and 1 reboots cycle=7 reboots=1 class=hang mode=lte uptime=660
+--- run 12
+(no state)
+wd_base=0
+wd_seen=0
+edge_boot=0
+edge_cycles=0
+probe=
+- events
+- pings
+ping -4 -I wwan0 -c 2 -w 3 -q 8.8.8.8
+- log
+--- run 13
+cycles=1
+reboots=0
+class=account
+passive=0
+uptime=1260
+wd_base=0
+wd_seen=0
+edge_boot=0
+edge_cycles=0
+probe=
+- events
+- pings
+ping -4 -I wwan0 -c 2 -w 3 -q 8.8.8.8
+ping -4 -I wwan0 -c 2 -w 3 -q 1.1.1.1
+nslookup openwrt.org 192.0.2.53
+- log
+wwan-recover: operator DNS answers but no data: package or account likely exhausted; reboots stop at 2, no EDGE cycle=1 reboots=0 class=account mode=lte uptime=1260
+wwan-recover: offline, failure starts (tx+8 rx+0, operator DNS answers, no watchdog) cycle=1 reboots=0 class=account mode=lte uptime=1260
+--- run 14
+cycles=2
+reboots=0
+class=account
+passive=0
+uptime=1560
+wd_base=0
+wd_seen=0
+edge_boot=0
+edge_cycles=0
+probe=
+- events
+- pings
+ping -4 -I wwan0 -c 2 -w 3 -q 8.8.8.8
+ping -4 -I wwan0 -c 2 -w 3 -q 1.1.1.1
+- log
+wwan-recover: offline (tx+8 rx+0, class kept) cycle=2 reboots=0 class=account mode=lte uptime=1560
+--- run 15
+cycles=3
+reboots=0
+class=account
+passive=0
+uptime=1860
+wd_base=0
+wd_seen=0
+edge_boot=0
+edge_cycles=0
+probe=
+- events
+- pings
+ping -4 -I wwan0 -c 2 -w 3 -q 8.8.8.8
+ping -4 -I wwan0 -c 2 -w 3 -q 1.1.1.1
+- log
+wwan-recover: offline (tx+8 rx+0, class kept) cycle=3 reboots=0 class=account mode=lte uptime=1860
+--- run 16
+(no state)
+wd_base=0
+wd_seen=0
+edge_boot=0
+edge_cycles=0
+probe=
+- events
+- pings
+ping -4 -I wwan0 -c 2 -w 3 -q 8.8.8.8
+- log
+wwan-recover: online on LTE, failure over after 3 cycles and 0 reboots cycle=3 reboots=0 class=account mode=lte uptime=2160
+--- run 17
+(no state)
+wd_base=0
+wd_seen=0
+edge_boot=0
+edge_cycles=0
+probe=
+- events
+- pings
+ping -4 -I wwan0 -c 2 -w 3 -q 8.8.8.8
+- log

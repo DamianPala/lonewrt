@@ -3,6 +3,10 @@
 set -eu
 
 T=$LW_TEST
+# R77d: where the image's scripts read the per-device IPv6 counters (the kernel's /proc/net/dev_snmp6);
+# tests/stubs/snmp6-add writes them. Nothing there means "no counters" (unknown).
+LW_TRAFFIC_SNMP6=${LW_TRAFFIC_SNMP6:-/tmp/lw-snmp6}
+export LW_TRAFFIC_SNMP6
 
 # lw_setup: install the image's files over the rootfs and give the stubs a clean world:
 # LTE down, EDGE down, DNS silent, modem answering with ZSNT 6, uptime 1000 s.

@@ -22,6 +22,8 @@ fi
 . /usr/lib/lw/common.sh
 # shellcheck source=src/files/usr/lib/lw/probe.sh
 . /usr/lib/lw/probe.sh
+# shellcheck source=src/files/usr/lib/lw/traffic.sh
+. /usr/lib/lw/traffic.sh
 
 TAG=wwan-recover
 STATE=/etc/wwan-recover.state
@@ -41,6 +43,8 @@ CAP_NO_EDGE=2
 PROBE_EVERY=72
 PROBE_CYCLES=2
 LOCK_STALE=1200
+# R77d: a sample of the IPv6 counters is good for two cron periods
+TRAFFIC_AGE=600
 
 is_num() {
     case ${1:-x} in *[!0-9]*) return 1 ;; esac
@@ -92,9 +96,11 @@ save_state() {
 }
 
 # Per-boot state in /tmp (lost at reboot on purpose, R24): watchdog baseline, EDGE entry this
-# boot, cycles on EDGE since entry, LTE probe cycles (empty = no probe).
+# boot, cycles on EDGE since entry, LTE probe cycles (empty = no probe), and the sample of the IPv6
+# counters of the last cycle in a session with an IPv6 call (R77d, traffic.sh; empty = none, and then
+# not in the file).
 load_run() {
-    wd_ino='' wd_base=0 wd_seen=0 edge_boot=0 edge_cycles=0 probe=''
+    wd_ino='' wd_base=0 wd_seen=0 edge_boot=0 edge_cycles=0 probe='' tr=''
     [ -f "$RUN" ] || return 0
     while IFS='=' read -r k v; do
         case $k in
@@ -104,15 +110,18 @@ load_run() {
             edge_boot) [ "$v" = 1 ] && edge_boot=1 ;;
             edge_cycles) is_num "$v" && edge_cycles=$v ;;
             probe) is_num "$v" && probe=$v ;;
+            tr) tr=$v ;;
         esac
     done <"$RUN"
 }
 
 save_run() {
     dry && return 0
-    printf 'wd_ino=%s\nwd_base=%s\nwd_seen=%s\nedge_boot=%s\nedge_cycles=%s\nprobe=%s\n' \
-        "$wd_ino" "$wd_base" "$wd_seen" "$edge_boot" "$edge_cycles" "$probe" |
-        lw_write_atomic "$RUN"
+    {
+        printf 'wd_ino=%s\nwd_base=%s\nwd_seen=%s\nedge_boot=%s\nedge_cycles=%s\nprobe=%s\n' \
+            "$wd_ino" "$wd_base" "$wd_seen" "$edge_boot" "$edge_cycles" "$probe"
+        [ -z "$tr" ] || printf 'tr=%s\n' "$tr"
+    } | lw_write_atomic "$RUN"
 }
 
 # A watchdog entry is a line of the kernel: 24-character date, facility.level, "kernel:", as in the
@@ -228,6 +237,34 @@ dns_ok() {
     lw_probe_dns || return 1
     lw_probe_dns_path || return 1
     timeout 5 nslookup "$DNS_NAME" "$LW_P_DNS" >/dev/null 2>&1
+}
+
+# R77d, D198, D200: in a session with an IPv6 call (IPv6 alone, with or without the translation, and
+# dual stack) IPv6 traffic of the session's own device that answered a connection since the previous
+# cycle counts as online, as in watchcat's check (traffic.sh), so a path that carries TCP over IPv6 but
+# drops the echoes of the probes, or a dual-stack session that lost its IPv4 call, never reaches a step
+# of the ladder that restarts the router while the traffic flows. It is decided here, before cycle(),
+# as an answer of the probes: a cycle that is online in LTE-only mode ends the failure and never
+# reaches the threshold. On EDGE the failure keeps counting towards LTE recovery, but the reboot waits
+# while the traffic continues (traffic_ok, in act()). Quiet and unknown (no sample yet, no counters,
+# another session) leave the verdict to the probes. A session without an IPv6 call reads no counters
+# and keeps no sample.
+# R23 stays as it is, traffic or not: the LTE probe after PROBE_EVERY cycles on EDGE and the fall
+# back after a probe that fails are R23's own repair (a mode switch, not a restart for silence), so
+# edge_tick() and probe_step() do not look at traffic_ok.
+traffic_online() {
+    traffic_ok=0
+    if ! lw_traffic_applies; then
+        tr=''
+        return 0
+    fi
+    lw_traffic_measure "$LW_P_DEV6" "$TRAFFIC_AGE" "$tr" || :
+    tr=$LW_T_BASE
+    [ "$LW_T_STATE" = traffic ] || return 0
+    traffic_ok=1
+    [ "$online" = 0 ] || return 0
+    online=1
+    lw_debug "$TAG" "no IPv6 answer from the probes, but $LW_P_DEV6 carried traffic since the last cycle"
 }
 
 zsnt_lte() {
@@ -439,7 +476,8 @@ act() {
     fi
     _th=$(threshold)
     if [ -n "$_th" ] && [ "$cycles" -ge "$_th" ]; then
-        do_reboot "$_th"
+        # R77d: EDGE can carry traffic while the failure keeps counting towards LTE recovery.
+        [ "$traffic_ok" = 1 ] || do_reboot "$_th"
         return 0
     fi
     if [ "$online" = 0 ] && [ "$mode" = lte ] && [ "$reboots" -ge 1 ] && [ "$edge_boot" = 0 ] &&
@@ -512,6 +550,7 @@ online_now && online=1
 # Sent packets are measured before the DNS query, pings of this cycle included (R18c).
 tx_d=$(($(counter tx_packets) - tx0))
 rx_d=$(($(counter rx_packets) - rx0))
+traffic_online
 cycle
 save_state
 save_run

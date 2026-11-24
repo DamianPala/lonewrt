@@ -18,7 +18,7 @@ wc_uptime 300
 lw_reach 4 wwan0
 wc_clock 1000
 wc_run hook 1070
-lw_expect_eq "$(cat $F)" "17/3203210528 760 1060 none" "the line of a silent IPv6"
+lw_expect_eq "$(cat $F)" "17/3203210528 760 1060 unknown" "the line of a silent IPv6 with no sample of the counters yet (R14g: unknown, not none)"
 lw_expect_eq "$(mode_of /var/run/lw-family)" drwx------ "mode of the directory"
 lw_expect_eq "$(ls -A /var/run/lw-family | grep -v '^ipv6$' || true)" "" "files beside the result (a temp file left behind)"
 lw_expect_eq "$(wc -l <$F)" 1 "lines in the file"
@@ -26,7 +26,7 @@ lw_expect_eq "$(wc -l <$F)" 1 "lines in the file"
 # the next check replaces it (same session, a later second), also with a directory of another mode
 chmod 0755 /var/run/lw-family
 wc_run hook 1200
-lw_expect_eq "$(cat $F)" "17/3203210528 880 1180 none" "the line after the next check (the stand-in uptime is fixed at 300, so the birth moves with the read)"
+lw_expect_eq "$(cat $F)" "17/3203210528 880 1180 unknown" "the line after the next check (the stand-in uptime is fixed at 300, so the birth moves with the read: another session for the sample of the counters)"
 lw_expect_eq "$(mode_of /var/run/lw-family)" drwx------ "mode of a directory that had another"
 
 # IPv6 answers: answer
@@ -56,7 +56,7 @@ lw_session dual
 lw_reach 4 wwan0
 wc_clock 1000
 wc_run hook 1070
-lw_expect_eq "$(cat $F)" "17/3203210528 - 1060 none" "the line without netifd's uptime"
+lw_expect_eq "$(cat $F)" "17/3203210528 - 1060 unknown" "the line without netifd's uptime (no counters: unknown)"
 
 # a session without IPv6: nothing written, and the file there stays as it was
 wc_setup

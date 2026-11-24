@@ -66,20 +66,34 @@ set_list() {
 kept=$(uci -q get network.wwan.proto)
 [ -n "$kept" ] || uci -q delete network.globals.ula_prefix
 
-# R7e: the 0.6.0 server pair is recognizable by odhcpd's stock SLAAC flags.
+# uci_option_names SECTION PATTERN: the sorted names, one line, of the options of a section that match
+# the grep -E PATTERN (a list counts once).
+uci_option_names() {
+    uci -q show "$1" | sed -n "s/^${1%%.*}\\.${1#*.}\\.\\([^=.]*\\)=.*/\\1/p" |
+        grep -E "^($2)\$" | sort -u | tr '\n' ' '
+}
+
+# R7e, D201: the LAN is a stock one only when its IPv6 options are exactly one of the two stock sets
+# and no other IPv6 policy is set on it. The prefixes cover families of related odhcpd options.
+# 0.6.0: both server, with odhcpd's stock SLAAC option and flags. 0.6.1: both disabled, the SLAAC
+# option and flags either still as in stock (0.6.1 only switched the two off) or gone.
 stock_lan6() {
+    [ "$(uci -q get dhcp.lan.interface)" = lan ] || return 1
     [ "$(uci -q get network.lan.ip6assign)" = 60 ] || return 1
-    for option in ip6addr ip6prefix ip6class ip6hint ip6ifaceid; do
-        if uci -q get "network.lan.$option" >/dev/null; then return 1; fi
-    done
-    for option in ndp master dns ra_default ra_lifetime; do
-        if uci -q get "dhcp.lan.$option" >/dev/null; then return 1; fi
-    done
-    case "$(uci -q get dhcp.lan.ra)/$(uci -q get dhcp.lan.dhcpv6)" in
-        disabled/disabled) return 0 ;;
-        server/server)
-            [ "$(uci -q get dhcp.lan.ra_slaac)" = 1 ] &&
-                [ "$(uci -q get dhcp.lan.ra_flags)" = 'managed-config other-config' ]
+    [ "$(uci_option_names network.lan 'ip6.*|ipv6.*|delegate|lw_ipv6')" = 'ip6assign ' ] || return 1
+    _lw_v6='ra|ra_.*|dhcpv6|dhcpv6_.*|ndp|ndp_.*|ndproxy_.*|dns|dns_service|domain'
+    _lw_v6="$_lw_v6|master|upstream|ignore|prefix_filter|(max_)?preferred_lifetime|max_valid_lifetime"
+    _lw_v6="$_lw_v6|ifname|networkid"
+    _lw_set=$(uci_option_names dhcp.lan "$_lw_v6")
+    case "$_lw_set/$(uci -q get dhcp.lan.ra)/$(uci -q get dhcp.lan.dhcpv6)" in
+        'dhcpv6 ra /disabled/disabled') return 0 ;;
+        'dhcpv6 ra ra_flags ra_slaac /server/server' | 'dhcpv6 ra ra_flags ra_slaac /disabled/disabled')
+            [ "$(uci -q get dhcp.lan.ra_slaac)" = 1 ] || return 1
+            case "$(uci -q show dhcp.lan.ra_flags)" in
+                "dhcp.lan.ra_flags='managed-config' 'other-config'" | \
+                "dhcp.lan.ra_flags='other-config' 'managed-config'") return 0 ;;
+                *) return 1 ;;
+            esac
             ;;
         *) return 1 ;;
     esac

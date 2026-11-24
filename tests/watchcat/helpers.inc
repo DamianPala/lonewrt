@@ -18,7 +18,7 @@ wc_setup() {
     lw_setup
     PATH=/fw/tests/watchcat/stubs:$PATH
     export PATH
-    rm -rf "$T"/wc-* "$T/horizon" "$T/on-sleep" "$T/ping-hang" "$T/ping-fast" "$T/ubus-calls" "$T/started" "$T/ended" /var/run/lw-family /tmp/wc
+    rm -rf "$T"/wc-* "$T/horizon" "$T/on-sleep" "$T/ping-hang" "$T/ping-fast" "$T/ubus-calls" "$T/started" "$T/ended" /var/run/lw-family /tmp/wc "$LW_TRAFFIC_SNMP6"
     mkdir -p /tmp/wc
     for _wc_i in hook stock; do
         case $_wc_i in hook) _wc_src=/wc-overlay/usr/bin/watchcat.sh ;; *) _wc_src=/wc-stock/usr/bin/watchcat.sh ;; esac

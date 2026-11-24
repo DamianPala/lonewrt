@@ -9,8 +9,7 @@
 #                      consumer (see _lw_pfam; Terms "online"): LW_P_OK4 and LW_P_OK6 (1, 0, or empty
 #                      for a family the session does not have), LW_P_ONLINE (1 or 0), LW_P_MS (the
 #                      round trip in ms of the first answer, IPv4 before IPv6), LW_P_T6 (the second on
-#                      the uptime clock at which the IPv6 pings began), LW_P_N6 (IPv6 pings run); exit
-#                      0 when online
+#                      the uptime clock at which the IPv6 pings began); exit 0 when online
 #   lw_probe_publish_v6   R14g, D204: after a round of the profile watchcat, the IPv6 result for the
 #                      session watcher; no other consumer calls it
 #   lw_probe_dns       LW_P_DNS: the operator DNS of the session; exit 1 when it has none
@@ -143,7 +142,6 @@ _lw_pcall() {
 _lw_pfam() {
     _lw_pms=''
     for _lw_ph in $4; do
-        [ "$2" != 6 ] || LW_P_N6=$((LW_P_N6 + 1))
         case $1 in
             watchcat)
                 _lw_pnow
@@ -177,7 +175,7 @@ lw_probe_round() {
     _lw_pnow
     _lw_pend=$((_lw_pn + LW_P_WBOUND))
     lw_probe_session
-    LW_P_OK4='' LW_P_OK6='' LW_P_ONLINE=0 LW_P_MS='' LW_P_T6='' LW_P_N6=0
+    LW_P_OK4='' LW_P_OK6='' LW_P_ONLINE=0 LW_P_MS='' LW_P_T6=''
     _lw_m4='' _lw_m6=''
     if [ "$LW_P_HAS4" = 1 ]; then
         LW_P_OK4=0
@@ -248,8 +246,9 @@ lw_probe_stats() {
 # missing, written beside the file and renamed over it. The call numbers and the birth come from the
 # status read of that round (the birth is netifd's uptime of wwan taken from the uptime second of
 # that read, not of this write, which comes up to 40 s later), `second` is the second the IPv6 pings
-# began, and the result is answer, none (a ready device, no answer) or nodev (nothing pinged). A
-# session without IPv6 or without an IPv4 call writes nothing, and removes nothing.
+# began, and the result is answer, none (a ready device, no answer) or nodev (nothing pinged), or
+# unknown (a ready device, no answer, and the traffic measure of watchcat's hook has no valid sample).
+# A session without IPv6 or without an IPv4 call writes nothing, and removes nothing.
 lw_probe_publish_v6() {
     [ "$LW_P_HAS6" = 1 ] || return 0
     _lw_wc=$(_lw_pj "$_lw_sw" '@.data.cid_4')
@@ -264,6 +263,9 @@ lw_probe_publish_v6() {
     else
         _lw_wr=none
     fi
+    # R14g: watchcat's hook puts the word of the traffic measure here (answer, or unknown) when the
+    # probes alone would say none; empty everywhere else
+    [ -z "${LW_P_V6WORD:-}" ] || [ "$_lw_wr" = nodev ] || _lw_wr=$LW_P_V6WORD
     _lw_wb=-
     _lw_wu=$(_lw_pj "$_lw_sw" '@.uptime')
     case $_lw_wu in '' | *[!0-9]*) ;; *)

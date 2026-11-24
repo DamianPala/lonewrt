@@ -15,23 +15,21 @@
 . /usr/lib/lw/common.sh
 # shellcheck source=src/files/usr/lib/lw/probe.sh
 . /usr/lib/lw/probe.sh
+# shellcheck source=src/files/usr/lib/lw/traffic.sh
+. /usr/lib/lw/traffic.sh
 
 # R14f: the deadline (second of the uptime clock) of a start of wwan that is negotiating, written by
 # the handler (qmi-edits/functions.sh) and removed when the negotiation ends; in the family directory
 # of root (common.sh), and no later than this many seconds from now whatever the file says (R73h)
 LW_WC_NEG=${LW_WC_NEG:-${LW_FAMILY_DIR:-/var/run/lw-family}/negotiating}
 LW_WC_NEG_MAX=60
-# R77d: the counters of the session's own device; a difference of this many packets since the
-# previous check, both ways, other than the probes, is traffic that was answered
-LW_WC_STATS=${LW_WC_STATS:-/sys/class/net}
-LW_WC_TRAFFIC=${LW_WC_TRAFFIC:-4}
 # R77b: checks in a row with no answer in one family while another answers
 LW_WC_LOST_AFTER=3
 
 # per family: checks in a row without an answer (_lw_wc_m4, _lw_wc_m6) and whether the loss has been
-# logged (_lw_wc_l4, _lw_wc_l6); the counters of the device in the last check (R77d)
+# logged (_lw_wc_l4, _lw_wc_l6); the sample of the IPv6 counters of the last check (R77d)
 _lw_wc_m4=0 _lw_wc_m6=0 _lw_wc_l4=0 _lw_wc_l6=0
-_lw_wc_rx='' _lw_wc_tx='' _lw_wc_dev=''
+_lw_wc_base=''
 
 # lw_wc_say TEXT: one line in the tag and at the priority of watchcat's own lines
 lw_wc_say() {
@@ -65,38 +63,19 @@ lw_wc_state() {
     done
 }
 
-# lw_wc_traffic: R77d, D198. In a session without native IPv4 (IPv6 alone, with or without the
-# translation), IPv6 traffic of the session's own device that answered a connection from inside since
-# the previous check counts as online for that check, so a path that carries TCP but drops the
-# probes does not look dead. The measure is the packet counters of the device: at least
-# LW_WC_TRAFFIC packets received and as many sent, the probes of this check taken off the sent ones
-# (an answered probe would have made the check online anyway). Four file reads, no fork. Exit 0 when
-# there was such traffic; the counters are read at every check, so the next one has its baseline.
+# lw_wc_traffic: R77d, D198, D200. The traffic measure of traffic.sh on the session's IPv6 device,
+# taken at every check of a session with an IPv6 call so the next one has its sample: LW_T_STATE is
+# traffic, quiet or unknown, exit 0 only for traffic. The sample is good for two periods of the
+# check and the bound of one check.
 lw_wc_traffic() {
-    _lw_wt=1
-    if [ "$LW_P_HAS6" != 1 ] || [ -z "$LW_P_DEV6" ] || { [ "$LW_P_HAS4" = 1 ] && [ "$LW_P_XLAT" = 0 ]; }; then
-        _lw_wc_dev=''
+    LW_T_STATE=unknown
+    if ! lw_traffic_applies; then
+        _lw_wc_base=''
         return 1
     fi
-    _lw_wd=$LW_WC_STATS/$LW_P_DEV6/statistics
-    if ! { read -r _lw_wx <"$_lw_wd/rx_packets" && read -r _lw_wy <"$_lw_wd/tx_packets"; } 2>/dev/null; then
-        _lw_wc_dev=''
-        return 1
-    fi
-    case $_lw_wx$_lw_wy in '' | *[!0-9]*)
-        _lw_wc_dev=''
-        return 1
-        ;;
-    esac
-    if [ "$_lw_wc_dev" = "$LW_P_DEV6" ]; then
-        _lw_wi=$((_lw_wx - _lw_wc_rx))
-        _lw_wo=$((_lw_wy - _lw_wc_tx - LW_P_N6))
-        if [ "$_lw_wi" -ge "$LW_WC_TRAFFIC" ] && [ "$_lw_wo" -ge "$LW_WC_TRAFFIC" ]; then
-            _lw_wt=0
-        fi
-    fi
-    _lw_wc_dev=$LW_P_DEV6 _lw_wc_rx=$_lw_wx _lw_wc_tx=$_lw_wy
-    return "$_lw_wt"
+    lw_traffic_measure "$LW_P_DEV6" $((2 * ${ping_frequency_interval:-60} + LW_P_WBOUND)) "$_lw_wc_base" || :
+    _lw_wc_base=$LW_T_BASE
+    [ "$LW_T_STATE" = traffic ]
 }
 
 # lw_wc_unreached: the stock line of watchcat for an address that did not answer, only while the
@@ -111,18 +90,37 @@ lw_wc_unreached() {
     done
 }
 
+# lw_wc_publish: R14g, R49d, D196, D200. The IPv6 result for the session watcher, which restarts the
+# parent after a lost IPv4 call only on an exact `none`. Beside the probes (`answer` when one
+# answered, else `none`) the traffic measure of this check decides: traffic is `answer`, and no valid
+# sample (unknown) is `unknown`, so only a quiet device with silent probes is `none`. The writer is
+# called as it is, with the word it should replace the default one with in LW_P_V6WORD.
+lw_wc_publish() {
+    LW_P_V6WORD=''
+    if [ "$LW_P_OK6" = 0 ]; then
+        case $LW_T_STATE in
+            traffic) LW_P_V6WORD=answer ;;
+            quiet) ;;
+            *) LW_P_V6WORD=unknown ;;
+        esac
+    fi
+    lw_probe_publish_v6
+    LW_P_V6WORD=''
+}
+
 # lw_wc_check: one scheduled family check (R14): the result feeds the silence timer, the IPv6 result
 # goes to the session watcher (R14g), and the state of each family is kept (R77b).
 lw_wc_check() {
     LW_P_WSIZE=${ping_size:-56}
     lw_probe_round watchcat || :
-    lw_probe_publish_v6
+    lw_wc_traffic || :
+    lw_wc_publish
     lw_wc_state
-    _lw_wk=0
-    if lw_wc_traffic; then _lw_wk=1; fi
+    # R77d: IPv6 traffic stands in for silent probes in any session with an IPv6 call, so a working
+    # IPv6 is not restarted for the silence of the other family or of the probes (D200)
     if [ "$LW_P_ONLINE" = 1 ]; then
         time_lastcheck_withinternet="$time_now"
-    elif [ "$_lw_wk" = 1 ]; then
+    elif [ "$LW_T_STATE" = traffic ]; then
         lw_debug watchcat "no answer from the probes, but IPv6 traffic of $LW_P_DEV6 was answered since the last check"
         time_lastcheck_withinternet="$time_now"
     else

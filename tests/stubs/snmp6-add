@@ -1,0 +1,26 @@
+#!/bin/sh
+# Test stand-in for the kernel's per-device IPv6 counters, /proc/net/dev_snmp6/<dev> (SPEC R77d).
+#   snmp6-add DEVICE RECEIVED TRANSMITTED ICMP_IN ICMP_OUT
+# adds those amounts to Ip6InReceives, Ip6OutTransmits, Icmp6InMsgs and Icmp6OutMsgs of
+# $LW_TRAFFIC_SNMP6/DEVICE (default /tmp/lw-snmp6), making the file with 1000 in each counter when it
+# is missing. The names are those measured on the router (OpenWrt 25.12.6, MF289F); the layout is the
+# kernel's, one counter per line, the name padded to 32 characters, a tab, the value.
+# A connection that carries data is RECEIVED and TRANSMITTED; router advertisements, neighbour
+# discovery and echo probes are ICMPv6 and so are counted again in ICMP_IN and ICMP_OUT.
+d=${LW_TRAFFIC_SNMP6:-/tmp/lw-snmp6}
+f=$d/$1
+mkdir -p "$d"
+if [ ! -f "$f" ]; then
+    for n in Ip6InReceives Ip6InHdrErrors Ip6InDelivers Ip6OutForwDatagrams Ip6OutRequests \
+        Ip6OutDiscards Ip6OutTransmits Icmp6InMsgs Icmp6InErrors Icmp6OutMsgs; do
+        case $n in Ip6InHdrErrors | Ip6OutDiscards | Icmp6InErrors) v=0 ;; *) v=1000 ;; esac
+        printf '%-32s\t%s\n' "$n" "$v"
+    done >"$f"
+fi
+awk -v r="$2" -v t="$3" -v ci="$4" -v co="$5" '
+    $1 == "Ip6InReceives" { $2 += r }
+    $1 == "Ip6OutTransmits" { $2 += t }
+    $1 == "Icmp6InMsgs" { $2 += ci }
+    $1 == "Icmp6OutMsgs" { $2 += co }
+    { printf "%-32s\t%s\n", $1, $2 }
+' "$f" >"$f.n" && mv "$f.n" "$f"
