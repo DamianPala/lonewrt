@@ -15,16 +15,20 @@ must "guest boots" vm_wait_ready
 uci_export_normalized >"$RUN/uci-export-flash.txt"
 gnote 'echo "fs_state after the first boot from flash: $(readlink /overlay/.fs_state)"'
 
-must "owner changes the hostname, leaves a file and a log line" vm_sh \
+must "owner changes the hostname and PDP type, leaves a file and a log line" vm_sh \
     'uci set system.@system[0].hostname=lwvm-changed && uci commit system &&
+     uci set network.wwan.pdptype=ipv4 && uci commit network &&
      echo owner >/root/lwvm-owner-file && logger -t lwvm-test "before reset"'
 must "plain reboot" vm_reboot
 gcheck "change survives a plain reboot (R9)" \
-    '[ "$(uci get system.@system[0].hostname)" = lwvm-changed ] && [ -f /root/lwvm-owner-file ]'
+    '[ "$(uci get system.@system[0].hostname)" = lwvm-changed ] &&
+     [ "$(uci get network.wwan.pdptype)" = ipv4 ] && [ -f /root/lwvm-owner-file ]'
 
 must "firstboot -y && reboot" vm_sh '(sleep 1; firstboot -y && reboot) >/dev/null 2>&1 &'
 must "guest boots after the reset" vm_wait_ready
 gcheck "owner's file is gone" '[ ! -e /root/lwvm-owner-file ]'
+gcheck "button reset restores Auto (R7c, R73k)" \
+    '[ "$(uci get network.wwan.pdptype)" = ipv4v6 ]'
 uci_export_normalized >"$RUN/uci-export-reset.txt"
 check "uci export equals the one right after flash" \
     diff "$RUN/uci-export-flash.txt" "$RUN/uci-export-reset.txt"

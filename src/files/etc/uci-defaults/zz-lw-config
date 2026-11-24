@@ -127,7 +127,7 @@ set_or_delete network.wwan.username "$P_WWAN_USERNAME"
 set_or_delete network.wwan.password "$P_WWAN_PASSWORD"
 # R13e: netifd's QMI handler unlocks the SIM with it at every start of the interface
 set_or_delete network.wwan.pincode "$P_WWAN_PIN"
-[ -n "$kept" ] || uci set network.wwan.pdptype='ipv4'
+[ -n "$kept" ] || uci set network.wwan.pdptype='ipv4v6'
 uci set network.wwan.multipath='off'
 uci set network.wwan.modes='lte'
 uci set network.wwan.timeout='30'

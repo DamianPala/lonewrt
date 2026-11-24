@@ -16,6 +16,7 @@ The router talks to the operator, the NTP pool and, depending on the profile:
 | your healthchecks.io URL | set | an empty GET every 5 minutes |
 | `8.8.8.8`, `1.1.1.1` | IPv4 available | pings every 60 seconds to check the IPv4 link |
 | `2001:4860:4860::8888`, `2606:4700:4700::1111` | IPv6 available | pings every 60 seconds to check the IPv6 link |
+| the operator's DNS64 server | IPv6-only cellular connection | an AAAA lookup of `ipv4only.arpa` over the cellular link to find the prefix for IPv4 translation |
 | the operator's DNS server | the link is down | a lookup of `openwrt.org`, at most one every 5 minutes, to tell a used-up data package from a dead link |
 | the nearest speedtest.net server | you ask for a speed test | about 330 MB of test traffic |
 | your WireGuard server | tunnel enabled | the tunnel |
@@ -35,12 +36,12 @@ So on your WireGuard server allow the router's peer only its own tunnel address,
 
 ## IPv6 on the LAN
 
-The default PDP type is forced IPv4.
+A clean flash or button reset defaults to Auto (PDP type `ipv4v6`).
 With an IPv6 call, OpenWrt assigns a /64 to `lan` from the delegated prefix or extends the session's routed /64 when the operator gives no delegation.
 The router advertises that prefix and its DNS address once the LAN has the assignment and the cellular route is usable.
 On a managed LAN, DHCPv6 stays disabled and the IPv6 prefixes come from the cellular session.
 
-A flash that keeps settings keeps the PDP type.
+A flash that keeps settings preserves the saved PDP type, including the `ipv4` that 0.6.x and older images set.
 The stock 0.6.1 LAN settings (`ip6assign=60` with RA and DHCPv6 disabled) move to the conditional /64 policy.
 The 0.6.0 stock LAN with RA and DHCPv6 in server mode and the stock SLAAC flags also moves to this policy.
 A custom setting identical to the old defaults is treated as a default.

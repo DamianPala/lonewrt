@@ -2,6 +2,7 @@
 . /fw/tests/firstboot/fb-lib
 
 fb_prepare generic
+cp -a /etc/config "$T/config-stock"
 cp /etc/config/firewall "$T/firewall.stock"
 has_rules() {
     cp "$T/firewall.stock" /etc/config/firewall
@@ -22,7 +23,7 @@ wan=$(rule wan)
 fb_expect "$wan.input" REJECT
 fb_expect "$wan.forward" DROP
 fb_expect "$wan.network" 'wan wan6 wwan wwan_4 wwan_6 wwan_6_4'
-fb_expect network.wwan.pdptype ipv4
+fb_expect network.wwan.pdptype ipv4v6
 
 old_lan() {
     uci -q delete network.lan.lw_ipv6 || :
@@ -137,6 +138,7 @@ for base in lan_061 lan_061_bare; do
     "$base"
     fb_uci_defaults
     fb_expect_moved
+    fb_expect network.wwan.pdptype ipv4
 done
 
 # The flags are a set, so reversing the order keeps the stock policy.
@@ -225,10 +227,27 @@ uci commit
 fb_uci_defaults
 fb_expect network.lan.lw_ipv6 '<unset>'
 fb_expect dhcp.lan.ra_flags managed-config
+
+# R7c: a kept configuration without a PDP type keeps none, so the handler's IPv4 fallback applies.
+lan_060
+uci delete network.wwan.pdptype
+uci commit network
+fb_uci_defaults
+fb_expect network.wwan.proto qmi
+fb_expect network.wwan.pdptype '<unset>'
+
 lan_060
 uci -q delete dhcp.lan.ra_slaac || :
 uci commit
 fb_uci_defaults
 fb_expect network.lan.lw_ipv6 '<unset>'
 fb_expect dhcp.lan.ra server
+
+# R7c, R73k: boot sees fresh configs again after factoryreset discards the overlay.
+fb_expect network.wwan.pdptype ipv4
+mv /etc/config "$T/config-before-reset"
+mv "$T/config-stock" /etc/config
+fb_expect network.wwan.proto '<unset>'
+fb_uci_defaults
+fb_expect network.wwan.pdptype ipv4v6
 echo ok

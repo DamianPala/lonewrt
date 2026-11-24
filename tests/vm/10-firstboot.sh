@@ -76,6 +76,8 @@ gcheck "wwan from the image: QMI on /dev/cdc-wdm0, modes=lte, empty APN, no PIN 
      grep -qx "network.wwan.timeout=.30." "$f" &&
      ! grep -q "^network.wwan.apn=.[^'"'"']" "$f" &&
      ! grep -q "^network.wwan.pincode=" "$f"'
+gcheck "PDP type from the image: Auto (R7c, R73k)" \
+    'grep -qx "network.wwan.pdptype=.ipv4v6." /etc/lw-vm/wwan-from-image.uci'
 gcheck "network.wwan.modes=lte at runtime (R10)" '[ "$(uci get network.wwan.modes)" = lte ]'
 gcheck "network.wwan.timeout=30 at runtime (R7, D82)" '[ "$(uci get network.wwan.timeout)" = 30 ]'
 # R12d: the handler of the uqmi package without its network scan, still the mode set, still

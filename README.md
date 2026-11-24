@@ -128,7 +128,10 @@ In Tailscale, **[limit what the router can reach](docs/tailscale.md#limit-what-t
 - **Only the MF289F.** Another LTE router that runs OpenWrt can be a starting point too, with a fork and some work: see [docs/porting.md](docs/porting.md).
 - **OpenWrt must run already.** Installing OpenWrt over the stock firmware is not covered here.
 - **No button recovery.** A broken image means opening the case and a serial console, so do not use lonewrt on a router you cannot afford to open.
-- **IPv4 by default.** In LuCI, edit `wwan` and set **PDP Type** to **IPv4/IPv6** for auto mode, or choose one version to force it. Auto mode and IPv6 have not been tried on an operator's IPv6 network yet. A flash that keeps settings preserves the PDP type. [LAN IPv6 and upgrade defaults](docs/network.md#ipv6-on-the-lan).
+- **IP versions.** A clean flash or button reset starts in Auto, using IPv4, IPv6 or both, depending on what your operator provides.
+  To force one version, go to **Network → Interfaces**, edit **WWAN** and set **PDP Type** to **IPv4** or **IPv6**. Choose **IPv4/IPv6** for Auto.
+  With an IPv6-only operator, the router uses CLAT to give your devices IPv4 access automatically. This needs DNS64 and IPv4 translation from the operator. The IPv6 path has yet to be tried on a live operator network.
+  An upgrade with **Keep settings** keeps your saved PDP type, including the IPv4 that 0.6.x and older images set, so such a router stays on IPv4 until you choose Auto. It updates the stock 0.6.0 and 0.6.1 LAN settings to share IPv6 when available and limits the stock IPsec firewall rules to IPv4. Custom LAN settings and edited or deleted rules stay as you left them. [LAN IPv6 and upgrade defaults](docs/network.md#ipv6-on-the-lan).
 - **Settings live in the image.** A button reset brings back the profile's settings, so a lasting change means a new build and a flash.
 
 ## Docs
