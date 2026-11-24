@@ -37,6 +37,7 @@ PACKAGES=(
     nlbwmon luci-app-nlbwmon
     wifischedule luci-app-wifischedule
     coreutils-timeout coreutils-stty
+    464xlat kmod-nat46
 )
 
 # The packages of a tailscale image (R63), added when the overlay has the file only such an image has

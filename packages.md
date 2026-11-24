@@ -26,6 +26,7 @@ Both tables are binding (SPEC R2): the full build test compares them with the pa
 | `tmux` | a terminal multiplexer: an SSH session and what runs in it survive a dropped link (D167) | official |
 | `mtr-nojson` | a traceroute that shows the loss of each hop, for diagnosing the LTE path; the OpenWrt build without JSON output (D167) | official |
 | `vim` | a fuller editor than busybox `vi`; the small `vim` package of OpenWrt (D167) | official |
+| `464xlat`, `kmod-nat46` | IPv4 for the router and the LAN devices on an IPv6-only session (R76, R76e, D169): netifd's protocol `464xlat` with its helper, and the kernel's IPv4/IPv6 translator it drives; the module loads at boot, and `lw-clat-check` makes the interface only for an IPv6-only session (R76b). The two packages are 21 327 bytes (from: `apk fetch` from the 25.12.6 feeds, 2026-11-24) | official |
 
 ## Removed from the default set
 

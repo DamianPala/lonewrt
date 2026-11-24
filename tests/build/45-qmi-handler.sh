@@ -63,8 +63,12 @@ done
     fail "the functions are not in front of the teardown function"
 [ "$(grep -n '^	lw_repair$' "$OUT_FILE" | cut -d: -f1)" -lt "$(grep -n 'network-register' "$OUT_FILE" | cut -d: -f1)" ] ||
     fail "the repair is not before the registration call"
-grep -qxF '			[ -n "$pdh_4" ] && json_add_string iface_464xlat "0"' "$OUT_FILE" || fail "464XLAT line not changed"
-grep -qxF '		if { [ -z "$dhcpv6" ] || [ "$dhcpv6" = 0 ]; } && lw_v6_ok; then' "$OUT_FILE" || fail "IPv6 settings line not changed"
+grep -qxF '			json_add_string iface_464xlat "0"' "$OUT_FILE" || fail "464XLAT line not changed"
+grep -qxF '			[ "$pdptype" = "ipv4v6" ] && json_add_string iface_464xlat "0"' "$OUT_FILE" && fail "the stock 464XLAT line is still there"
+# shellcheck disable=SC2016  # the $ belongs to the line of qmi.sh
+[ "$(grep -cxF '			lw_clat_mark "$interface" "$pdh_4" "$cid_6/$pdh_6"' "$OUT_FILE")" = 1 ] || fail "R76b: the record of the session kind is not made exactly once"
+[ "$(grep -c '^lw_clat_mark() {' "$OUT_FILE")" = 1 ] || fail "R76b: lw_clat_mark is not defined exactly once"
+grep -qxF '		if { [ -z "$dhcpv6" ] || [ "$dhcpv6" = 0 ]; } && [ -n "$pdh_4" ] && lw_v6_ok; then' "$OUT_FILE" || fail "IPv6 settings line not changed"
 grep -qxF '			json_load "$lw_v6_json"' "$OUT_FILE" || fail "R73j: the IPv6 settings are not read from the verified set"
 grep -qxF "$QMI_A_V6LOAD" "$OUT_FILE" && fail "R73j: the stock read of the IPv6 settings is still there"
 [ "$(grep -cxF '	[ -n "$pdh_4" ] && {' "$OUT_FILE")" = 1 ] || fail "the publish block (before the IPv6 branch) was changed"

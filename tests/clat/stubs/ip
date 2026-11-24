@@ -1,0 +1,104 @@
+#!/bin/sh
+# Test stand-in for ip in the translation tests: `ip -6 rule add|del ...` edits the list of rules in
+# $LW_TEST/clat/rules (the kernel of the sandbox refuses rules) and `ip -6 rule [show|list]` prints
+# it the way iproute2 does ("PREF:<tab>rule"). A del that names a `pref` removes only the rule that
+# has that pref; one that does not matches by what the rule says, as ip does. The tests start the list
+# with the one rule of the local table that a router has. A lookup `route get` is logged to
+# $LW_TEST/clat/route-gets and answered by tests/stubs/ip, but for a destination that has a host route in
+# $LW_TEST/clat/hostroutes (lines "DEST DEVICE [GATEWAY]": what `ip -6 route add|del|show DEST/128` edits, the
+# calls kept in route-calls); the file hostroutes-ignored makes a lookup blind to them.
+C=${LW_TEST:-/lwtest}/clat
+if [ "$1 $2" = "-6 rule" ]; then
+    mkdir -p "$C"
+    case ${3:-show} in
+        show | list)
+            awk '{
+                pref = ""; r = $0
+                if (match(r, / *pref [0-9]+$/)) { pref = substr(r, RSTART, RLENGTH); sub(/ *pref /, "", pref); r = substr(r, 1, RSTART - 1) }
+                printf "%s:\t%s\n", pref, r
+            }' "$C/rules" 2>/dev/null
+            exit 0
+            ;;
+        add | del)
+            op=$3
+            shift 3
+            echo "ip rule $op $*" >>"$C/ip-calls"
+            key=$(printf '%s\n' "$*" | sed 's/ *pref [0-9]*//')
+            case " $* " in *" pref "*) has_pref=1 ;; *) has_pref=0 ;; esac
+            if [ "$op" = add ]; then
+                echo "$*" >>"$C/rules"
+                exit 0
+            fi
+            # del: the first rule that matches goes; none to delete is an error, as in ip
+            awk -v k="$key" -v full="$*" -v hp="$has_pref" 'BEGIN { done = 0 }
+                { r = $0; gsub(/ *pref [0-9]*/, "", r) }
+                !done && r == k && (hp == 0 || $0 == full) { done = 1; next }
+                { print }
+                END { exit done ? 0 : 2 }' "$C/rules" >"$C/rules.new" 2>/dev/null
+            rc=$?
+            mv -f "$C/rules.new" "$C/rules"
+            exit "$rc"
+            ;;
+    esac
+fi
+if [ "$1 $2" = "-6 route" ]; then
+    mkdir -p "$C"
+    H=$C/hostroutes
+    case $3 in
+        show)
+            # host routes of the list $C/hostroutes, lines "DEST DEVICE [GATEWAY]", the way ip prints them
+            [ ! -e "$C/route-show-fails" ] || exit 2
+            awk -v d="${4%/128}" '$1 == d { printf "%s%s dev %s metric 1 pref medium\n", d, ($3 != "" ? " via " $3 : ""), $2 }' "$H" 2>/dev/null
+            exit 0
+            ;;
+        add | del)
+            op=$3
+            shift 3
+            echo "ip route $op $*" >>"$C/route-calls"
+            dest=${1%/128}
+            shift
+            gw='' dev=''
+            while [ $# -gt 0 ]; do
+                case $1 in
+                    via) gw=$2; shift ;;
+                    dev) dev=$2; shift ;;
+                esac
+                shift
+            done
+            if [ "$op" = add ]; then
+                [ ! -e "$C/route-add-fails" ] || exit 2
+                echo "$dest $dev $gw" >>"$H"
+                exit 0
+            fi
+            if [ -e "$C/route-del-fails-once" ]; then
+                rm -f "$C/route-del-fails-once"
+                exit 2
+            fi
+            awk -v d="$dest" -v v="$dev" 'BEGIN { done = 0 }
+                !done && $1 == d && $2 == v { done = 1; next }
+                { print }
+                END { exit done ? 0 : 2 }' "$H" >"$H.new" 2>/dev/null
+            rc=$?
+            mv -f "$H.new" "$H"
+            exit "$rc"
+            ;;
+        get)
+            echo "ip $*" >>"$C/route-gets"
+            # a policy that ignores the host route (a rule that sends the query elsewhere): the list is not looked at
+            if [ ! -e "$C/hostroutes-ignored" ]; then
+                line=$(awk -v d="$4" '$1 == d { print; exit }' "$H" 2>/dev/null)
+                if [ -n "$line" ]; then
+                    # shellcheck disable=SC2086  # the fields of the line
+                    set -- $line
+                    echo "$1${3:+ via $3} dev $2 src 2001:db8:1::2 metric 1 pref medium"
+                    exit 0
+                fi
+            fi
+            ;;
+    esac
+fi
+if [ "$2 $3" = "route get" ]; then
+    mkdir -p "$C"
+    echo "ip $*" >>"$C/route-gets"
+fi
+exec /fw/tests/stubs/ip "$@"

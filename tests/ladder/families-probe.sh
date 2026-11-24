@@ -210,14 +210,16 @@ for kind in v6child v6; do
     lw_expect_eq "$rc/${LW_P_OK4:-none}/$LW_P_OK6/$LW_P_MS" "1/none/0/" "Terms: pending IPv6 failed with no RTT ($kind)"
     lw_expect_eq "$(lw_pings)" 0 "R77a: pending IPv6 ($kind): no ping at all"
 done
-# a translation that is there but not up: IPv4 service of the session, failed this round
+# a translation that is there but not up (being made, failed): no IPv4 service of the session (R76a,
+# R77), so no IPv4 ping and no family lost; IPv6 answers and the session is online
 lw_session v6clat
 printf '{"up":false}\n' >"$T/ifstatus/wwan_6_4.json"
 lw_reach_none
 lw_reach 6 wwan0
 round
-lw_expect_eq "$LW_P_HAS4/$LW_P_XLAT/${LW_P_DEV4:-none}" "1/1/none" "Terms: a translation that is not up"
-lw_expect_eq "$rc/$LW_P_OK4/$LW_P_OK6" "0/0/1" "R76d: the translation failed, IPv6 answers"
+lw_expect_eq "$LW_P_HAS4/$LW_P_XLAT/${LW_P_DEV4:-none}/$LW_P_V6ONLY" "0/0/none/1" "Terms: a translation that is not up"
+lw_expect_eq "$rc/${LW_P_OK4:-none}/$LW_P_OK6" "0/none/1" "R76a: the translation is not up, IPv6 answers"
+lw_expect_eq "$(lw_pings '-4 ')" 0 "R77a: no IPv4 ping while the translation is not up"
 # a parent without call data uses the legacy IPv4 probe; partial data
 # is read the same way, with one debug line and no info line
 lw_session legacy

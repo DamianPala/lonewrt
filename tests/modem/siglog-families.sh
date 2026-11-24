@@ -105,7 +105,7 @@ for kind in v6child v6; do
 done
 up v6clat 6
 printf '{"up":false}\n' >"$T/ifstatus/wwan_6_4.json"
-lw_expect_eq "$(line)" "$HEAD loss=100% rtt=? wg_age=0s loss6=0% rtt6=21.500" "R28 v6clat: the translation is not up"
+lw_expect_eq "$(line)" "$HEAD loss=0% rtt=21.500 wg_age=0s" "R28 v6clat: the translation is not up, the line is the IPv6 one (R76a)"
 
 # R28: IPv6 only, `loss` and `rtt` are those of IPv6, no loss6, no IPv4 ping
 for kind in v6 v6child; do

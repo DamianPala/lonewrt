@@ -54,6 +54,7 @@ PACKAGES=(
     speedtestcpp
     qrencode libjpeg-turbo-utils
     tmux mtr-nojson vim
+    464xlat kmod-nat46
 )
 # The "Removed" table of packages.md (SPEC R2, D167): packages of the device's default set the image
 # does not want; run_imagebuilder passes each to ImageBuilder as -name

@@ -1,0 +1,23 @@
+#!/bin/sh
+# The stock teardown of 464xlat.sh as tests/clat/stubs/ubus and stubs/sleep run it: only when the
+# marker is there does it stop the helper, delete the device and the rules (it returns early
+# without one).
+T=${LW_TEST:-/lwtest}
+C=$T/clat
+pidfile=${LW_CLAT_PIDFILE:?}
+anycast=${LW_CLAT_ANYCAST:?}
+nat46=${LW_CLAT_NAT46:?}
+if [ -f "$anycast" ]; then
+    p=$(cat "$pidfile" 2>/dev/null)
+    [ -z "$p" ] || kill "$p" 2>/dev/null || :
+    rm -f "$pidfile"
+    echo "del 464-wwan_6_4" >>"$nat46"
+    a=$(cat "$anycast")
+    rm -f "$anycast"
+    ip -6 rule del to "$a" lookup prelocal || :
+    if [ -z "$(ls "$(dirname "$anycast")"/464-*-anycast 2>/dev/null)" ]; then
+        ip -6 rule del from all lookup local || :
+        ip -6 rule add from all lookup local pref 0
+    fi
+fi
+echo "teardown" >>"$C/ubus-calls"

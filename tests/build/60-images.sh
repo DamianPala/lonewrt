@@ -112,6 +112,30 @@ check_watchcat() {
     grep -qx "	option lw_family_check '1'" "$img/etc/config/watchcat" || fail "image's /etc/config/watchcat lacks the hook option"
 }
 
+# check_clat ROOTFS: R76e, R76 to R76d. Every image holds what the translation of an IPv6-only
+# session needs: netifd's protocol 464xlat with its helper, the kernel module nat46 of the kernel of
+# this very image, and lonewrt's check and the hotplug file that starts it, which pass the syntax
+# check; the image's qmi.sh never leaves the stock 464XLAT interface to the DHCPv6 script and records
+# the kind of the session for the dispatch (D186, R76b).
+check_clat() {
+    local r=$1 f
+    for f in lib/netifd/proto/464xlat.sh sbin/464xlatcfg usr/sbin/lw-clat-check etc/hotplug.d/iface/90-lw-lan6; do
+        [ -x "$r/$f" ] || fail "R76e: the image has no executable /$f"
+        # 464xlatcfg is the package's binary, the others are shell
+        case $f in sbin/464xlatcfg) ;; *) qmi_sh_n "$r/$f" || fail "image /$f fails sh -n" ;; esac
+    done
+    compgen -G "$r/lib/modules/*/nat46.ko" >/dev/null || fail "R76e: the image has no nat46.ko under /lib/modules"
+    [ -f "$r/etc/modules.d/33-nat46" ] || fail "R76e: the image does not load nat46 (no /etc/modules.d/33-nat46)"
+    grep -qxF '			json_add_string iface_464xlat "0"' "$r/lib/netifd/proto/qmi.sh" ||
+        fail "D186: the image's qmi.sh does not switch off the stock 464XLAT interface"
+    # shellcheck disable=SC2016  # the $ belongs to the line of qmi.sh
+    grep -qxF '			lw_clat_mark "$interface" "$pdh_4" "$cid_6/$pdh_6"' "$r/lib/netifd/proto/qmi.sh" ||
+        fail "R76b: the image's qmi.sh does not record the kind of the session"
+    grep -q '^lw_clat_mark() {' "$r/lib/netifd/proto/qmi.sh" || fail "R76b: the image's qmi.sh has no lw_clat_mark"
+    grep -qF 'lw-clat-check new' "$r/etc/hotplug.d/iface/90-lw-lan6" || fail "R76b: the image's 90-lw-lan6 does not start the check"
+    [ ! -e "$r/etc/hotplug.d/iface/96-lw-clat" ] || fail "R76b: the image has a hotplug file of its own for the translation"
+}
+
 # packages_of FILE: the names in the PACKAGES=( ... ) list of a build script, sorted
 packages_of() {
     sed -n '/^PACKAGES=(/,/^)/p' "$1" | sed '1d;$d' | tr ' ' '\n' | sed '/^$/d' | sort
@@ -141,7 +165,7 @@ done
 
 # build.sh installs exactly the "Included" table minus the default-set row and the rows marked as a
 # tailscale image's only, which it adds as TS_PACKAGES for a tailscale profile (R63)
-DEFAULT_SET='uqmi|kmod-.*|wpad-basic-mbedtls|firewall4|dnsmasq|dropbear'
+DEFAULT_SET='uqmi|kmod-usb-net-qmi-wwan|kmod-usb-serial-option|wpad-basic-mbedtls|firewall4|dnsmasq|dropbear'
 packages_in Included | grep -qxE "$DEFAULT_SET" || fail "packages.md \"Included\" has no row of the default set"
 ts_want=$(ts_packages_in | sort)
 [ -n "$ts_want" ] || fail "packages.md \"Included\" has no row marked $TS_NOTE"
@@ -177,6 +201,7 @@ unpack_image "$DI/generic-sysupgrade.bin" "$SCRATCH/generic"
 R=$SCRATCH/generic/rootfs
 check_qmi "$R"
 check_watchcat "$R"
+check_clat "$R"
 cmp -s "$R/etc/init.d/odhcpd" "$FW/src/files/etc/init.d/odhcpd" ||
     fail "generic image does not contain the LAN IPv6 odhcpd init"
 assert_absent "$R" "${LW_VALUES[@]}" "${FAKE_VALUES[@]}"
@@ -228,6 +253,7 @@ unpack_image "$I/fake-full-sysupgrade.bin" "$SCRATCH/fake"
 R=$SCRATCH/fake/rootfs
 check_qmi "$R"
 check_watchcat "$R"
+check_clat "$R"
 assert_present "$R" "${FAKE_VALUES[@]}"
 assert_absent "$R" "${LW_VALUES[@]}"
 grep -qxF '0 10 * * 1 /usr/sbin/lw-notify balance' "$R/etc/crontabs/root" ||

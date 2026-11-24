@@ -4,7 +4,9 @@
 #
 #   lw_probe_session   read the session from netifd. LW_P_HAS4 and LW_P_HAS6 say which families it
 #                      has (1/0), LW_P_DEV4 and LW_P_DEV6 the device each can be probed on now (empty
-#                      = not ready), LW_P_XLAT 1 when the IPv4 goes over the translation
+#                      = not ready), LW_P_XLAT 1 when the IPv4 goes over the translation, LW_P_V6ONLY
+#                      1 when the session has IPv6 and never had an IPv4 call (R76b: the session of
+#                      a translation; wwan-recover runs lw-clat-check for it)
 #   lw_probe_round [recover|notify|watchcat]   one round of pings with the parameters of that
 #                      consumer (see _lw_pfam; Terms "online"): LW_P_OK4 and LW_P_OK6 (1, 0, or empty
 #                      for a family the session does not have), LW_P_ONLINE (1 or 0), LW_P_MS (the
@@ -18,7 +20,7 @@
 #
 # Which families the session has comes from the call data the parent wwan publishes (data.cid_4 with
 # data.pdh_4, data.cid_6 with data.pdh_6, Terms "session"), and a translation interface wwan_6_4
-# gives IPv4 service to an IPv6 session. The devices only decide whether a family can be probed now:
+# that is up gives IPv4 service to an IPv6 session. The devices only decide whether a family can be probed now:
 # a family of the session without a ready device failed this round, it is never absent. Every ping is
 # bound to the device of its own family with -4 or -6 and -I, so a reply that came over the tunnel,
 # Tailscale or another interface is none. A parent with no call data falls back to the legacy IPv4
@@ -76,9 +78,10 @@ _lw_pstatus() {
 
 # lw_probe_session (R77c): a fresh read at every call, so a new start or a translation that comes or
 # goes is followed at the next round. The native IPv4 is the child wwan_4 (Terms), the translation
-# wwan_6_4 (R76d, D191); an IPv6 address or global prefix can be on wwan_6 or on wwan itself.
+# wwan_6_4 (R76d, D191), which counts only while it is up; an IPv6 address or global prefix can be on
+# wwan_6 or on wwan itself.
 lw_probe_session() {
-    LW_P_HAS4=0 LW_P_HAS6=0 LW_P_DEV4='' LW_P_DEV6='' LW_P_XLAT=0
+    LW_P_HAS4=0 LW_P_HAS6=0 LW_P_DEV4='' LW_P_DEV6='' LW_P_XLAT=0 LW_P_V6ONLY=0
     _lw_sw=$(_lw_pstatus wwan "${1:-}") || _lw_sw=''
     # the second of this read: the birth of the session is measured on it (R14g)
     _lw_pnow
@@ -106,10 +109,14 @@ lw_probe_session() {
             # R73p: QMI can publish static IPv4 on the parent without a DHCP child.
             LW_P_DEV4=$(_lw_pdev "$_lw_sw")
         fi
-    elif [ -n "$_lw_sx" ]; then
-        # R76d: the translation has a device of its own, never the modem's
-        LW_P_HAS4=1 LW_P_XLAT=1
+    else
+        # R76b: IPv6 and no IPv4 call, now or ever in this session
+        LW_P_V6ONLY=1
         if [ "$(_lw_pj "$_lw_sx" '@.up')" = true ]; then
+            # R76d: the translation has a device of its own, never the modem's. It gives the session
+            # IPv4 only while it is up (R76a, R77): one that is being made, failed or is gone leaves
+            # IPv6 without IPv4 service, a state and not a family lost.
+            LW_P_HAS4=1 LW_P_XLAT=1
             LW_P_DEV4=$(_lw_pj "$_lw_sx" '@.l3_device')
             LW_P_DEV4=${LW_P_DEV4:-464-wwan_6_4}
         fi

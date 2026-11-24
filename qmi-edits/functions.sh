@@ -437,6 +437,27 @@ lw_v6_global() {
 	esac
 }
 
+# lw_clat_mark INTERFACE PDH_4 HANDLES: R76, R76b, D186. The IPv6 child of wwan is being made. This records for the hotplug
+# dispatch of lw-clat-check, which may use shell builtins only (a router with no translation must start no
+# process on any event), whether the session is one that can have a translation. With no IPv4 call it
+# writes the handles of the IPv6 call and the uptime of this setup: the check then tells this session
+# from the next even when the call gets the same handles again. With an IPv4 call it empties a stale
+# record with a builtin, so the child can come up without another process.
+# A session with no IPv6 call never gets here, so an IPv4-only router runs nothing of this; a record
+# left by an earlier IPv6-only session is harmless there, because the dispatch looks at it only when
+# the IPv6 child comes up, and every child is made through this function.
+lw_clat_mark() {
+	[ "$1" = wwan ] || return 0
+	local d=${LW_CLAT_DIR:-/var/run/lw-clat} up
+	if [ -n "$2" ]; then
+		if [ -s "$d/v6only" ]; then : >"$d/v6only"; fi
+		return 0
+	fi
+	read -r up _ <"${LW_UPTIME_FILE:-/proc/uptime}"
+	mkdir -p "$d" && echo "$3/$up" >"$d/v6only"
+	return 0
+}
+
 # lw_v6_ok: the IPv6 settings the modem reports for the call are complete and valid (R73j); else the
 # session takes them from the link. One read, one judgement: the set that passes is kept in lw_v6_json
 # (rebuilt from the checked values) and is the one the handler publishes, so a later read of the

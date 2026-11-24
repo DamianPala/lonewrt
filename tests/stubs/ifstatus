@@ -6,4 +6,9 @@ if [ -e "$statuses/hang" ]; then
     trap '' TERM
     exec sleep 3
 fi
+# netifd that does not answer: the status cannot be read (not the same as an interface that is not there)
+if [ -e "$statuses/$1.unreadable" ]; then
+    echo "Request timed out" >&2
+    exit 1
+fi
 cat "$statuses/$1.json" 2>/dev/null || { echo "Interface $1 not found" >&2; exit 1; }

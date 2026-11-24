@@ -1,5 +1,35 @@
 #!/bin/sh
 # R74f: LAN's assignment can arrive after the parent or child publishes the prefix.
+# R76, R76c, D186: the same file starts the IPv4 translation check of an IPv6-only session. It is
+# this file and not one of its own because hotplug-call runs every file of the directory in a
+# subshell on every event: a file of its own costs one fork per event on every router, and the
+# IPv4-only router of the owner and a dual-stack session must start nothing for the translation.
+# So what is tested here is made of shell builtins only, on files qmi.sh and the check keep:
+#   v6only   written by qmi.sh when the IPv6 child of a session with no IPv4 call is made (and
+#            emptied when the child is made in a session with an IPv4 call), so `ifup wwan_6` of a
+#            dual-stack session never starts anything
+#   active   kept by lw-clat-check while a translation exists or is being made, so the end of a
+#            session (ifdown wwan, with or without an ifup after it) cleans it up, and a router
+#            that never had one starts nothing
+# The check runs detached and bounded, and takes a lock of its own against a second one.
+d=${LW_CLAT_DIR:-/var/run/lw-clat}
+case $ACTION:$INTERFACE in
+    ifup:wwan_6)
+        if [ -s "$d/v6only" ]; then
+            setsid timeout -k 2 90 /usr/sbin/lw-clat-check new </dev/null >/dev/null 2>&1 &
+        fi
+        ;;
+    ifup:wwan)
+        if [ -e "$d/active" ]; then
+            setsid timeout -k 2 90 /usr/sbin/lw-clat-check new </dev/null >/dev/null 2>&1 &
+        fi
+        ;;
+    ifdown:wwan)
+        if [ -e "$d/active" ]; then
+            setsid timeout -k 2 90 /usr/sbin/lw-clat-check down </dev/null >/dev/null 2>&1 &
+        fi
+        ;;
+esac
 case "$INTERFACE" in
     wwan|wwan_*|lan) /etc/init.d/odhcpd reload lan6 ;;
 esac

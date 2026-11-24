@@ -1,0 +1,113 @@
+#!/bin/sh
+# Test stand-in for ubus in the translation tests: the part of netifd and of the stock protocol
+# 464xlat (lib/netifd/proto/464xlat.sh with its helper 464xlatcfg) that lw-clat-check meets.
+#
+#   ubus call network add_dynamic JSON   the interface wwan_6_4 is added and its setup runs as
+#       the stock shell would run it, by $LW_TEST/clat/outcome: `up` (default) starts the helper (a
+#       live process of the name 464xlatcfg, its pid file, the nat46 device with the prefix of the
+#       call), writes the address marker and the rules, and netifd shows the interface up on
+#       464-wwan_6_4; `fail` leaves what a helper that failed leaves (the process, its pid file, the
+#       nat46 device, no marker) and the interface down; `interrupted` is that with the rules of the
+#       stock script (it writes them before the marker); `pending` leaves it set up, not up yet
+#   ubus call network.interface.wwan_6_4 remove   the stock teardown (stubs/ubus-teardown): only when
+#       the marker is there does it stop the helper, delete the device and the rules (it returns
+#       early without), and the interface is gone from netifd at the next nap of the stand-in sleep,
+#       not before: netifd removes asynchronously, and an add_dynamic that comes meanwhile is lost
+#       (found in the VM). With the file $LW_TEST/clat/stuck-remove netifd has not got to it: nothing
+#       happens, not even the teardown, until the file is gone and a nap goes by
+#
+#   $LW_TEST/clat/wwan-during-add.json, when present, becomes the status of wwan at the add_dynamic
+#       (the session ends while the setup is going on)
+#
+# The helper is started with the lock of lw-clat-check closed: netifd is not its child.
+# Every call adds a line to $LW_TEST/clat/ubus-calls, every added interface its JSON to
+# $LW_TEST/clat/added. The files of the helper are those lw-clat-check reads (LW_CLAT_PIDFILE,
+# LW_CLAT_ANYCAST, LW_CLAT_NAT46); netifd's status is the fixture of tests/stubs/ifstatus.
+T=${LW_TEST:-/lwtest}
+C=$T/clat
+mkdir -p "$C"
+# `ubus -S list network.interface.NAME`: exit 4 for an interface netifd does not have, 1 when netifd does
+# not answer (the file ifstatus/NAME.unreadable), 0 otherwise
+if [ "$1 $2" = "-S list" ]; then
+    n=${3#network.interface.}
+    [ ! -e "$T/ifstatus/$n.unreadable" ] || exit 1
+    [ -e "$T/ifstatus/$n.json" ] || exit 4
+    exit 0
+fi
+echo "ubus $*" >>"$C/ubus-calls"
+[ "$1" = call ] || {
+    echo "stub ubus: unsupported call: $*" >&2
+    exit 2
+}
+obj=$2 method=$3 json=$4
+pidfile=${LW_CLAT_PIDFILE:?}
+anycast=${LW_CLAT_ANYCAST:?}
+nat46=${LW_CLAT_NAT46:?}
+fix=$T/ifstatus/wwan_6_4.json
+addr=2001:db8:1::464
+
+case "$obj $method" in
+    'network add_dynamic')
+        [ "$(jsonfilter -s "$json" -e '@.name')" = wwan_6_4 ] || exit 4
+        [ ! -e "$C/removing" ] || {
+            echo "add_dynamic lost: wwan_6_4 is still being removed" >>"$C/ubus-calls"
+            exit 0
+        }
+        echo "$json" >>"$C/added"
+        # a session that ends while the setup is going on: $C/wwan-during-add.json becomes wwan's status
+        if [ -f "$C/wwan-during-add.json" ]; then mv "$C/wwan-during-add.json" "$T/ifstatus/wwan.json"; fi
+        outcome=$(cat "$C/outcome" 2>/dev/null || echo up)
+        # a call with no prefix would make the helper ask the system resolver, which these tests
+        # do not have: it fails like a helper without DNS64
+        prefix=$(jsonfilter -s "$json" -e '@.ip6prefix')
+        [ -n "$prefix" ] || outcome=fail
+        mkdir -p "$(dirname "$pidfile")" "$(dirname "$nat46")" "$C/fake"
+        case $outcome in
+            up | fail | pending | interrupted)
+                # a process whose argv is what the stock helper's is: 464xlatcfg 464-wwan_6_4 wwan0 PREFIX
+                # (a ucode script of that name that sleeps; busybox would not run under another argv[0])
+                echo 'sleep(1000000);' >"$C/fake/464-wwan_6_4"
+                # shellcheck disable=SC2016  # the $1 is the script of the inner shell's
+                (cd "$C/fake" && setsid sh -c 'exec -a 464xlatcfg /usr/bin/ucode 464-wwan_6_4 wwan0 "$1"' sh "$prefix" \
+                    </dev/null >/dev/null 2>&1 9>&- &
+                    echo $! >"$pidfile")
+                echo "add 464-wwan_6_4" >>"$nat46"
+                echo "config 464-wwan_6_4 local.v4 192.0.0.1/32 local.v6 $addr/128 remote.v6 $prefix" >>"$nat46"
+                ;;
+        esac
+        case $outcome in
+            up)
+                echo "$addr" >"$anycast"
+                ip -6 rule del from all lookup local || :
+                ip -6 rule add from all lookup local pref 1
+                ip -6 rule add to "$addr" lookup prelocal pref 0
+                printf '{"up":true,"pending":false,"l3_device":"464-wwan_6_4","ipv4-address":[{"address":"192.0.0.1","mask":32}]}\n' >"$fix"
+                ;;
+            fail) printf '{"up":false,"pending":false}\n' >"$fix" ;;
+            interrupted)
+                # a setup that died after the rules and before the marker (464xlat.sh writes them in
+                # that order): the rules are there, the marker is not
+                ip -6 rule del from all lookup local || :
+                ip -6 rule add from all lookup local pref 1
+                ip -6 rule add to "$addr" lookup prelocal pref 0
+                printf '{"up":false,"pending":false}\n' >"$fix"
+                ;;
+            pending) printf '{"up":false,"pending":true}\n' >"$fix" ;;
+        esac
+        ;;
+    'network.interface.wwan_6_4 remove')
+        [ -f "$fix" ] || exit 4
+        touch "$C/removing"
+        # netifd that has not got to it yet (stuck-remove): the teardown runs when it does, at the
+        # nap that ends the removal (stubs/sleep)
+        if [ -e "$C/stuck-remove" ]; then
+            touch "$C/teardown-deferred"
+        else
+            sh "$(dirname "$0")/ubus-teardown"
+        fi
+        ;;
+    *)
+        echo "stub ubus: unsupported call: $*" >&2
+        exit 2
+        ;;
+esac

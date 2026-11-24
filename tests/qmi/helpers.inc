@@ -2,7 +2,7 @@
 
 QMI_DIR=/fw/tests/qmi
 PATH=$QMI_DIR/stubs:$PATH
-export QMI_STATE PATH LW_UPTIME_FILE
+export QMI_STATE PATH LW_UPTIME_FILE LW_CLAT_DIR
 
 # qmi_fixture SCENARIO: a fresh modem. Profile 1 starts as the image's forced IPv4 leaves it (IPv4
 # and the test APN), the SIM is ready, the clock is the file the handler reads (R73h).
@@ -10,6 +10,7 @@ qmi_fixture() {
     # Each test has a fresh rootfs. qmi.sh discovers wwan0 through the USB control node.
     QMI_STATE=$(mktemp -d /tmp/qmi.XXXXXX)
     LW_UPTIME_FILE=$QMI_STATE/uptime
+    LW_CLAT_DIR=$QMI_STATE/clat
     NOTIFY=$QMI_STATE/notify_proto.jsonl
     DYNAMIC=$QMI_STATE/add_dynamic.jsonl
     mkdir "$QMI_STATE/clients" "$QMI_STATE/calls"

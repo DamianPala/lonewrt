@@ -552,4 +552,13 @@ traffic_online
 cycle
 save_state
 save_run
+# R76c: a session with IPv6 and never an IPv4 call gets its translation looked at, after everything
+# above, so it changes no decision and no timing of the ladder. Every other session (the owner's
+# IPv4-only one among them) runs nothing and reads nothing for it; the check returns on its own at a
+# busy lock, and is cut at 60 s. The same run also does the cleanup of a session's end that the
+# hotplug could not do (a `down` that found the lock busy leaves a mark; a builtin test, so a router
+# with no translation starts nothing).
+if { [ "${LW_P_V6ONLY:-0}" = 1 ] || [ -e "${LW_CLAT_DIR:-/var/run/lw-clat}/cleanup" ]; } && ! dry; then
+    timeout -k 2 60 "${LW_CLAT_CHECK:-/usr/sbin/lw-clat-check}" tick >/dev/null 2>&1 || :
+fi
 exit 0

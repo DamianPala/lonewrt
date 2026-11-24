@@ -99,6 +99,11 @@ def nic_args(a, ssh_port, lan_net, lan_host):
         return link_nic(a)
     # with --internet the wwan side is user-mode NAT to the real internet; without it nothing leaves
     wwan_restrict = "off" if a.internet else "on"
+    # with --wwan-peer the wwan NIC is the end of a unix stream to a program of the host (the IPv6
+    # peer of tests/vm/95-clat.sh, which listens first), not user-mode networking
+    wwan_net = f"user,id=wwan,restrict={wwan_restrict},net={WWAN_NET},host={WWAN_GW},dhcpstart=10.0.3.15"
+    if a.wwan_peer:
+        wwan_net = f"stream,id=wwan,addr.type=unix,addr.path={a.wwan_peer},server=off,reconnect-ms=1000"
     nics = [
         "-netdev",
         f"user,id=lan,restrict=on,net={lan_net},host={lan_host},"
@@ -106,7 +111,7 @@ def nic_args(a, ssh_port, lan_net, lan_host):
         "-device",
         "virtio-net-pci,netdev=lan,id=lan-nic,mac=52:54:00:52:48:01,addr=0x3",
         "-netdev",
-        f"user,id=wwan,restrict={wwan_restrict},net={WWAN_NET},host={WWAN_GW},dhcpstart=10.0.3.15",
+        wwan_net,
         "-device",
         "virtio-net-pci,netdev=wwan,id=wwan-nic,mac=52:54:00:52:48:02,addr=0x4",
     ]
@@ -136,9 +141,7 @@ def cmd_start(a):
     lan_net, lan_host = lan_addresses(a.lan_ip)
     argv = [
         qemu,
-        "-enable-kvm",
-        "-cpu",
-        "host",
+        *(["-cpu", "max"] if os.environ.get("LWVM_NO_KVM") == "1" else ["-enable-kvm", "-cpu", "host"]),
         "-m",
         str(a.mem),
         "-smp",
@@ -429,6 +432,7 @@ def main():
     p.add_argument("--internet", action="store_true", help="wwan NIC with NAT to the real internet")
     p.add_argument("--xfer", action="store_true", help="an extra, unlogged UART (see recv)")
     p.add_argument("--guest", action="store_true", help="a small LAN guest: only the link NIC")
+    p.add_argument("--wwan-peer", help="unix socket path of a host program that is the wwan NIC's peer")
     p.add_argument("--link-role", choices=("server", "client"), help="add the guest-to-guest NIC")
     p.add_argument("--link-sock", help="unix socket path of the guest-to-guest NIC")
     p.set_defaults(fn=cmd_start)

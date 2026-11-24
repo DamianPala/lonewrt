@@ -39,12 +39,17 @@ QMI_A_FUNCS='qmi_wds_stop() {'
 # Edit 3 (R12d (3)): the repair of profile 1 runs before the first registration call
 QMI_A_REGISTER=$'\tuqmi -s -d "$device" -t 20000 --network-register > /dev/null 2>&1'
 QMI_N_REGISTER=$'\tlw_repair'
-# Edit 4 (R12d (3), R76b): the IPv6 child leaves the 464XLAT to the translation unless a native IPv4
-# call exists, and the IPv6 settings of the modem are used only when they are complete (R73j)
+# Edit 4 (R12d (3), R76, R76b, R73j): the IPv6 child never makes the stock 464XLAT interface: dhcpv6.script
+# would make it with no prefix, ask the router's own resolver for it and not try again, so lw-clat-check
+# makes wwan_6_4 itself, with the prefix the operator's DNS64 gave, and only in a session with no native
+# IPv4 call. An IPv6-only session always takes its IPv6 settings from the link through that child (no
+# read of the modem's report at all), so the child the translation hangs off exists; the modem's report
+# is used, when complete (R73j), only in a session with an IPv4 call. The same line records the kind of
+# session for the hotplug dispatch of the check (lw_clat_mark), which has to know it before it starts a process.
 QMI_A_464=$'\t\t\t[ "$pdptype" = "ipv4v6" ] && json_add_string iface_464xlat "0"'
-QMI_N_464=$'\t\t\t[ -n "$pdh_4" ] && json_add_string iface_464xlat "0"'
+QMI_N_464=$'\t\t\tjson_add_string iface_464xlat "0"\n\t\t\tlw_clat_mark "$interface" "$pdh_4" "$cid_6/$pdh_6"'
 QMI_A_V6=$'\t\tif [ -z "$dhcpv6" -o "$dhcpv6" = 0 ]; then'
-QMI_N_V6=$'\t\tif { [ -z "$dhcpv6" ] || [ "$dhcpv6" = 0 ]; } && lw_v6_ok; then'
+QMI_N_V6=$'\t\tif { [ -z "$dhcpv6" ] || [ "$dhcpv6" = 0 ]; } && [ -n "$pdh_4" ] && lw_v6_ok; then'
 # Edit 5 (R73j): the stock read of the IPv6 settings, a second one after lw_v6_ok's, is replaced by
 # the set lw_v6_ok checked, so what is published is what was verified
 QMI_A_V6LOAD=$'\t\t\tjson_load "$(uqmi -s -d $device -t 1000 --set-client-id wds,$cid_6 --get-current-settings)"'

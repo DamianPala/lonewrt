@@ -1,0 +1,40 @@
+#!/bin/sh
+# Test stand-in for busybox nslookup, as the operator's DNS64 of the translation tests (R76a). It
+# answers `nslookup -type=AAAA ipv4only.arpa SERVER` from $LW_TEST/clat/dns, lines "SERVER WHAT":
+# SERVER is an address or *, WHAT the addresses to give (the format of busybox 1.37: a server
+# header, then Name and Address lines), `none` for a server that answers with no address, `down`
+# for one that is refused, `hang` for one that does not answer until it is cut off. A server without a line gets no answer. Every call adds a
+# line to $LW_TEST/clat/dns-queries.
+C=${LW_TEST:-/lwtest}/clat
+mkdir -p "$C"
+echo "nslookup $*" >>"$C/dns-queries"
+[ "$1" = -type=AAAA ] && [ "$2" = ipv4only.arpa ] && [ -n "$3" ] || {
+    echo "stub nslookup: unsupported call: $*" >&2
+    exit 2
+}
+server=$3
+what=$(awk -v s="$server" '$1 == s || $1 == "*" { $1 = ""; sub(/^ /, ""); print; exit }' "$C/dns" 2>/dev/null)
+if [ -f "$C/wwan-during-dns.json" ]; then
+    mv "$C/wwan-during-dns.json" "${LW_TEST:-/lwtest}/ifstatus/wwan.json"
+fi
+if [ -f "$C/wwan_6-during-dns.json" ]; then
+    mv "$C/wwan_6-during-dns.json" "${LW_TEST:-/lwtest}/ifstatus/wwan_6.json"
+fi
+case $what in
+    hang)
+        /bin/sleep 30
+        exit 1
+        ;;
+    '' | down)
+        echo "nslookup: can't connect to remote host ($server): Connection refused" >&2
+        exit 1
+        ;;
+esac
+printf 'Server:\t\t%s\nAddress:\t%s:53\n\n' "$server" "$server"
+if [ "$what" = none ]; then
+    echo "*** Can't find ipv4only.arpa: No answer"
+    exit 1
+fi
+for a in $what; do
+    printf 'Name:\tipv4only.arpa\nAddress: %s\n\n' "$a"
+done

@@ -1,18 +1,20 @@
 # R73j: the session's IPv6 settings come from what the modem reports for the call when that set is
 # complete and valid (address, prefix length, gateway, DNS), else from the link (the IPv6 child);
 # only one of the two sets them, and an incomplete set publishes nothing. dhcpv6 takes them from
-# the link at once. The IPv6 call itself stays published in every case (R73e).
+# the link at once, and so does every IPv6-only session (R76, D186: the translation hangs off that
+# child, whatever the modem reports); the modem's report is read only in a session with an IPv4
+# call. The IPv6 call itself stays published in every case (R73e).
 # shellcheck source=tests/lib.sh
 . /fw/tests/lib.sh
 # shellcheck source=tests/qmi/helpers.inc
 . /fw/tests/qmi/helpers.inc
 
 # static: the settings of the modem on the parent, no IPv6 child
-qmi_fixture ipv6-only
+qmi_fixture both-accepted
 qmi_run setup ipv4v6 || lw_fail 'setup with complete settings failed'
 lw_expect_eq "$(qmi_notify 0 '.ip6addr[*].ipaddr')" 2001:db8::2 'address from the modem'
 lw_expect_eq "$(qmi_notify 0 '.ip6prefix[*]')" 2001:db8::2/64 'prefix from the modem'
-lw_expect_eq "$(qmi_json_lines "$DYNAMIC" '@[*].name')" '' 'no IPv6 child beside the settings'
+lw_expect_eq "$(qmi_child wwan_6 proto)" '' 'no IPv6 child beside the settings'
 
 # invalid reports: no prefix length, no gateway, an address that is not IPv6, no DNS
 for row in 'no prefix:"ipv6":{"ip":"2001:db8::2","gateway":"2001:db8::1","dns1":"2001:db8::53"}' \
@@ -31,28 +33,28 @@ for row in 'no prefix:"ipv6":{"ip":"2001:db8::2","gateway":"2001:db8::1","dns1":
     'address with too few groups:"ipv6":{"ip":"2001:db8:2","gateway":"2001:db8::1","dns1":"2001:db8::53","ip-prefix-length":64}' \
     'empty report:"ipv6":{}'; do
     label=${row%%:*}
-    qmi_fixture ipv6-only
+    qmi_fixture both-accepted
     printf '{%s}\n' "${row#*:}" >"$QMI_STATE/settings-ipv6.json"
     qmi_run setup ipv4v6 || lw_fail "$label: the start failed"
     lw_expect_eq "$(qmi_notify 3 '.error[*]')" '' "$label: failed starts"
     lw_expect_eq "$(qmi_notify 0 .data.pdh_6)" 12345679 "$label: the IPv6 call is published"
     lw_expect_eq "$(qmi_notify 0 '.ip6addr[*].ipaddr')" '' "$label: no address of the modem set"
     lw_expect_eq "$(qmi_child wwan_6 proto)" dhcpv6 "$label: the link gives the settings"
-    lw_expect_eq "$(qmi_child wwan_6 iface_464xlat)" '' "$label: no native IPv4, the translation may run"
+    lw_expect_eq "$(qmi_child wwan_6 iface_464xlat)" 0 "$label: the stock 464XLAT is never made (D186)"
 done
 
 # a gateway that is link-local is usual on a mobile link and is no reason to refuse the set; a second
 # DNS server that is no address is dropped, not published
-qmi_fixture ipv6-only
+qmi_fixture both-accepted
 printf '{"ipv6":{"ip":"2001:db8::2","gateway":"fe80::1","dns1":"2001:db8::53","dns2":"junk","ip-prefix-length":64}}\n' \
     >"$QMI_STATE/settings-ipv6.json"
 qmi_run setup ipv4v6 || lw_fail 'setup with a link-local gateway failed'
 lw_expect_eq "$(qmi_notify 0 '.ip6addr[*].ipaddr')" 2001:db8::2 'address with a link-local gateway'
 lw_expect_eq "$(qmi_notify 0 '.dns[*]')" 2001:db8::53 'only the DNS server that is an address'
-lw_expect_eq "$(qmi_json_lines "$DYNAMIC" '@[*].name')" '' 'no IPv6 child with a usable set'
+lw_expect_eq "$(qmi_child wwan_6 proto)" '' 'no IPv6 child with a usable set'
 
 # A host-only prefix cannot supply a LAN /64.
-qmi_fixture ipv6-only
+qmi_fixture both-accepted
 printf '{"ipv6":{"ip":"2001:db8::2","gateway":"2001:db8::1","dns1":"2001:db8::53","ip-prefix-length":128}}\n' \
     >"$QMI_STATE/settings-ipv6.json"
 qmi_run setup ipv4v6 || lw_fail 'setup with a prefix length of 128 failed'
@@ -60,7 +62,7 @@ lw_expect_eq "$(qmi_notify 0 '.ip6prefix[*]')" '' 'no static prefix length 128'
 lw_expect_eq "$(qmi_child wwan_6 proto)" dhcpv6 'DHCPv6 for prefix length 128'
 
 for gateway in 0:0:0:0:0:0:0:0 0000:0000:0000:0000:0000:0000:0000:0001 0::0 0::01; do
-    qmi_fixture ipv6-only
+    qmi_fixture both-accepted
     printf '{"ipv6":{"ip":"2001:db8::2","gateway":"%s","dns1":"2001:db8::53","ip-prefix-length":64}}\n' \
         "$gateway" >"$QMI_STATE/settings-ipv6.json"
     qmi_run setup ipv4v6 || lw_fail "setup with gateway $gateway failed"
@@ -74,22 +76,79 @@ for row in 'empty:{}' \
     'another address:{"ipv6":{"ip":"2001:db8::99","gateway":"2001:db8::1","dns1":"2001:db8::53","ip-prefix-length":64}}' \
     'link-local:{"ipv6":{"ip":"fe80::2","gateway":"fe80::1","dns1":"fe80::53","ip-prefix-length":64}}'; do
     label=${row%%:*}
-    qmi_fixture ipv6-only
+    qmi_fixture both-accepted
     printf '%s\n' "${row#*:}" >"$QMI_STATE/settings-ipv6.next.json"
     qmi_run setup ipv4v6 || lw_fail "second read $label: the start failed"
     lw_expect_eq "$(qmi_arg_count --get-current-settings)" 1 "second read $label: reads of the report"
     lw_expect_eq "$(qmi_notify 0 '.ip6addr[*].ipaddr')" 2001:db8::2 "second read $label: the address that was checked"
     lw_expect_eq "$(qmi_notify 0 '.ip6prefix[*]')" 2001:db8::2/64 "second read $label: the prefix that was checked"
     lw_expect_eq "$(qmi_notify 0 '.dns[*]')" "$(printf '%s\n%s' 2001:db8::53 2001:db8::54)" "second read $label: the DNS servers that were checked"
-    lw_expect_eq "$(qmi_json_lines "$DYNAMIC" '@[*].name')" '' "second read $label: no IPv6 child"
+    lw_expect_eq "$(qmi_child wwan_6 proto)" '' "second read $label: no IPv6 child"
 done
 
 # dhcpv6: the link at once, the modem's report is not read
-qmi_fixture ipv6-only
+qmi_fixture both-accepted
 qmi_run setup ipv4v6 '"dhcpv6":true' || lw_fail 'setup with dhcpv6 failed'
 lw_expect_eq "$(qmi_child wwan_6 proto)" dhcpv6 'dhcpv6 child'
 lw_expect_eq "$(qmi_count '--get-current-settings')" 0 'report not read'
 lw_expect_eq "$(qmi_notify 0 '.ip6addr[*].ipaddr')" '' 'no address on the parent'
+
+# R76, D186: an IPv6-only session takes its settings from the link whatever the modem reports, so
+# the child the translation hangs off exists, and the modem's report is not read at all; the child
+# never makes the stock 464XLAT interface (lw-clat-check makes it, with the DNS64 prefix)
+for pdp in ipv4v6 ipv6; do
+    qmi_fixture ipv6-only
+    qmi_run setup "$pdp" || lw_fail "IPv6-only setup ($pdp) failed"
+    lw_expect_eq "$(qmi_notify 0 .data.pdh_6)" 12345679 "IPv6-only $pdp: the IPv6 call is published"
+    lw_expect_eq "$(qmi_notify 0 .data.pdh_4)" '' "IPv6-only $pdp: no IPv4 call"
+    lw_expect_eq "$(qmi_child wwan_6 proto)" dhcpv6 "IPv6-only $pdp: the link gives the settings"
+    lw_expect_eq "$(qmi_child wwan_6 iface_464xlat)" 0 "IPv6-only $pdp: no stock 464XLAT interface"
+    lw_expect_eq "$(qmi_child wwan_6 extendprefix)" 1 "IPv6-only $pdp: the /64 reaches the LAN"
+    lw_expect_eq "$(qmi_count '--get-current-settings')" 0 "IPv6-only $pdp: the report is not read"
+    lw_expect_eq "$(qmi_notify 0 '.ip6addr[*].ipaddr')" '' "IPv6-only $pdp: no address on the parent"
+    lw_expect_eq "$(qmi_child wwan_4 proto)" '' "IPv6-only $pdp: no IPv4 child"
+    # the record the hotplug dispatch of lw-clat-check reads with builtins: the handles of the IPv6
+    # call and the second of this setup (R76b)
+    lw_expect_eq "$(sed 's|^[0-9]*/||' "$LW_CLAT_DIR/v6only")" 12345679/1000.00 "IPv6-only $pdp: the record of the session"
+    qmi_ifdown "$pdp"
+done
+
+# the record is of the session whose child is made: a session with an IPv4 call and an IPv6 child
+# (dhcpv6, or a report that could not be used) empties the record of an earlier IPv6-only one, so
+# the child's ifup starts nothing there; one with the modem's report makes no child and leaves the
+# record alone, as does an IPv4-only session, which runs no command about it
+qmi_fixture ipv6-only
+qmi_run setup ipv6 || lw_fail 'IPv6-only setup failed'
+[ -e "$LW_CLAT_DIR/v6only" ] || lw_fail 'IPv6-only: no record'
+qmi_ifdown ipv6
+qmi_fixture both-accepted
+mkdir -p "$LW_CLAT_DIR"
+echo 1/2/3.00 >"$LW_CLAT_DIR/v6only"
+qmi_run setup ipv4v6 '"dhcpv6":true' || lw_fail 'dual stack with an IPv6 child failed'
+lw_expect_eq "$(qmi_child wwan_6 proto)" dhcpv6 'dual stack with a child: the child'
+[ -f "$LW_CLAT_DIR/v6only" ] && [ ! -s "$LW_CLAT_DIR/v6only" ] ||
+    lw_fail 'dual stack with a child: the stale record was not emptied in place'
+qmi_fixture both-accepted
+printf '{"ipv6":{"ip":"2001:db8::2","gateway":"2001:db8::1","dns1":"2001:db8::53","ip-prefix-length":128}}\n' \
+    >"$QMI_STATE/settings-ipv6.json"
+mkdir -p "$LW_CLAT_DIR"
+echo 1/2/3.00 >"$LW_CLAT_DIR/v6only"
+qmi_run setup ipv4v6 || lw_fail 'dual stack with an unusable report failed'
+lw_expect_eq "$(qmi_child wwan_6 proto)" dhcpv6 'dual stack, unusable report: the child'
+[ -f "$LW_CLAT_DIR/v6only" ] && [ ! -s "$LW_CLAT_DIR/v6only" ] ||
+    lw_fail 'dual stack, unusable report: the stale record was not emptied in place'
+qmi_fixture both-accepted
+mkdir -p "$LW_CLAT_DIR"
+echo 1/2/3.00 >"$LW_CLAT_DIR/v6only"
+qmi_run setup ipv4v6 || lw_fail 'dual stack with the modem report failed'
+lw_expect_eq "$(qmi_child wwan_6 proto)" '' 'dual stack, usable report: no child'
+lw_expect_eq "$(cat "$LW_CLAT_DIR/v6only")" 1/2/3.00 'dual stack, usable report: no command about the record'
+qmi_fixture owner-sim
+mkdir -p "$LW_CLAT_DIR"
+echo 1/2/3.00 >"$LW_CLAT_DIR/v6only"
+qmi_run setup ipv4v6 || lw_fail 'IPv4-only setup failed'
+lw_expect_eq "$(cat "$LW_CLAT_DIR/v6only")" 1/2/3.00 'IPv4-only: no command about the record'
+lw_expect_eq "$(find "$LW_CLAT_DIR" -type f | wc -l)" 1 'IPv4-only: nothing written'
 
 # static IPv4 (dhcp 0) keeps the stock path: the report of the IPv4 call on the parent
 qmi_fixture owner-sim

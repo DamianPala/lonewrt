@@ -5,7 +5,10 @@
 # shellcheck source=tests/lib.sh
 . /fw/tests/lib.sh
 PATH=/fw/tests/ladder/stubs:$PATH
-export PATH
+# R76c: the ladder's run ends with a call of the translation check in an IPv6-only session; these tests
+# are about the ladder, tests/clat/ about the check and the call
+LW_CLAT_CHECK=/bin/true
+export PATH LW_CLAT_CHECK
 lw_setup
 
 STATE=/etc/wwan-recover.state
