@@ -21,6 +21,7 @@ fake_make_image >"$W/ib/Makefile"
 fake_qmi_ib "$W/ib"
 export FAKE_QMI_SH=$FIX/fake-qmi.sh
 fake_wc_pins
+fake_odhcpd_pin
 
 PINNED=(foo-2.0-r1.apk luci-app-foo-1.5-r3.apk modemband-20260806-r1.apk libx-16-10.42-r1.apk)
 for f in "${PINNED[@]}"; do printf 'fake %s\n' "$f" >"$EXTRA/$f"; done
@@ -109,14 +110,14 @@ QMI_PIN=0000000000000000000000000000000000000000000000000000000000000000 \
 # pin of the real package file
 outside() {
     (
-        unset LW_TESTS LW_QMI_SHA256 LW_WATCHCAT_SHA256 LW_WATCHCAT_INIT_SHA256
+        unset LW_TESTS LW_QMI_SHA256 LW_WATCHCAT_SHA256 LW_WATCHCAT_INIT_SHA256 LW_ODHCPD_INIT_SHA256
         [ "$1" = - ] || export "$1=$2"
         shift 2
         LW_WORK=$W LW_ROOTFS=$FW/work/dl/x86/rootfs LW_DEPS_LIST=$SCRATCH/deps.lst LW_PROFILES=$P \
             LW_IMAGE=$I "$FW/build.sh" "$@"
     )
 }
-for knob in LW_QMI_SHA256 LW_WATCHCAT_SHA256 LW_WATCHCAT_INIT_SHA256; do
+for knob in LW_QMI_SHA256 LW_WATCHCAT_SHA256 LW_WATCHCAT_INIT_SHA256 LW_ODHCPD_INIT_SHA256; do
     for value in "$(sum "$FIX/fake-qmi.sh")" ""; do
         expect_fail_with "$knob is set" outside "$knob" "$value" generic
         expect_fail_with "SPEC R12g" outside "$knob" "$value" generic
@@ -147,6 +148,12 @@ want=$((${#PINNED[@]} + ${#STAY[@]}))
 sed 's/sleep 3/sleep 4/' "$FIX/fake-qmi.sh" >"$SCRATCH/other-orig.sh"
 FAKE_QMI_ORIG=$SCRATCH/other-orig.sh expect_fail_with "the package's file has sha256 " build
 [ -z "$(find "$I" -name '*.bin')" ] || fail "a changed package file left an image"
+
+# The installed stock odhcpd init must also match before the build can publish.
+printf 'changed stock init\n' >"$SCRATCH/other-odhcpd-init"
+FAKE_ODHCPD_INIT=$SCRATCH/other-odhcpd-init \
+    expect_fail_with "stock /etc/init.d/odhcpd has sha256" build
+[ -z "$(find "$I" -name '*.bin')" ] || fail "a changed odhcpd init left an image"
 
 # the real list: every file it pins for the group is a plain name under dl/extra that reads as
 # name-version, and no package is pinned twice

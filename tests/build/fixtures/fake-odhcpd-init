@@ -1,0 +1,3 @@
+#!/bin/sh
+# Stand-in for the package init that ImageBuilder copies before applying FILES.
+echo fake odhcpd

@@ -32,6 +32,20 @@ Any built image carries its Wi-Fi password and root hash, so share the repositor
 Whoever gets hold of the router also has its WireGuard private key.
 So on your WireGuard server allow the router's peer only its own tunnel address, and block connections from it into your network; the router never needs them.
 
+## IPv6 on the LAN
+
+The default PDP type is forced IPv4.
+With an IPv6 call, OpenWrt assigns a /64 to `lan` from the delegated prefix or extends the session's routed /64 when the operator gives no delegation.
+The router advertises that prefix and its DNS address once the LAN has the assignment and the cellular route is usable.
+On a managed LAN, DHCPv6 stays disabled and the IPv6 prefixes come from the cellular session.
+
+A flash that keeps settings keeps the PDP type.
+The stock 0.6.1 LAN settings (`ip6assign=60` with RA and DHCPv6 disabled) move to the conditional /64 policy.
+The 0.6.0 stock LAN with RA and DHCPv6 in server mode and the stock SLAAC flags also moves to this policy.
+A custom setting identical to the old defaults is treated as a default.
+The unchanged stock ESP and UDP port 500 rules are limited to IPv4.
+The image replaces odhcpd's init script. Running `apk upgrade odhcpd-ipv6only` restores the stock script, leaving the managed LAN IPv4-only until the next image flash.
+
 ## Tailscale
 
 With `TS_ENABLED='1'` the image gives Tailscale these rules:

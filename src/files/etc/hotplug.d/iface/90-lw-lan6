@@ -1,0 +1,5 @@
+#!/bin/sh
+# R74f: LAN's assignment can arrive after the parent or child publishes the prefix.
+case "$INTERFACE" in
+    wwan|wwan_*|lan) /etc/init.d/odhcpd reload lan6 ;;
+esac

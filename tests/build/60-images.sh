@@ -177,6 +177,8 @@ unpack_image "$DI/generic-sysupgrade.bin" "$SCRATCH/generic"
 R=$SCRATCH/generic/rootfs
 check_qmi "$R"
 check_watchcat "$R"
+cmp -s "$R/etc/init.d/odhcpd" "$FW/src/files/etc/init.d/odhcpd" ||
+    fail "generic image does not contain the LAN IPv6 odhcpd init"
 assert_absent "$R" "${LW_VALUES[@]}" "${FAKE_VALUES[@]}"
 # R63: no Tailscale in an image without it: no package file, config or state directory, and no line in /etc/lw-build
 for f in usr/sbin/tailscaled usr/sbin/tailscale etc/config/tailscale etc/tailscale; do

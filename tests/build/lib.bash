@@ -131,6 +131,13 @@ fake_wc_pins() {
     export LW_WATCHCAT_SHA256 LW_WATCHCAT_INIT_SHA256
 }
 
+# fake_odhcpd_pin: pin the fixture installed in root.orig-* by the stand-in ImageBuilder.
+fake_odhcpd_pin() {
+    export FAKE_ODHCPD_INIT=$FIX/fake-odhcpd-init
+    LW_ODHCPD_INIT_SHA256=$(sha256sum "$FAKE_ODHCPD_INIT" | cut -d' ' -f1)
+    export LW_ODHCPD_INIT_SHA256
+}
+
 # fake_make_image: the Makefile of a stand-in ImageBuilder whose `image` leaves what the real one
 # does in build_dir: the package's file (0755) in root.orig-fake, the overlay's file (FILES=, copied
 # with its mode) in root-fake. FAKE_QMI_ORIG, when set, is a package file other than the one apk gave;
@@ -145,6 +152,8 @@ fake_make_image() {
     printf ' build_dir/target-fake/root.orig-fake/lib/netifd/proto/qmi.sh\n'
     printf '\tcp -p $(FILES)/lib/netifd/proto/qmi.sh build_dir/target-fake/root-fake/lib/netifd/proto/qmi.sh\n'
     fake_make_watchcat
+    printf '\tinstall -m 0755 $(FAKE_ODHCPD_INIT)'
+    printf ' build_dir/target-fake/root.orig-fake/etc/init.d/odhcpd\n'
 }
 
 # fake_make_watchcat: the lines of an `image` recipe that do the same for watchcat's two files

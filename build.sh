@@ -13,10 +13,9 @@
 # ./fetch-deps.sh), LW_ROOTFS (OpenWrt rootfs whose busybox runs the sh -n check). Tests also set
 # LW_PROFILES, LW_SRC, LW_IMAGE, LW_VERSION_FILE (the VERSION file, SPEC R3b), LW_ZONES_PAGE (the
 # configurator page, SPEC R3c) and LW_DEPS_LIST (the pins of deps.lst) to work on copies, and
-# LW_QMI_SHA256, LW_WATCHCAT_SHA256 and LW_WATCHCAT_INIT_SHA256 (the sha256 pins of the uqmi package's
-# qmi.sh, SPEC R12e, and of watchcat's two files, R14c) for tests that build from made-up package
-# files. They work only under the test suite, which sets LW_TESTS=1; a build with one of them set any
-# other way stops (R12g, D205).
+# LW_QMI_SHA256, LW_WATCHCAT_SHA256, LW_WATCHCAT_INIT_SHA256 and LW_ODHCPD_INIT_SHA256 (stock
+# package file pins) for tests that build from made-up package files. They work only under the test
+# suite, which sets LW_TESTS=1 (R12g, D205).
 set -euo pipefail
 
 FW="$(cd "$(dirname "$0")" && pwd)"
@@ -37,6 +36,10 @@ source "$FW/pinned-packages.sh"
 source "$FW/qmi-handler.sh"
 # shellcheck source=watchcat-handler.sh
 source "$FW/watchcat-handler.sh"
+
+# R74e: the reviewed odhcpd-ipv6only init from OpenWrt 25.12.6.
+ODHCPD_INIT_STOCK_SHA256=$(lw_pin LW_ODHCPD_INIT_SHA256 \
+    4d59c3687e7cacee9e7b82ba9433fa815aafeb8f94af4c6926993653009e0fa4) || exit 1
 IB_TAR=$LW_WORK/dl/openwrt-imagebuilder-25.12.6-ipq40xx-generic.Linux-x86_64.tar.zst
 
 # The "Included" table of packages.md (SPEC R2); the device profile adds the default set.
@@ -231,6 +234,20 @@ ts_check_image() {
             "for a tailscale image (SPEC R63a, D138): the free flash would be too small"
 }
 
+# R74e: root.orig-* is the installed package tree before FILES replaces the odhcpd init.
+check_stock_odhcpd_init() {
+    local orig init sum
+    for orig in "$IB"/build_dir/target-*/root.orig-*; do
+        init=$orig/etc/init.d/odhcpd
+        [ -f "$init" ] || die "cannot find stock /etc/init.d/odhcpd from odhcpd-ipv6only at $init"
+        sum=$(sha256sum "$init" | cut -d' ' -f1) || die "cannot hash $init"
+        [ "$sum" = "$ODHCPD_INIT_STOCK_SHA256" ] ||
+            die "stock /etc/init.d/odhcpd has sha256 $sum (expected $ODHCPD_INIT_STOCK_SHA256)." \
+                "Review the new odhcpd-ipv6only init against src/files/etc/init.d/odhcpd" \
+                "before updating the pin in build.sh."
+    done
+}
+
 # run_imagebuilder NAME FILES BIN_DIR LOG: one build at a time per ImageBuilder tree; the lock
 # (fd 9 on the tree) covers the package copy, make and the scrub
 run_imagebuilder() {
@@ -254,6 +271,7 @@ run_imagebuilder() {
     if [ "$rc" -eq 0 ]; then
         qmi_verify "$IB"
         wc_verify "$IB"
+        check_stock_odhcpd_init
     fi
     scrub_imagebuilder "$1"
     SCRUB=

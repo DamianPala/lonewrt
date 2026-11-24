@@ -1,4 +1,5 @@
 #!/bin/sh
+# shellcheck disable=SC3043  # local is supported by BusyBox ash.
 # Router configuration from the build profile, applied on first boot after a flash or a reset.
 # Runs from /etc/init.d/boot before network and dropbear start: only uci and file writes, nothing
 # that waits for the modem (SPEC R8). Every step sets or deletes absolute values, so a run cut off
@@ -61,13 +62,43 @@ set_list() {
     done
 }
 
-# LAN, in the CIDR list form config_generate writes on 25.12
+# R7c, R7e: a kept flash keeps the PDP type and the IPv6 settings of other LANs.
+kept=$(uci -q get network.wwan.proto)
+[ -n "$kept" ] || uci -q delete network.globals.ula_prefix
+
+# R7e: the 0.6.0 server pair is recognizable by odhcpd's stock SLAAC flags.
+stock_lan6() {
+    [ "$(uci -q get network.lan.ip6assign)" = 60 ] || return 1
+    for option in ip6addr ip6prefix ip6class ip6hint ip6ifaceid; do
+        if uci -q get "network.lan.$option" >/dev/null; then return 1; fi
+    done
+    for option in ndp master dns ra_default ra_lifetime; do
+        if uci -q get "dhcp.lan.$option" >/dev/null; then return 1; fi
+    done
+    case "$(uci -q get dhcp.lan.ra)/$(uci -q get dhcp.lan.dhcpv6)" in
+        disabled/disabled) return 0 ;;
+        server/server)
+            [ "$(uci -q get dhcp.lan.ra_slaac)" = 1 ] &&
+                [ "$(uci -q get dhcp.lan.ra_flags)" = 'managed-config other-config' ]
+            ;;
+        *) return 1 ;;
+    esac
+}
+
+if [ -z "$kept" ] || stock_lan6; then
+    # R74b: the persistent odhcpd policy is quiet. Filter ULA and other uplinks out of lan.
+    uci set dhcp.lan.ra='disabled'
+    uci set dhcp.lan.dhcpv6='disabled'
+    uci commit dhcp
+    uci set network.lan.ip6assign='64'
+    set_list network.lan.ip6class 'wwan wwan_6'
+    uci set network.lan.lw_ipv6='1'
+fi
+
+# LAN, in the CIDR list form config_generate writes on 25.12; after the IPv6 options, so a second
+# run keeps the option order (R8a)
 uci -q delete network.lan.netmask
 set_list network.lan.ipaddr "$P_LAN_IP/24"
-# R7, D165: the LAN is IPv4 only. The LTE session is IPv4, so a ULA prefix and the router
-# advertisements it feeds led nowhere, and odhcpd warned about the missing IPv6 default route about
-# 230 times a day. preinit makes the prefix; it is deleted here so the image never advertises one.
-uci -q delete network.globals.ula_prefix
 
 # LTE over QMI; an empty APN lets the network assign one (SPEC R13a), modes=lte (SPEC R10).
 # timeout=30 (R7, D82): qmi.sh's registration loop gives up after that many tries, about a second
@@ -82,7 +113,7 @@ set_or_delete network.wwan.username "$P_WWAN_USERNAME"
 set_or_delete network.wwan.password "$P_WWAN_PASSWORD"
 # R13e: netifd's QMI handler unlocks the SIM with it at every start of the interface
 set_or_delete network.wwan.pincode "$P_WWAN_PIN"
-uci set network.wwan.pdptype='ipv4'
+[ -n "$kept" ] || uci set network.wwan.pdptype='ipv4'
 uci set network.wwan.multipath='off'
 uci set network.wwan.modes='lte'
 uci set network.wwan.timeout='30'
@@ -116,8 +147,11 @@ uci commit network
 # forwarding into the tunnel (SPEC R31a)
 wan_zone=$(uci show firewall | sed -n "s/^firewall\.\([^.]*\)\.name='wan'$/\1/p" | head -n1)
 if [ -n "$wan_zone" ]; then
-    uci -q del_list firewall."$wan_zone".network='wwan'
-    uci add_list firewall."$wan_zone".network='wwan'
+    # R75: cover the children even when they publish no firewall zone data.
+    for iface in wwan wwan_4 wwan_6 wwan_6_4; do
+        uci -q del_list "firewall.$wan_zone.network=$iface"
+        uci add_list "firewall.$wan_zone.network=$iface"
+    done
 fi
 uci -q delete firewall.vpn
 uci set firewall.vpn=zone
@@ -130,13 +164,29 @@ uci -q delete firewall.vpn_lan
 uci set firewall.vpn_lan=forwarding
 uci set firewall.vpn_lan.src='vpn'
 uci set firewall.vpn_lan.dest='lan'
-uci commit firewall
+# R75a: identify only the two exact stock accepts, including on a kept flash.
+scope_stock_ipsec() {
+    local section="$1" proto="$2" port="$3" lines=6
+    [ "$(uci -q get "$section")" = rule ] || return 0
+    [ "$(uci -q get "$section.src")" = wan ] || return 0
+    [ "$(uci -q get "$section.dest")" = lan ] || return 0
+    [ "$(uci -q get "$section.target")" = ACCEPT ] || return 0
+    [ "$(uci -q get "$section.proto")" = "$proto" ] || return 0
+    if [ -n "$port" ]; then
+        [ "$(uci -q get "$section.dest_port")" = "$port" ] || return 0
+        lines=7
+    fi
+    [ "$(uci -q show "$section" | wc -l)" -eq "$lines" ] || return 0
+    uci set "$section.family=ipv4"
+}
 
-# R7, D165: odhcpd stays installed but sends no router advertisements and serves no DHCPv6 on the
-# LAN, so it has no IPv6 default route to complain about
-uci set dhcp.lan.ra='disabled'
-uci set dhcp.lan.dhcpv6='disabled'
-uci commit dhcp
+for rule in $(uci show firewall | sed -n 's/^\(firewall\.[^.]*\)=rule$/\1/p'); do
+    case "$(uci -q get "$rule.name")" in
+        Allow-IPSec-ESP) scope_stock_ipsec "$rule" esp '' ;;
+        Allow-ISAKMP) scope_stock_ipsec "$rule" udp 500 ;;
+    esac
+done
+uci commit firewall
 
 # LuCI: luci-ssl adds the HTTPS listener but leaves plain HTTP on port 80 answering with the login
 # form. The redirect keeps the root password from crossing the Wi-Fi in clear text (SPEC R30, D19).

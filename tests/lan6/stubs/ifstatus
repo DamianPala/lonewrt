@@ -1,0 +1,2 @@
+#!/bin/sh
+cat "$LW_TEST/$1.json" 2>/dev/null
