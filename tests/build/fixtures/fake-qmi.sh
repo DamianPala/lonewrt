@@ -21,6 +21,7 @@ proto_fake_setup() {
 	}
 	[ -n "$pdh_6" ] && {
 		if [ -z "$dhcpv6" -o "$dhcpv6" = 0 ]; then
+			json_load "$(uqmi -s -d $device -t 1000 --set-client-id wds,$cid_6 --get-current-settings)"
 			fake static6
 		else
 			fake child6

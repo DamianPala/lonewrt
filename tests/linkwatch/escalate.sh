@@ -27,6 +27,18 @@ lw-linkwatch once
 lw_expect_eq "$(ifups)" 1 "ifup wwan events after more passes"
 lw_expect_eq "$(lk_calls_of --start-network)" 0 "start-network calls after the escalation"
 lw_expect_eq "$(lk_info)" 1 "watcher syslog lines after more passes"
+lw_expect_eq "$(ls -ld /var/run/lw-linkwatch | cut -c1-10)" drwx------ "mode of the marker directory"
+
+# R49d: the marker directory is a link (not root's run directory): the escalation goes out, and
+# nothing is written behind the link
+lk_setup
+mkdir /tmp/elsewhere
+ln -s /tmp/elsewhere /var/run/lw-linkwatch
+lk_lost
+echo '"Call failed"' >"$T/uqmi/q-start"
+lw-linkwatch once
+lw_expect_eq "$(ifups)" 1 "ifup wwan events with a link as the marker directory"
+lw_expect_eq "$(ls -A /tmp/elsewhere)" '' "files written through a link"
 
 # healthy again, then lost again: a new incident, and this time the start works
 lk_healthy
@@ -60,7 +72,7 @@ lw-linkwatch once
 lw_expect_eq "$(ifups)" 1 "ifup wwan events without udhcpc"
 rm -f /var/run/udhcpc-wwan0.pid
 lk_lost
-rm -f /tmp/lw-linkwatch/escalated
+rm -f /var/run/lw-linkwatch/escalated
 : >"$EVENTS"
 lw-linkwatch once
 ! grep -q '^kill' "$EVENTS" || lw_fail "a signal without a pid file"

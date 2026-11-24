@@ -42,8 +42,9 @@ LW_P_NOTIFY_LIMIT=${LW_P_NOTIFY_LIMIT:-5}
 LW_P_WSIZE=${LW_P_WSIZE:-56}
 LW_P_WWAIT=10
 LW_P_WBOUND=${LW_P_WBOUND:-37}
-# R14g: the file the session watcher reads; the writer makes its directory (0700) when it is missing
-LW_P_V6_FILE=${LW_P_V6_FILE:-/tmp/lw-family/ipv6}
+# R14g: the file the session watcher reads; the writer makes its directory (0700, root's, common.sh)
+# when it is missing
+LW_P_V6_FILE=${LW_P_V6_FILE:-${LW_FAMILY_DIR:-/var/run/lw-family}/ipv6}
 
 # _lw_pnow: the whole second of the uptime clock of common.sh in _lw_pn, with shell builtins only
 _lw_pnow() {
@@ -270,8 +271,9 @@ lw_probe_publish_v6() {
         ;;
     esac
     _lw_wd=${LW_P_V6_FILE%/*}
-    if ! { (umask 077 && mkdir -p "$_lw_wd") && chmod 0700 "$_lw_wd"; } 2>/dev/null; then
-        lw_debug lw-probe "cannot make $_lw_wd, the IPv6 result is not written"
+    # restart decisions read the file: a directory that is not root's, or a link, gets nothing
+    if ! { (umask 077 && mkdir -p "$_lw_wd") && lw_state_dir_ok "$_lw_wd" && chmod 0700 "$_lw_wd"; } 2>/dev/null; then
+        lw_debug lw-probe "$_lw_wd is not a directory of root, the IPv6 result is not written"
         return 0
     fi
     if printf '%s/%s %s %s %s\n' "$_lw_wc" "$_lw_wh" "$_lw_wb" "$LW_P_T6" "$_lw_wr" \

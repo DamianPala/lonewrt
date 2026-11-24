@@ -72,14 +72,25 @@ kept "a result of another handle"
 # results the watcher cannot use: this round's family result is unavailable
 for line in '' 'none' "$SID - none" "$SID - x none" "$SID - 1005 unavailable" "$SID - 1005 NONE" "$SID - 1005"; do
     failing
-    mkdir -p /tmp/lw-family
-    printf '%s\n' "$line" >/tmp/lw-family/ipv6
+    mkdir -p /var/run/lw-family
+    printf '%s\n' "$line" >/var/run/lw-family/ipv6
     kept "an unusable result '$line'"
 done
 failing
-mkdir -p /tmp/lw-family
-mkdir /tmp/lw-family/ipv6
+mkdir -p /var/run/lw-family
+mkdir /var/run/lw-family/ipv6
 kept "a result that is not a file"
+
+# R14g: the file is believed only in a directory of root that is no link (the control is the case of
+# the session-matched silence above, with the same line in the same place)
+failing
+mkdir -p /tmp/elsewhere
+echo "$SID - 1005 none" >/tmp/elsewhere/ipv6
+ln -s /tmp/elsewhere /var/run/lw-family
+kept "a silence behind a link in place of the family directory"
+failing
+: >/var/run/lw-family
+kept "a file in place of the family directory"
 
 # the birth of the session is compared when both sides have one: the same start, and another start
 # with the same numbers

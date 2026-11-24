@@ -45,6 +45,10 @@ QMI_A_464=$'\t\t\t[ "$pdptype" = "ipv4v6" ] && json_add_string iface_464xlat "0"
 QMI_N_464=$'\t\t\t[ -n "$pdh_4" ] && json_add_string iface_464xlat "0"'
 QMI_A_V6=$'\t\tif [ -z "$dhcpv6" -o "$dhcpv6" = 0 ]; then'
 QMI_N_V6=$'\t\tif { [ -z "$dhcpv6" ] || [ "$dhcpv6" = 0 ]; } && lw_v6_ok; then'
+# Edit 5 (R73j): the stock read of the IPv6 settings, a second one after lw_v6_ok's, is replaced by
+# the set lw_v6_ok checked, so what is published is what was verified
+QMI_A_V6LOAD=$'\t\t\tjson_load "$(uqmi -s -d $device -t 1000 --set-client-id wds,$cid_6 --get-current-settings)"'
+QMI_N_V6LOAD=$'\t\t\tjson_load "$lw_v6_json"'
 # The IPv4 child block ends the setup function: with no native IPv4 call (a session of IPv6 alone)
 # its `[ -n "$pdh_4" ] && {` would make the function, and so the setup, return 1. The same line is
 # in the publish block above, hence it is the one after the IPv6 settings branch.
@@ -92,6 +96,7 @@ qmi_transform() {
     qmi_expect_once "$in" "$name" "registration call" "$QMI_A_REGISTER"
     qmi_expect_once "$in" "$name" "464XLAT switch" "$QMI_A_464"
     qmi_expect_once "$in" "$name" "IPv6 settings branch" "$QMI_A_V6"
+    qmi_expect_once "$in" "$name" "IPv6 settings read" "$QMI_A_V6LOAD"
     n=$(awk -v after="$QMI_A_V6" -v a="$QMI_A_V4" '$0 == after { f = 1 } f && $0 == a { n++ } END { print n + 0 }' "$in")
     [ "$n" = 1 ] ||
         die "/$QMI_SH_REL of $name has $n lines equal to the anchor IPv4 child block after the IPv6 settings branch," \
@@ -119,6 +124,7 @@ qmi_transform() {
             line=$QMI_N_V6
             seen_v6=1
             ;;
+        "$QMI_A_V6LOAD") line=$QMI_N_V6LOAD ;;
         "$QMI_A_V4") [ "$seen_v6" != 1 ] || line=$QMI_N_V4 ;;
         esac
         printf '%s\n' "$line"

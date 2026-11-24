@@ -1,5 +1,5 @@
 # R14g, R49d, D204: the line that the real writer (lw_probe_publish_v6 of probe.sh, run as watchcat's
-# hook runs it) puts in /tmp/lw-family/ipv6 is what the watcher reads: a check of this session after the
+# hook runs it) puts in /var/run/lw-family/ipv6 is what the watcher reads: a check of this session after the
 # loss with no IPv6 answer lets it run `ifup wwan`; an answer, or an IPv6 call with no device (nodev),
 # keeps IPv6. The fixtures of r49d-sibling-escalation.sh write the line by hand; this one does not.
 # shellcheck source=tests/lib.sh
@@ -34,7 +34,7 @@ ifups() { grep -c '^ifup wwan$' "$EVENTS" || true; }
 # silent IPv6: the writer's line is `none` of this session and birth, and the watcher restarts wwan
 failing
 check
-lw_expect_eq "$(cat /tmp/lw-family/ipv6)" "17/3203210528 400 1000 none" "the line of the writer"
+lw_expect_eq "$(cat /var/run/lw-family/ipv6)" "17/3203210528 400 1000 none" "the line of the writer"
 lw-linkwatch once
 lw_expect_eq "$(ifups)" 1 "ifup wwan events after the writer's none"
 
@@ -42,7 +42,7 @@ lw_expect_eq "$(ifups)" 1 "ifup wwan events after the writer's none"
 failing
 lw_uptime_set 990
 check
-lw_expect_eq "$(cat /tmp/lw-family/ipv6)" "17/3203210528 400 990 none" "the line of the writer before the loss"
+lw_expect_eq "$(cat /var/run/lw-family/ipv6)" "17/3203210528 400 990 none" "the line of the writer before the loss"
 lw_uptime_set 1000
 lw-linkwatch once
 lw_expect_eq "$(ifups)" 0 "ifup wwan events after a none from before the loss"
@@ -51,7 +51,7 @@ lw_expect_eq "$(ifups)" 0 "ifup wwan events after a none from before the loss"
 failing
 lw_reach 6 wwan0
 check
-lw_expect_eq "$(cat /tmp/lw-family/ipv6)" "17/3203210528 400 1000 answer" "the line of the writer, answered"
+lw_expect_eq "$(cat /var/run/lw-family/ipv6)" "17/3203210528 400 1000 answer" "the line of the writer, answered"
 lw-linkwatch once
 lw_expect_eq "$(ifups)" 0 "ifup wwan events after the writer's answer"
 
@@ -59,6 +59,18 @@ lw_expect_eq "$(ifups)" 0 "ifup wwan events after the writer's answer"
 failing
 sed -i 's/"ipv6-address":\[[^]]*\],//' "$T/ifstatus/wwan.json"
 check
-lw_expect_eq "$(cat /tmp/lw-family/ipv6)" "17/3203210528 400 1000 nodev" "the line of the writer without an IPv6 device"
+lw_expect_eq "$(cat /var/run/lw-family/ipv6)" "17/3203210528 400 1000 nodev" "the line of the writer without an IPv6 device"
 lw-linkwatch once
 lw_expect_eq "$(ifups)" 0 "ifup wwan events after the writer's nodev"
+
+# a family directory that is a link: the writer writes nothing through it, and the watcher has no
+# silence to act on (a result was in the target before: it is not believed there either)
+failing
+mkdir -p /tmp/elsewhere
+echo "17/3203210528 400 1005 none" >/tmp/elsewhere/ipv6
+ln -s /tmp/elsewhere /var/run/lw-family
+check
+lw_expect_eq "$(cat /tmp/elsewhere/ipv6)" "17/3203210528 400 1005 none" "the file behind the link is not rewritten"
+lw_expect_eq "$(ls -A /tmp/elsewhere)" ipv6 "files behind the link"
+lw-linkwatch once
+lw_expect_eq "$(ifups)" 0 "ifup wwan events with the family directory a link"

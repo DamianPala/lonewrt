@@ -27,7 +27,9 @@
 
 LK_TAG=lw-linkwatch
 LK_IFACE=wwan
-LK_RUN=${LW_LINKWATCH_RUN:-/tmp/lw-linkwatch}
+# R49d, R49e: the markers hold back an ifup and the restores, so they live in root's run directory,
+# not the public /tmp; a directory that is not root's, or a link, gets nothing and is not believed
+LK_RUN=${LW_LINKWATCH_RUN:-/var/run/lw-linkwatch}
 # the command that signals udhcpc; tests put a recording stand-in here
 LK_KILL=${LW_LINKWATCH_KILL:-kill}
 # Seconds; tests shorten them through the environment
@@ -39,7 +41,7 @@ LK_AT_LIMIT=${LW_LINKWATCH_AT_LIMIT:-5}
 # timeout around each uqmi call; empty = the call's own -t plus 2 s
 LK_UQMI_LIMIT=${LW_LINKWATCH_UQMI_LIMIT:-}
 # R49d: the latest family check of the IPv6 call (lk_v6_silent); tests put theirs here
-LK_V6_RESULT=${LW_LINKWATCH_V6_RESULT:-/tmp/lw-family/ipv6}
+LK_V6_RESULT=${LW_LINKWATCH_V6_RESULT:-$LW_FAMILY_DIR/ipv6}
 # R49d: seconds from the first sight of the loss to `ifup wwan`
 LK_GIVE_UP=20
 # R49c: a renew that did not bring the address is repeated after this many seconds
@@ -199,8 +201,13 @@ lk_dev_addr() {
     ip -4 -o addr show dev "$1" 2>/dev/null | sed -n 's/.* inet \([0-9.]*\)\/.*/\1/p' | head -n 1
 }
 
+# lk_run_ok: $LK_RUN made (0700) and a directory of root, no link
+lk_run_ok() {
+    { (umask 077 && mkdir -p "$LK_RUN") && lw_state_dir_ok "$LK_RUN"; } 2>/dev/null
+}
+
 lk_paused() {
-    [ -f "$LK_RUN/pause_until" ] || return 1
+    [ -f "$LK_RUN/pause_until" ] && lw_state_dir_ok "$LK_RUN" || return 1
     read -r _lk_until <"$LK_RUN/pause_until"
     lk_cs
     [ $((LK_CS / 100)) -lt "${_lk_until:-0}" ] && return 0
@@ -218,7 +225,7 @@ lk_note_restore() {
     for _lk_t in $(cat "$LK_RUN/restores" 2>/dev/null) "$_lk_now"; do
         [ $((_lk_now - _lk_t)) -gt "$LK_BRAKE_WINDOW" ] || _lk_keep="$_lk_keep $_lk_t"
     done
-    mkdir -p "$LK_RUN"
+    lk_run_ok || return 0
     # shellcheck disable=SC2086  # a list of numbers
     set -- $_lk_keep
     if [ "$#" -ge "$LK_BRAKE_COUNT" ]; then
@@ -248,9 +255,10 @@ lk_snapshot() {
 # seen, got no IPv6 answer. The checks write one line to $LK_V6_RESULT: the session (client/handle
 # of the IPv4 call as netifd published it), its birth (or -), the second on the clock of
 # common.sh when the check's IPv6 pings started (R14g), and `answer` or `none`. A missing or
-# unreadable file, another word, an older check, one of another session: not silent, so the
-# sibling is kept (D196).
+# unreadable file, another word, an older check, one of another session, a file in a directory that
+# is not root's: not silent, so the sibling is kept (D196).
 lk_v6_silent() {
+    lw_state_dir_ok "${LK_V6_RESULT%/*}" || return 1
     [ -r "$LK_V6_RESULT" ] || return 1
     _lk_rs='' _lk_rb='' _lk_rt='' _lk_rr=''
     read -r _lk_rs _lk_rb _lk_rt _lk_rr <"$LK_V6_RESULT" || :
@@ -281,8 +289,7 @@ lk_escalate() {
         lk_ended
         return
     fi
-    mkdir -p "$LK_RUN"
-    echo "$LK_SID0 ${LK_BIRTH0:--}" >"$LK_RUN/escalated"
+    ! lk_run_ok || echo "$LK_SID0 ${LK_BIRTH0:--}" >"$LK_RUN/escalated"
     if [ -n "$LK_SIB" ] && ! lk_v6_silent; then
         lw_log "$LK_TAG" "data session lost, $1, IPv6 kept, no ifup"
         return
@@ -494,7 +501,7 @@ lk_incident() {
 }
 
 lk_healthy() {
-    if [ -f "$LK_RUN/escalated" ]; then
+    if [ -f "$LK_RUN/escalated" ] && lw_state_dir_ok "$LK_RUN"; then
         rm -f "$LK_RUN/escalated"
         lk_dbg "data session healthy again after the escalation"
     fi
@@ -533,7 +540,7 @@ lk_pass() {
         lk_dbg "data status disconnected but settings answer '$(lk_ascii "$LK_OUT")', no action"
         return 0
     fi
-    if [ -f "$LK_RUN/escalated" ]; then
+    if [ -f "$LK_RUN/escalated" ] && lw_state_dir_ok "$LK_RUN"; then
         _lk_ms='' _lk_mb=''
         read -r _lk_ms _lk_mb <"$LK_RUN/escalated" || :
         if lk_same "$_lk_ms" "$_lk_mb"; then

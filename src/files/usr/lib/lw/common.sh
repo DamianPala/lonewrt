@@ -118,6 +118,21 @@ lw_debug() {
     fi
 }
 
+# R14f, R14g: the directory of the family files (the mark of a negotiating start, the IPv6
+# result of the checks). Restart decisions read them, so it lies under root's run directory
+# (/var/run is /tmp/run on OpenWrt, root 0755, made at boot), never in the public /tmp.
+LW_FAMILY_DIR=${LW_FAMILY_DIR:-/var/run/lw-family}
+
+# lw_state_dir_ok DIR: DIR is a directory of root and no symlink. Every writer and reader of the
+# family files checks it first: with another directory nothing is written and nothing in it is
+# believed, which is the state with no files (stock watchcat timing, IPv6 kept).
+lw_state_dir_ok() {
+    [ -d "$1" ] && [ ! -L "$1" ] || return 1
+    # shellcheck disable=SC2046  # the fields of ls are split on purpose
+    set -- $(ls -ldn "$1" 2>/dev/null)
+    [ "${3:-}" = 0 ]
+}
+
 # lw_write_atomic FILE: stdin to FILE via a temp file and rename, so an interrupted write leaves
 # either the old or the new content (SPEC R21c).
 lw_write_atomic() {

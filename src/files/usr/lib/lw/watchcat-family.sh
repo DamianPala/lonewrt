@@ -17,8 +17,10 @@
 . /usr/lib/lw/probe.sh
 
 # R14f: the deadline (second of the uptime clock) of a start of wwan that is negotiating, written by
-# the handler (qmi-edits/functions.sh) and removed when the negotiation ends
-LW_WC_NEG=${LW_WC_NEG:-/tmp/lw-family/negotiating}
+# the handler (qmi-edits/functions.sh) and removed when the negotiation ends; in the family directory
+# of root (common.sh), and no later than this many seconds from now whatever the file says (R73h)
+LW_WC_NEG=${LW_WC_NEG:-${LW_FAMILY_DIR:-/var/run/lw-family}/negotiating}
+LW_WC_NEG_MAX=60
 # R77d: the counters of the session's own device; a difference of this many packets since the
 # previous check, both ways, other than the probes, is traffic that was answered
 LW_WC_STATS=${LW_WC_STATS:-/sys/class/net}
@@ -133,11 +135,16 @@ lw_wc_check() {
 # with the deadline, then look once more; a link that is up by then feeds the timer, and a start that
 # hangs to its deadline is restarted as R14 says, once.
 lw_wc_wait() {
+    lw_state_dir_ok "${LW_WC_NEG%/*}" || return 0
     [ -f "$LW_WC_NEG" ] || return 0
     [ "$((time_now - time_lastcheck_withinternet))" -ge "$failure_period" ] || return 0
     read -r _lw_wd <"$LW_WC_NEG" || :
     case $_lw_wd in '' | *[!0-9]*) return 0 ;; esac
     _lw_pnow
+    # a mark never holds watchcat back longer than a negotiation lasts (R14f, R73h); a number too long
+    # for the shell's arithmetic is as far away as any other
+    _lw_wmax=$((_lw_pn + LW_WC_NEG_MAX))
+    if [ "${#_lw_wd}" -gt 9 ] || [ "$_lw_wd" -gt "$_lw_wmax" ]; then _lw_wd=$_lw_wmax; fi
     [ "$_lw_pn" -lt "$_lw_wd" ] || return 0
     lw_debug watchcat "the silence timer ran out during a start of wwan, waiting for it until second $_lw_wd"
     while [ -f "$LW_WC_NEG" ]; do

@@ -159,8 +159,8 @@ unset LK_IFBIRTH
 # a marker without a session (a respawn of an older watcher left it) does not hold a session
 lk_setup
 lk_lost
-mkdir -p /tmp/lw-linkwatch
-: >/tmp/lw-linkwatch/escalated
+mkdir -p /var/run/lw-linkwatch
+: >/var/run/lw-linkwatch/escalated
 lw-linkwatch once
 lw_expect_eq "$(lk_info)" 1 "watcher syslog lines with an old marker"
 lk_lines | grep -qF "restored in place" || lw_fail "info line: $(lk_lines)"

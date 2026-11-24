@@ -19,7 +19,17 @@ for row in 'no prefix:"ipv6":{"ip":"2001:db8::2","gateway":"2001:db8::1","dns1":
     'no gateway:"ipv6":{"ip":"2001:db8::2","dns1":"2001:db8::53","ip-prefix-length":64}' \
     'bad address:"ipv6":{"ip":"192.0.2.2","gateway":"2001:db8::1","dns1":"2001:db8::53","ip-prefix-length":64}' \
     'no DNS:"ipv6":{"ip":"2001:db8::2","gateway":"2001:db8::1","ip-prefix-length":64}' \
-    'bad prefix length:"ipv6":{"ip":"2001:db8::2","gateway":"2001:db8::1","dns1":"2001:db8::53","ip-prefix-length":200}'; do
+    'bad prefix length:"ipv6":{"ip":"2001:db8::2","gateway":"2001:db8::1","dns1":"2001:db8::53","ip-prefix-length":200}' \
+    'prefix length 0:"ipv6":{"ip":"2001:db8::2","gateway":"2001:db8::1","dns1":"2001:db8::53","ip-prefix-length":0}' \
+    'link-local address:"ipv6":{"ip":"fe80::2","gateway":"fe80::1","dns1":"2001:db8::53","ip-prefix-length":64}' \
+    'link-local only:"ipv6":{"ip":"fe80::2","gateway":"fe80::1","dns1":"fe80::53","ip-prefix-length":64}' \
+    'unique local address:"ipv6":{"ip":"fd00::2","gateway":"fd00::1","dns1":"2001:db8::53","ip-prefix-length":64}' \
+    'unspecified address:"ipv6":{"ip":"::","gateway":"2001:db8::1","dns1":"2001:db8::53","ip-prefix-length":64}' \
+    'loopback address:"ipv6":{"ip":"::1","gateway":"2001:db8::1","dns1":"2001:db8::53","ip-prefix-length":64}' \
+    'address with a zone:"ipv6":{"ip":"2001:db8::2%wwan0","gateway":"2001:db8::1","dns1":"2001:db8::53","ip-prefix-length":64}' \
+    'junk gateway:"ipv6":{"ip":"2001:db8::2","gateway":"x:y","dns1":"2001:db8::53","ip-prefix-length":64}' \
+    'address with too few groups:"ipv6":{"ip":"2001:db8:2","gateway":"2001:db8::1","dns1":"2001:db8::53","ip-prefix-length":64}' \
+    'empty report:"ipv6":{}'; do
     label=${row%%:*}
     qmi_fixture ipv6-only
     printf '{%s}\n' "${row#*:}" >"$QMI_STATE/settings-ipv6.json"
@@ -29,6 +39,40 @@ for row in 'no prefix:"ipv6":{"ip":"2001:db8::2","gateway":"2001:db8::1","dns1":
     lw_expect_eq "$(qmi_notify 0 '.ip6addr[*].ipaddr')" '' "$label: no address of the modem set"
     lw_expect_eq "$(qmi_child wwan_6 proto)" dhcpv6 "$label: the link gives the settings"
     lw_expect_eq "$(qmi_child wwan_6 iface_464xlat)" '' "$label: no native IPv4, the translation may run"
+done
+
+# a gateway that is link-local is usual on a mobile link and is no reason to refuse the set; a second
+# DNS server that is no address is dropped, not published
+qmi_fixture ipv6-only
+printf '{"ipv6":{"ip":"2001:db8::2","gateway":"fe80::1","dns1":"2001:db8::53","dns2":"junk","ip-prefix-length":64}}\n' \
+    >"$QMI_STATE/settings-ipv6.json"
+qmi_run setup ipv4v6 || lw_fail 'setup with a link-local gateway failed'
+lw_expect_eq "$(qmi_notify 0 '.ip6addr[*].ipaddr')" 2001:db8::2 'address with a link-local gateway'
+lw_expect_eq "$(qmi_notify 0 '.dns[*]')" 2001:db8::53 'only the DNS server that is an address'
+lw_expect_eq "$(qmi_json_lines "$DYNAMIC" '@[*].name')" '' 'no IPv6 child with a usable set'
+
+# the whole range of prefix lengths is usable, /128 included
+qmi_fixture ipv6-only
+printf '{"ipv6":{"ip":"2001:db8::2","gateway":"2001:db8::1","dns1":"2001:db8::53","ip-prefix-length":128}}\n' \
+    >"$QMI_STATE/settings-ipv6.json"
+qmi_run setup ipv4v6 || lw_fail 'setup with a prefix length of 128 failed'
+lw_expect_eq "$(qmi_notify 0 '.ip6prefix[*]')" 2001:db8::2/128 'prefix length 128'
+
+# R73j: one verified report. The set that is judged is the set that is published: the modem is read
+# once for the IPv6 settings, and what a second read would say (nothing, another address, an
+# unusable one) changes nothing
+for row in 'empty:{}' \
+    'another address:{"ipv6":{"ip":"2001:db8::99","gateway":"2001:db8::1","dns1":"2001:db8::53","ip-prefix-length":64}}' \
+    'link-local:{"ipv6":{"ip":"fe80::2","gateway":"fe80::1","dns1":"fe80::53","ip-prefix-length":64}}'; do
+    label=${row%%:*}
+    qmi_fixture ipv6-only
+    printf '%s\n' "${row#*:}" >"$QMI_STATE/settings-ipv6.next.json"
+    qmi_run setup ipv4v6 || lw_fail "second read $label: the start failed"
+    lw_expect_eq "$(qmi_arg_count --get-current-settings)" 1 "second read $label: reads of the report"
+    lw_expect_eq "$(qmi_notify 0 '.ip6addr[*].ipaddr')" 2001:db8::2 "second read $label: the address that was checked"
+    lw_expect_eq "$(qmi_notify 0 '.ip6prefix[*]')" 2001:db8::2/64 "second read $label: the prefix that was checked"
+    lw_expect_eq "$(qmi_notify 0 '.dns[*]')" "$(printf '%s\n%s' 2001:db8::53 2001:db8::54)" "second read $label: the DNS servers that were checked"
+    lw_expect_eq "$(qmi_json_lines "$DYNAMIC" '@[*].name')" '' "second read $label: no IPv6 child"
 done
 
 # dhcpv6: the link at once, the modem's report is not read

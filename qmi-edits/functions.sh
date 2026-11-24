@@ -1,5 +1,5 @@
 # lonewrt's own text (MIT, SPEC R12d, D172): the functions that qmi-handler.sh puts into the image's
-# qmi.sh in front of qmi_wds_stop. Check with: shellcheck -s sh -e SC2034,SC2086,SC2154,SC3043. They run inside proto_qmi_setup and read its variables (device,
+# qmi.sh in front of qmi_wds_stop. Check with: shellcheck -s sh -e SC2034,SC2046,SC2086,SC2154,SC3043. They run inside proto_qmi_setup and read its variables (device,
 # apn, v6apn, profile, v6profile, auth, username, password, autoconnect, pdptype, interface) and set
 # its cid_4, pdh_4, cid_6 and pdh_6, as the code they replace did. BusyBox ash: POSIX sh only.
 
@@ -66,13 +66,26 @@ lw_qa() {
 # which does not restart a start that is still within it. It is the only mark of a running start there
 # is: netifd shows nothing of it. Written beside and renamed, in the directory (0700) of the family
 # files; a failure to write is no failure of the start. The mark of a start that was killed stays
-# until its deadline, which the reader checks; lw_unmark removes it when the negotiation ends.
-LW_MARK_FILE=/tmp/lw-family/negotiating
+# until its deadline, which the reader checks; lw_unmark removes it when the negotiation ends. The
+# directory is root's run directory (/var/run is /tmp/run on OpenWrt, root 0755), not the public /tmp:
+# a directory that is not a directory of root, or is a link, gets no write and no removal, and the
+# reader does not believe it either (the start then runs with the stock watchcat timing).
+LW_FAMILY_DIR=/var/run/lw-family
+LW_MARK_FILE=$LW_FAMILY_DIR/negotiating
+
+# lw_dir_ok DIR: DIR is a directory of root and no link (the same test as lw_state_dir_ok of common.sh,
+# which this file does not load)
+lw_dir_ok() {
+	[ -d "$1" ] && [ ! -L "$1" ] || return 1
+	set -- $(ls -ldn "$1" 2>/dev/null)
+	[ "${3:-}" = 0 ]
+}
 lw_mark() {
-	{ (umask 077 && mkdir -p /tmp/lw-family) && chmod 0700 /tmp/lw-family &&
+	{ (umask 077 && mkdir -p "$LW_FAMILY_DIR") && lw_dir_ok "$LW_FAMILY_DIR" && chmod 0700 "$LW_FAMILY_DIR" &&
 		echo "$lw_dl" >"$LW_MARK_FILE.$$" && mv -f "$LW_MARK_FILE.$$" "$LW_MARK_FILE"; } 2>/dev/null || :
 }
 lw_unmark() {
+	lw_dir_ok "$LW_FAMILY_DIR" || return 0
 	rm -f "$LW_MARK_FILE" "$LW_MARK_FILE.$$" 2>/dev/null || :
 }
 
@@ -378,10 +391,43 @@ lw_repair() {
 	lw_dbg "profile 1 put back to $lw_rt before registration"
 }
 
+# lw_v6_lit ADDR: ADDR is an IPv6 address in text form that the settings of a session can use: hex
+# digits and colons only, at most one "::" and 7 colons (exactly 7, 8 groups, without a "::"), no group
+# of more than 4 digits, and not the unspecified, the loopback or a multicast address
+lw_v6_lit() {
+	case $1 in
+	*::* | *:*:*:*:*:*:*:*) ;;
+	*) return 1 ;;
+	esac
+	case $1 in
+	*[!0-9a-fA-F:]* | *:::* | :[!:]* | *[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]* | *:*:*:*:*:*:*:*:* | *[!:]:) return 1 ;;
+	:: | ::1 | [fF][fF]*) return 1 ;;
+	esac
+	case ${1#*::} in
+	*::*) return 1 ;;
+	esac
+}
+
+# lw_v6_global ADDR: a global unicast address, 2000::/3: its first group has 4 digits and starts with
+# 2 or 3. A link-local (fe80::/10) or unique local (fc00::/7) address is not one the network routes
+# to the session.
+lw_v6_global() {
+	lw_v6_lit "$1" || return 1
+	case $1 in
+	[23][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]:*) ;;
+	*) return 1 ;;
+	esac
+}
+
 # lw_v6_ok: the IPv6 settings the modem reports for the call are complete and valid (R73j); else the
-# session takes them from the link
+# session takes them from the link. One read, one judgement: the set that passes is kept in lw_v6_json
+# (rebuilt from the checked values) and is the one the handler publishes, so a later read of the
+# modem, which may be empty or differ, decides nothing. The address must be a global unicast one, the
+# gateway and the first DNS server usable addresses, the prefix length 1 to 128; the second DNS
+# server is kept only when it is one.
 lw_v6_ok() {
-	local j ip gw dns pl
+	local j ip gw dns dns2 pl
+	lw_v6_json=
 	lw_now
 	lw_dl=$((lw_t + 10))
 	lw_q 1000 --set-client-id wds,"$cid_6" --get-current-settings || return 1
@@ -389,11 +435,17 @@ lw_v6_ok() {
 	ip=$(jsonfilter -s "$j" -e '@.ipv6.ip' 2>/dev/null)
 	gw=$(jsonfilter -s "$j" -e '@.ipv6.gateway' 2>/dev/null)
 	dns=$(jsonfilter -s "$j" -e '@.ipv6.dns1' 2>/dev/null)
+	dns2=$(jsonfilter -s "$j" -e '@.ipv6.dns2' 2>/dev/null)
 	pl=$(jsonfilter -s "$j" -e '@.ipv6["ip-prefix-length"]' 2>/dev/null)
-	case $ip in *:*) ;; *) lw_dbg "IPv6 settings: no valid address, taken from the link"; return 1 ;; esac
-	case $gw in *:*) ;; *) lw_dbg "IPv6 settings: no valid gateway, taken from the link"; return 1 ;; esac
-	case $dns in *:*) ;; *) lw_dbg "IPv6 settings: no valid DNS, taken from the link"; return 1 ;; esac
-	case $pl in '' | *[!0-9]*) lw_dbg "IPv6 settings: no valid prefix length, taken from the link"; return 1 ;; esac
-	[ "$pl" -ge 1 ] && [ "$pl" -le 128 ]
+	lw_v6_global "$ip" || { lw_dbg "IPv6 settings: no global address, taken from the link"; return 1; }
+	lw_v6_lit "$gw" || { lw_dbg "IPv6 settings: no valid gateway, taken from the link"; return 1; }
+	lw_v6_lit "$dns" || { lw_dbg "IPv6 settings: no valid DNS, taken from the link"; return 1; }
+	case $pl in '' | *[!0-9]* | ????*) lw_dbg "IPv6 settings: no valid prefix length, taken from the link"; return 1 ;; esac
+	if [ "$pl" -lt 1 ] || [ "$pl" -gt 128 ]; then
+		lw_dbg "IPv6 settings: no valid prefix length, taken from the link"
+		return 1
+	fi
+	lw_v6_lit "$dns2" || dns2=
+	lw_v6_json=$(printf '{"ipv6":{"ip":"%s","gateway":"%s","dns1":"%s","dns2":"%s","ip-prefix-length":%s}}' \
+		"$ip" "$gw" "$dns" "$dns2" "$pl")
 }
-

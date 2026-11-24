@@ -162,8 +162,14 @@ stop_wildcard() {
 
 current_settings() {
     call_owned || qmi_error 'Out of call'
-    # a test can put its own report (incomplete, invalid) into the state directory
-    if [ -f "$state/settings-$family.json" ]; then
+    # a test can put its own report (incomplete, invalid) into the state directory, and a report for
+    # every read after the first (settings-<family>.next.json: the modem answering differently the
+    # second time, R73j)
+    reads=$(cat "$state/settings-$family.reads" 2>/dev/null || echo 0)
+    echo $((reads + 1)) >"$state/settings-$family.reads"
+    if [ "$reads" -ge 1 ] && [ -f "$state/settings-$family.next.json" ]; then
+        cat "$state/settings-$family.next.json"
+    elif [ -f "$state/settings-$family.json" ]; then
         cat "$state/settings-$family.json"
     else
         cat "/fw/tests/qmi/settings/$family.json"

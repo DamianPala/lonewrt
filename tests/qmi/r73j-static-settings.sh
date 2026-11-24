@@ -13,7 +13,8 @@ qmi_run setup ipv4v6 '"dhcp":false,"pincode":"2468"' || lw_fail 'static dual-sta
 lw_expect_eq "$(qmi_notify 0 '.ipaddr[*].ipaddr')" 192.0.2.2 'IPv4 address from QMI'
 lw_expect_eq "$(qmi_notify 0 '.ip6addr[*].ipaddr')" 2001:db8::2 'IPv6 address from QMI'
 lw_expect_eq "$(qmi_notify 0 '.ip6prefix[*]')" 2001:db8::2/64 'IPv6 prefix from QMI'
-lw_expect_eq "$(qmi_arg_count --get-current-settings)" 3 'settings reads: IPv6 checked and read, IPv4 read'
+# one read of the IPv6 settings, the one that is judged and published, and one of the IPv4 settings
+lw_expect_eq "$(qmi_arg_count --get-current-settings)" 2 'settings reads: IPv6 once, IPv4 once'
 lw_expect_eq "$(qmi_arg_count --verify-pin1)" 1 'SIM unlocks'
 lw_expect_eq "$(cat /sys/class/net/wwan0/qmi/raw_ip)" Y 'raw-IP driver flag'
 

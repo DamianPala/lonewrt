@@ -19,8 +19,8 @@ lk_setup() {
     lw_setup
     # a test may set the world up more than once: nothing of the earlier one stays
     rm -rf "$T/uqmi" "$T/addr" "$T/on-sleep" "$T/naps" "$T/syslog.prio" "$T/dhcp-deaf" "$T/release-delay" \
-        "$T/release-never" "$T/release-replace" "$T/release-pending" "$T/iplooks" "$T/usr1-saw" "$T/usr1-sleeps" "$T/usr1-looks" /tmp/lw-linkwatch \
-        "$T/on-uqmi" "$T/on-kill" /tmp/lw-family "$T"/uqmi-calls.*
+        "$T/release-never" "$T/release-replace" "$T/release-pending" "$T/iplooks" "$T/usr1-saw" "$T/usr1-sleeps" "$T/usr1-looks" /var/run/lw-linkwatch /tmp/elsewhere \
+        "$T/on-uqmi" "$T/on-kill" /var/run/lw-family "$T"/uqmi-calls.*
     unset LK_IFBIRTH LK_CID4 LK_PDH4
     PATH=/fw/tests/linkwatch/stubs:$PATH
     export PATH LW_LINKWATCH_KILL=/fw/tests/linkwatch/stubs/lwkill LW_LINKWATCH_UQMI_LIMIT=2
@@ -71,8 +71,8 @@ lk_dual() {
 # lk_v6result SESSION BIRTH SECONDS WORD: the latest family check of the IPv6 call, as the
 # watcher reads it (R49d)
 lk_v6result() {
-    mkdir -p /tmp/lw-family
-    echo "$1 $2 $3 $4" >/tmp/lw-family/ipv6
+    mkdir -p /var/run/lw-family
+    echo "$1 $2 $3 $4" >/var/run/lw-family/ipv6
 }
 
 # lk_healthy / lk_lost: the modem's call is up at the old address, or lost while the device keeps

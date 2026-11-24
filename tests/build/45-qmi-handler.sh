@@ -65,6 +65,8 @@ done
     fail "the repair is not before the registration call"
 grep -qxF '			[ -n "$pdh_4" ] && json_add_string iface_464xlat "0"' "$OUT_FILE" || fail "464XLAT line not changed"
 grep -qxF '		if { [ -z "$dhcpv6" ] || [ "$dhcpv6" = 0 ]; } && lw_v6_ok; then' "$OUT_FILE" || fail "IPv6 settings line not changed"
+grep -qxF '			json_load "$lw_v6_json"' "$OUT_FILE" || fail "R73j: the IPv6 settings are not read from the verified set"
+grep -qxF "$QMI_A_V6LOAD" "$OUT_FILE" && fail "R73j: the stock read of the IPv6 settings is still there"
 [ "$(grep -cxF '	[ -n "$pdh_4" ] && {' "$OUT_FILE")" = 1 ] || fail "the publish block (before the IPv6 branch) was changed"
 [ "$(grep -cxF '	[ -z "$pdh_4" ] || {' "$OUT_FILE")" = 1 ] || fail "the IPv4 child block was not changed"
 [ "$(stat -c %a "$OUT_FILE")" = 755 ] || fail "qmi.sh is not 0755"
@@ -82,7 +84,7 @@ expect_fail_with "SPEC R12e" derive
 [ ! -e "$OUT_FILE" ] || fail "a file of another sha256 still wrote qmi.sh"
 
 # each anchor missing and doubled; the pin follows the edited fixture, so only the anchor can stop it
-anchors=(NEG_START NEG_END FUNCS REGISTER 464 V6)
+anchors=(NEG_START NEG_END FUNCS REGISTER 464 V6 V6LOAD)
 for a in "${anchors[@]}"; do
     var=QMI_A_$a
     line=${!var}
