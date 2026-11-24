@@ -88,6 +88,7 @@ The router pings every 60 s.
 After `LINK_RESTART_AFTER_S` seconds without an answer it restarts the `wwan` interface, which costs about 15 s without internet.
 Shorter heals a dropped data session sooner but restarts on glitches that would pass alone.
 The upper limit keeps this restart ahead of the restart of the whole router.
+The pings go to 8.8.8.8 and 1.1.1.1 (and to the same services over IPv6 when the connection has IPv6) through the mobile connection only; the hosts and the address family shown for the watchcat entry `wwan_soft` in LuCI are not used.
 
 ## Log level
 
