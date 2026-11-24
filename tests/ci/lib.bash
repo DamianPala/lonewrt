@@ -57,7 +57,7 @@ ci_repo() {
     cp "$CI_STUBS/build-tests.sh" "$REPO/tests/build/run.sh"
     cp "$CI_STUBS/run-all.sh" "$REPO/tests/run-all.sh"
     if [ "$1" = real ]; then
-        cp -r "$FW/build.sh" "$FW/pinned-packages.sh" "$FW/qmi-handler.sh" "$FW/src" "$FW/deps.lst" "$REPO/"
+        cp -r "$FW/build.sh" "$FW/pinned-packages.sh" "$FW/qmi-handler.sh" "$FW/watchcat-handler.sh" "$FW/src" "$FW/deps.lst" "$REPO/"
     else
         cp "$CI_STUBS/build.sh" "$REPO/build.sh"
     fi

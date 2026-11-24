@@ -1,0 +1,16 @@
+#!/bin/sh
+# Test stand-in for ping in the watchcat tests: records "SECOND ping ARGS" in $LW_TEST/wc-pings (the
+# second is the test clock's), answers as tests/stubs/ping does, and makes a ping that gets no
+# answer last 10 s on the test clock, as busybox's does without -W. With $LW_TEST/ping-hang it
+# really hangs (30 s, for the bound of R14d on the real clock).
+T=${LW_TEST:-/lwtest}
+U=${LW_UPTIME_FILE:-$T/uptime}
+now=$(cut -d. -f1 "$U")
+echo "$now ping $*" >>"$T/wc-pings"
+[ ! -e "$T/ping-hang" ] || exec /bin/sleep 30
+rc=0
+/fw/tests/stubs/ping "$@" >/dev/null || rc=$?
+if [ "$rc" != 0 ] && [ ! -e "$T/ping-fast" ]; then
+    awk -v n=10 '{ printf "%.2f %.2f\n", $1 + n, $2 + n }' "$U" >"$U.n" && mv "$U.n" "$U"
+fi
+exit "$rc"

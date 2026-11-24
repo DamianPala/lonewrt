@@ -20,6 +20,7 @@ fake_make_image >"$W/ib/Makefile"
 # the build also derives qmi.sh from the uqmi package (R12d): a stand-in apk and package file
 fake_qmi_ib "$W/ib"
 export FAKE_QMI_SH=$FIX/fake-qmi.sh
+fake_wc_pins
 
 PINNED=(foo-2.0-r1.apk luci-app-foo-1.5-r3.apk modemband-20260806-r1.apk libx-16-10.42-r1.apk)
 for f in "${PINNED[@]}"; do printf 'fake %s\n' "$f" >"$EXTRA/$f"; done
@@ -101,6 +102,31 @@ FAKE_QMI_SH=$SCRATCH/no-anchor.sh QMI_PIN_FILE=$SCRATCH/no-anchor.sh \
 [ -z "$(find "$I" -name '*.bin')" ] || fail "a missing anchor left an image"
 QMI_PIN=0000000000000000000000000000000000000000000000000000000000000000 \
     expect_fail_with "the edits were reviewed against 0000" build
+
+# R12g, D205: the knobs of the pins work only under the test suite. A build run any other way
+# (LW_TESTS unset) with one of them set stops naming the variable, before packages/ changes and with
+# no image, whatever the value, an empty one included; with none set the same build gets as far as the
+# pin of the real package file
+outside() {
+    (
+        unset LW_TESTS LW_QMI_SHA256 LW_WATCHCAT_SHA256 LW_WATCHCAT_INIT_SHA256
+        [ "$1" = - ] || export "$1=$2"
+        shift 2
+        LW_WORK=$W LW_ROOTFS=$FW/work/dl/x86/rootfs LW_DEPS_LIST=$SCRATCH/deps.lst LW_PROFILES=$P \
+            LW_IMAGE=$I "$FW/build.sh" "$@"
+    )
+}
+for knob in LW_QMI_SHA256 LW_WATCHCAT_SHA256 LW_WATCHCAT_INIT_SHA256; do
+    for value in "$(sum "$FIX/fake-qmi.sh")" ""; do
+        expect_fail_with "$knob is set" outside "$knob" "$value" generic
+        expect_fail_with "SPEC R12g" outside "$knob" "$value" generic
+        [ "$(listing "$PKG")" = "$before" ] || fail "R12g: a build with $knob outside the tests changed packages/"
+        [ -z "$(find "$I" -name '*.bin')" ] || fail "R12g: a build with $knob outside the tests left an image"
+    done
+done
+expect_fail_with "LW_QMI_SHA256 is set" outside LW_QMI_SHA256 x --render-only generic "$SCRATCH/ro"
+[ ! -e "$SCRATCH/ro" ] || fail "R12g: a refused build rendered an overlay"
+expect_fail_with "the edits were reviewed against 073b855c" outside - - generic
 
 # the right set: earlier versions of the pinned packages go by exact package name, the rest stays
 expect_fail_with "ImageBuilder produced no sysupgrade image" build

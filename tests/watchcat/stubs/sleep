@@ -1,0 +1,18 @@
+#!/bin/sh
+# Test stand-in for sleep in the watchcat tests: moves the test clock ($LW_UPTIME_FILE) by the given
+# seconds and returns at once; an executable $LW_TEST/on-sleep runs after each nap (the tests change
+# the world from there). When the clock reaches the second in $LW_TEST/horizon, the stand-in ends its
+# parent, the watchcat worker, which never ends by itself. A long sleep is a real one.
+T=${LW_TEST:-/lwtest}
+U=${LW_UPTIME_FILE:-$T/uptime}
+case $1 in
+    '' | *[!0-9.]*) exec /bin/sleep "$@" ;;
+esac
+[ "${1%.*}" -lt 600 ] || exec /bin/sleep "$1"
+awk -v n="$1" '{ printf "%.2f %.2f\n", $1 + n, $2 + n }' "$U" >"$U.n" && mv "$U.n" "$U"
+[ ! -x "$T/on-sleep" ] || "$T/on-sleep"
+now=$(cut -d. -f1 "$U")
+if [ -f "$T/horizon" ] && [ "$now" -ge "$(cat "$T/horizon")" ]; then
+    kill -TERM "$PPID"
+fi
+exit 0

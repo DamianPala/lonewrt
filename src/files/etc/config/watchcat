@@ -1,4 +1,7 @@
 # period is LINK_RESTART_AFTER_S of the profile (R14a, D79); the build fills it in
+# lw_family_check selects the family check of watchcat (R14b): only this entry has it, and an entry
+# without it checks and restarts as stock watchcat does. pinghosts and addressfamily are the stock
+# options of the entry; the family check pings its own addresses (R14, R77) and ignores them.
 config watchcat 'wwan_soft'
 	option mode 'restart_iface'
 	option interface '@wwan'
@@ -8,3 +11,4 @@ config watchcat 'wwan_soft'
 	option pingsize 'standard'
 	option addressfamily 'ipv4'
 	option reset_failure_timer '1'
+	option lw_family_check '1'

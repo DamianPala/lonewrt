@@ -62,6 +62,20 @@ lw_qa() {
 	lw_q "$ms" "$@"
 }
 
+# lw_mark: R14f. The deadline of this negotiation, as a second of the uptime clock, for watchcat's hook,
+# which does not restart a start that is still within it. It is the only mark of a running start there
+# is: netifd shows nothing of it. Written beside and renamed, in the directory (0700) of the family
+# files; a failure to write is no failure of the start. The mark of a start that was killed stays
+# until its deadline, which the reader checks; lw_unmark removes it when the negotiation ends.
+LW_MARK_FILE=/tmp/lw-family/negotiating
+lw_mark() {
+	{ (umask 077 && mkdir -p /tmp/lw-family) && chmod 0700 /tmp/lw-family &&
+		echo "$lw_dl" >"$LW_MARK_FILE.$$" && mv -f "$LW_MARK_FILE.$$" "$LW_MARK_FILE"; } 2>/dev/null || :
+}
+lw_unmark() {
+	rm -f "$LW_MARK_FILE" "$LW_MARK_FILE.$$" 2>/dev/null || :
+}
+
 # lw_say TEXT: the stock handler's line when forced (the log is the one of the stock handler), else
 # kept for the end of a start whose steps all failed
 lw_say() {
@@ -298,6 +312,7 @@ lw_negotiate() {
 	local mode
 	lw_now
 	lw_dl=$((lw_t + LW_NEG_SECONDS))
+	lw_mark
 	lw_debug='' lw_why='' lw_ok_type=''
 	lw_nocid=0 lw_got=0 lw_wrote=0 lw_marked=0 lw_ver=1
 	lw_p_ok=0 lw_p0_ok=0 lw_p0_type=
@@ -329,9 +344,11 @@ lw_negotiate() {
 	if [ -n "$pdh_4$pdh_6" ]; then
 		# the type this start came up with, also IPV4V6 on a SIM that gave only IPv4 (R73n)
 		lw_rec_put ok "$lw_ok_type"
+		lw_unmark
 		return 0
 	fi
 	lw_rollback
+	lw_unmark
 	[ "$lw_forced" = 1 ] || [ -z "$lw_why" ] || echo "$lw_why"
 	if [ "$lw_nocid" -gt 0 ] && [ "$lw_got" = 0 ]; then
 		proto_notify_error "$interface" NO_CID

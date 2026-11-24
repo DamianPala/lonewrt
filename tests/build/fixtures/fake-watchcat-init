@@ -1,0 +1,26 @@
+#!/bin/sh /etc/rc.common
+# Made-up stand-in for watchcat's init script (test fixture, not OpenWrt's file): the option reads and
+# the commands of two modes, the shape the build looks for.
+# Copyright (C) made-up notice of the fixture
+
+config_watchcat() {
+	config_get period "$1" period "120"
+	config_get script "$1" script
+
+	case "$mode" in
+	restart_iface)
+		procd_open_instance "watchcat_${1}"
+		procd_set_param command /usr/bin/watchcat.sh \
+			"restart_iface" "$period" \
+			"$addressfamily" "" "$reset_failure_timer"
+		procd_close_instance
+		;;
+	run_script)
+		procd_open_instance "watchcat_${1}"
+		procd_set_param command /usr/bin/watchcat.sh \
+			"run_script" "$period" "$addressfamily" "$script" \
+			"$reset_failure_timer"
+		procd_close_instance
+		;;
+	esac
+}

@@ -323,6 +323,14 @@ if [ -n "$P_ROOT_PASSWORD_HASH" ]; then
     sed -i "s|^root:[^:]*:|root:$P_ROOT_PASSWORD_HASH:|" /etc/shadow
 fi
 
+# R7d: a flash that keeps settings brings the old watchcat file back, whose wwan_soft has no
+# lw_family_check; it gets the option and keeps its period. Another entry stays as it was, and so does
+# an option the owner already set (also 0).
+if uci -q get watchcat.wwan_soft >/dev/null && ! uci -q get watchcat.wwan_soft.lw_family_check >/dev/null; then
+    uci set watchcat.wwan_soft.lw_family_check='1'
+    uci commit watchcat
+fi
+
 # lw-firstboot logs /etc/lw-build once syslog and the persistent log run (SPEC R7b)
 touch /etc/lw-firstboot.pending
 

@@ -247,7 +247,7 @@ lk_snapshot() {
 # lk_v6_silent: R49d, true only when a family check of this very session, taken after the loss was
 # seen, got no IPv6 answer. The checks write one line to $LK_V6_RESULT: the session (client/handle
 # of the IPv4 call as netifd published it), its birth (or -), the second on the clock of
-# common.sh when the check ended, and `answer` or `none`. A missing or unreadable file, another
+# common.sh when the check's IPv6 pings started (R14g), and `answer` or `none`. A missing or unreadable file, another
 # word, an older check, one of another session: not silent, so the sibling is kept (D196).
 lk_v6_silent() {
     [ -r "$LK_V6_RESULT" ] || return 1

@@ -6,9 +6,23 @@
 # own text in qmi-edits/. The caller sets LW_ROOTFS and has a die().
 
 QMI_SH_REL=lib/netifd/proto/qmi.sh
+# lw_pin VARIABLE DEFAULT: the pin a build uses. R12g, D205: the variable replaces the pin only
+# under the test suite (tests/build/lib.bash exports LW_TESTS=1); with it set any other way the build
+# stops, naming it, before anything is derived. A knob that works in a release build would let any
+# file pass the pin. Shared with watchcat-handler.sh (R14c), so there is one mechanism.
+lw_pin() {
+    local var=$1 default=$2
+    if [ -n "${!var+x}" ] && [ "${LW_TESTS:-}" != 1 ]; then
+        echo "build: error: $var is set, and it can replace a pin of the build only under the test suite" \
+            "(SPEC R12g, D205): unset $var" >&2
+        return 1
+    fi
+    printf '%s\n' "${!var:-$default}"
+}
+
 # R12e, D192: the sha256 of the stock file the edits were reviewed against (uqmi 2025.07.30, OpenWrt
-# 25.12.6). LW_QMI_SHA256 is for the tests, which derive from made-up files.
-QMI_STOCK_SHA256=${LW_QMI_SHA256:-073b855cb15d6cdffb0c1de2f3fec9785796d6399c9f8ce5fcd5c2fbbe6fa6d4}
+# 25.12.6). LW_QMI_SHA256 is for the tests, which derive from made-up files (lw_pin).
+QMI_STOCK_SHA256=$(lw_pin LW_QMI_SHA256 073b855cb15d6cdffb0c1de2f3fec9785796d6399c9f8ce5fcd5c2fbbe6fa6d4) || exit 1
 # lonewrt's text that goes into the file
 QMI_EDITS=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/qmi-edits
 

@@ -5,10 +5,14 @@
 #   lw_probe_session   read the session from netifd. LW_P_HAS4 and LW_P_HAS6 say which families it
 #                      has (1/0), LW_P_DEV4 and LW_P_DEV6 the device each can be probed on now (empty
 #                      = not ready), LW_P_XLAT 1 when the IPv4 goes over the translation
-#   lw_probe_round [recover|notify]   one round of pings with the parameters of that consumer
-#                      (see _lw_pfam; Terms "online"): LW_P_OK4 and LW_P_OK6 (1, 0, or empty for a
-#                      family the session does not have), LW_P_ONLINE (1 or 0), LW_P_MS (the round
-#                      trip in ms of the first answer, IPv4 before IPv6); exit 0 when online
+#   lw_probe_round [recover|notify|watchcat]   one round of pings with the parameters of that
+#                      consumer (see _lw_pfam; Terms "online"): LW_P_OK4 and LW_P_OK6 (1, 0, or empty
+#                      for a family the session does not have), LW_P_ONLINE (1 or 0), LW_P_MS (the
+#                      round trip in ms of the first answer, IPv4 before IPv6), LW_P_T6 (the second on
+#                      the uptime clock at which the IPv6 pings began), LW_P_N6 (IPv6 pings run); exit
+#                      0 when online
+#   lw_probe_publish_v6   R14g, D204: after a round of the profile watchcat, the IPv6 result for the
+#                      session watcher; no other consumer calls it
 #   lw_probe_dns       LW_P_DNS: the operator DNS of the session; exit 1 when it has none
 #   lw_probe_dns_path  exit 0 when the route to LW_P_DNS leaves on the cellular device of its family
 #   lw_probe_stats FAMILY DEVICE   three pings for the signal log: LW_P_LOSS, LW_P_RTT
@@ -31,6 +35,21 @@ LW_P_STAT4=${LW_P_STAT4:-1.1.1.1}
 LW_P_STAT6=${LW_P_STAT6:-2606:4700:4700::1111}
 # the hard limit of one ping of the notify profile, as lw-notify had it (tests shorten it)
 LW_P_NOTIFY_LIMIT=${LW_P_NOTIFY_LIMIT:-5}
+# the watchcat profile (R14, R14d): the packet size of the entry (watchcat's own ping_size), the
+# longest a ping waits (busybox ping without -W waits 10 s, as stock watchcat's ping does), and the
+# bound of a whole round, device lookups included. The limit is 40 s, 37 here: the clock counts whole
+# seconds (a round can start up to 1 s into one) and a killed ping gets 1 s of grace.
+LW_P_WSIZE=${LW_P_WSIZE:-56}
+LW_P_WWAIT=10
+LW_P_WBOUND=${LW_P_WBOUND:-37}
+# R14g: the file the session watcher reads; the writer makes its directory (0700) when it is missing
+LW_P_V6_FILE=${LW_P_V6_FILE:-/tmp/lw-family/ipv6}
+
+# _lw_pnow: the whole second of the uptime clock of common.sh in _lw_pn, with shell builtins only
+_lw_pnow() {
+    read -r _lw_pn _ <"$LW_UPTIME_FILE" || _lw_pn=0
+    _lw_pn=${_lw_pn%%.*}
+}
 
 # _lw_pj JSON PATH: one value of a netifd reply, empty when there is none.
 _lw_pj() {
@@ -55,6 +74,9 @@ _lw_pstatus() {
 lw_probe_session() {
     LW_P_HAS4=0 LW_P_HAS6=0 LW_P_DEV4='' LW_P_DEV6='' LW_P_XLAT=0
     _lw_sw=$(_lw_pstatus wwan) || _lw_sw=''
+    # the second of this read: the birth of the session is measured on it (R14g)
+    _lw_pnow
+    LW_P_READ=$_lw_pn
     _lw_s4=$(_lw_pstatus wwan_4) || _lw_s4=''
     _lw_s6=$(_lw_pstatus wwan_6) || _lw_s6=''
     _lw_sx=$(_lw_pstatus wwan_6_4) || _lw_sx=''
@@ -113,11 +135,23 @@ _lw_pcall() {
 #            exit code also reports fewer replies than -c asked for, so the statistics line decides
 #   notify   (lw-notify, and so smsctl.sh and speedtest.sh) timeout 5 ping -c 2 -w 3 -I DEV, answered
 #            when ping exits 0
+#   watchcat (watchcat's hook, R14, R14d) ping -4|-6 -I DEV -s SIZE -c 1, as stock watchcat pings, with
+#            no wait option; answered when ping exits 0. Each ping gets the time left of the round's
+#            bound (at most its own 10 s), none when less than a second is left.
 # Sets _lw_pms to the round trip of the answer.
 _lw_pfam() {
     _lw_pms=''
     for _lw_ph in $4; do
+        [ "$2" != 6 ] || LW_P_N6=$((LW_P_N6 + 1))
         case $1 in
+            watchcat)
+                _lw_pnow
+                _lw_pl=$((_lw_pend - _lw_pn))
+                [ "$_lw_pl" -ge 1 ] || return 1
+                [ "$_lw_pl" -le "$LW_P_WWAIT" ] || _lw_pl=$LW_P_WWAIT
+                _lw_po=$(timeout -k 1 "$_lw_pl" ping "-$2" -I "$3" -s "$LW_P_WSIZE" -c 1 "$_lw_ph" 2>/dev/null) ||
+                    continue
+                ;;
             notify)
                 _lw_po=$(timeout "$LW_P_NOTIFY_LIMIT" ping "-$2" -c 2 -w 3 -I "$3" "$_lw_ph" 2>/dev/null) ||
                     continue
@@ -138,8 +172,11 @@ _lw_pfam() {
 # the session whose device is not ready has failed this round and is not pinged.
 lw_probe_round() {
     _lw_pp=${1:-recover}
+    # R14d: the bound counts from before the device lookups
+    _lw_pnow
+    _lw_pend=$((_lw_pn + LW_P_WBOUND))
     lw_probe_session
-    LW_P_OK4='' LW_P_OK6='' LW_P_ONLINE=0 LW_P_MS=''
+    LW_P_OK4='' LW_P_OK6='' LW_P_ONLINE=0 LW_P_MS='' LW_P_T6='' LW_P_N6=0
     _lw_m4='' _lw_m6=''
     if [ "$LW_P_HAS4" = 1 ]; then
         LW_P_OK4=0
@@ -149,6 +186,8 @@ lw_probe_round() {
     fi
     if [ "$LW_P_HAS6" = 1 ]; then
         LW_P_OK6=0
+        _lw_pnow
+        LW_P_T6=$_lw_pn
         if [ -n "$LW_P_DEV6" ] && _lw_pfam "$_lw_pp" 6 "$LW_P_DEV6" "$LW_P_HOSTS6"; then
             LW_P_OK6=1 _lw_m6=$_lw_pms
         fi
@@ -199,4 +238,47 @@ lw_probe_stats() {
     _lw_po=$(timeout 15 ping "-$1" -c 3 -W 2 -I "$2" "$_lw_ph" 2>/dev/null) || :
     LW_P_LOSS=$(printf '%s\n' "$_lw_po" | sed -n 's/.* \([0-9]*%\) packet loss.*/\1/p')
     LW_P_RTT=$(printf '%s\n' "$_lw_po" | sed -n 's|.*= [0-9.]*/\([0-9.]*\)/.*|\1|p')
+}
+
+# lw_probe_publish_v6 (R14g, D204): the IPv6 result of the round just run with the profile watchcat,
+# for the session watcher (lk_v6_silent in lw-linkwatch reads it). Only watchcat's hook calls it, and
+# no other check may: a result of another check would be read as if it were watchcat's. The file is
+# one line, `<cid_4>/<pdh_4> <birth> <second> <result>`, in a directory of mode 0700 made when it is
+# missing, written beside the file and renamed over it. The call numbers and the birth come from the
+# status read of that round (the birth is netifd's uptime of wwan taken from the uptime second of
+# that read, not of this write, which comes up to 40 s later), `second` is the second the IPv6 pings
+# began, and the result is answer, none (a ready device, no answer) or nodev (nothing pinged). A
+# session without IPv6 or without an IPv4 call writes nothing, and removes nothing.
+lw_probe_publish_v6() {
+    [ "$LW_P_HAS6" = 1 ] || return 0
+    _lw_wc=$(_lw_pj "$_lw_sw" '@.data.cid_4')
+    _lw_wh=$(_lw_pj "$_lw_sw" '@.data.pdh_4')
+    [ -n "$_lw_wc" ] && [ -n "$_lw_wh" ] || return 0
+    case $_lw_wc$_lw_wh in *[!0-9-]*) return 0 ;; esac
+    case $LW_P_T6 in '' | *[!0-9]*) return 0 ;; esac
+    if [ -z "$LW_P_DEV6" ]; then
+        _lw_wr=nodev
+    elif [ "$LW_P_OK6" = 1 ]; then
+        _lw_wr=answer
+    else
+        _lw_wr=none
+    fi
+    _lw_wb=-
+    _lw_wu=$(_lw_pj "$_lw_sw" '@.uptime')
+    case $_lw_wu in '' | *[!0-9]*) ;; *)
+        [ "$LW_P_READ" -lt "$_lw_wu" ] || _lw_wb=$((LW_P_READ - _lw_wu))
+        ;;
+    esac
+    _lw_wd=${LW_P_V6_FILE%/*}
+    if ! { (umask 077 && mkdir -p "$_lw_wd") && chmod 0700 "$_lw_wd"; } 2>/dev/null; then
+        lw_debug lw-probe "cannot make $_lw_wd, the IPv6 result is not written"
+        return 0
+    fi
+    if printf '%s/%s %s %s %s\n' "$_lw_wc" "$_lw_wh" "$_lw_wb" "$LW_P_T6" "$_lw_wr" \
+        >"$_lw_wd/.ipv6.$$" 2>/dev/null &&
+        mv -f "$_lw_wd/.ipv6.$$" "$LW_P_V6_FILE" 2>/dev/null; then
+        return 0
+    fi
+    rm -f "$_lw_wd/.ipv6.$$"
+    lw_debug lw-probe "the IPv6 result is not written to $LW_P_V6_FILE"
 }

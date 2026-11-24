@@ -25,7 +25,7 @@ tests/run-all.sh                         # all rootfs tests, 6 at once (-j N or 
 tests/ci/run.sh                          # ci/github-run.sh (the build on GitHub) on the host with stand-ins, seconds
 tests/configurator/run.sh                # configurator/index.html: static checks, then a headless browser (agent-browser), seconds
 tests/run-all.sh smoke                   # the image's scripts in the OpenWrt rootfs under bwrap
-tests/run-all.sh notify                  # one area: ladder | modem | notify | firstboot | smoke | linkwatch | qmi
+tests/run-all.sh notify                  # one area: ladder | modem | notify | firstboot | smoke | linkwatch | qmi | watchcat
 tests/rootfs/run.sh tests/notify/x.sh    # one test script
 shellcheck -s sh src/files/usr/sbin/lw-notify   # a changed image script; the tests are bash
 ```

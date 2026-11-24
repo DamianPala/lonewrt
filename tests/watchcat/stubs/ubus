@@ -1,0 +1,21 @@
+#!/bin/sh
+# Test stand-in for ubus in the watchcat tests. `ubus call network.interface dump` is what the
+# worker's network_get_device reads: the interfaces of $LW_TEST/ifstatus/*.json in one document.
+# Any other call (the init script's `service set`) is recorded with its arguments in
+# $LW_TEST/ubus-calls.
+T=${LW_TEST:-/lwtest}
+if [ "$1 $2 $3" = "call network.interface dump" ]; then
+    printf '{"interface":['
+    sep=''
+    for f in "$T"/ifstatus/*.json; do
+        [ -f "$f" ] || continue
+        n=${f##*/}
+        n=${n%.json}
+        printf '%s' "$sep"
+        sed "s/^{/{\"interface\":\"$n\",/" "$f" | tr -d '\n'
+        sep=,
+    done
+    printf ']}\n'
+    exit 0
+fi
+printf '%s\n' "$*" >>"$T/ubus-calls"

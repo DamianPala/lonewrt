@@ -1,0 +1,4 @@
+#!/bin/sh
+# Test stand-in for ifup in the watchcat tests: records "SECOND ifup ARGS" in $LW_TEST/wc-events.
+T=${LW_TEST:-/lwtest}
+echo "$(cut -d. -f1 "${LW_UPTIME_FILE:-$T/uptime}") ifup $*" >>"$T/wc-events"

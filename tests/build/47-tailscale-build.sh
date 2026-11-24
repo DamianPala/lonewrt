@@ -33,6 +33,11 @@ image:
 @@mkdir -p build_dir/target-fake/root.orig-fake/lib/netifd/proto build_dir/target-fake/root-fake/lib/netifd/proto
 @@install -m 0755 $(FAKE_QMI_SH) build_dir/target-fake/root.orig-fake/lib/netifd/proto/qmi.sh
 @@cp -p $(FILES)/lib/netifd/proto/qmi.sh build_dir/target-fake/root-fake/lib/netifd/proto/qmi.sh
+@@mkdir -p build_dir/target-fake/root.orig-fake/usr/bin build_dir/target-fake/root.orig-fake/etc/init.d build_dir/target-fake/root-fake/usr/bin build_dir/target-fake/root-fake/etc/init.d
+@@install -m 0755 $(FAKE_WC_SH) build_dir/target-fake/root.orig-fake/usr/bin/watchcat.sh
+@@install -m 0755 $(FAKE_WC_INIT) build_dir/target-fake/root.orig-fake/etc/init.d/watchcat
+@@cp -p $(FILES)/usr/bin/watchcat.sh build_dir/target-fake/root-fake/usr/bin/watchcat.sh
+@@cp -p $(FILES)/etc/init.d/watchcat build_dir/target-fake/root-fake/etc/init.d/watchcat
 @@mkdir -p $(FAKE_LOG)/files && cp -a $(FILES)/. $(FAKE_LOG)/files/
 @@printf '%s\n' '$(PACKAGES)' >$(FAKE_LOG)/packages
 @@mkdir -p $(BIN_DIR)/sysupgrade-fake
@@ -46,6 +51,7 @@ EOF
 export FAKE_QMI_SH=$FIX/fake-qmi.sh
 LW_QMI_SHA256=$(sha256sum "$FAKE_QMI_SH" | cut -d" " -f1)
 export LW_QMI_SHA256
+fake_wc_pins
 # the defaults of a good tailscale build: the feed and the manifest agree, the root is small
 export FAKE_ROOT_SIZE=14397440 FAKE_TS_MANIFEST=1.104.1-r1
 unset FAKE_TS_FEED FAKE_APK_FAIL

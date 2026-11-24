@@ -88,6 +88,8 @@ grep -qF "root:$(sed -n "s/^P_ROOT_PASSWORD_HASH='\(.*\)'$/\1/p" "$RENDER/generi
 fb_expect watchcat.wwan_soft.mode restart_iface
 fb_expect watchcat.wwan_soft.period 120
 fb_expect watchcat.wwan_soft.pingperiod 60
+# R14b: the family check is selected by an option of this entry only
+fb_expect watchcat.wwan_soft.lw_family_check 1
 
 # Cron table and services
 printf '%s\n' '*/5 * * * * /usr/sbin/wwan-recover' '2-59/5 * * * * /usr/sbin/lw-siglog' \

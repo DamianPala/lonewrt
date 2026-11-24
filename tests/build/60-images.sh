@@ -15,6 +15,8 @@ UD=etc/uci-defaults/zz-lw-config
 die() { fail "$*"; }
 # shellcheck source=qmi-handler.sh
 source "$FW/qmi-handler.sh"
+# shellcheck source=watchcat-handler.sh
+source "$FW/watchcat-handler.sh"
 LW_ROOTFS=${LW_ROOTFS:-$LW_WORK/dl/x86/rootfs}
 
 # The note that marks an "Included" row as a tailscale image's only (SPEC R2, R63)
@@ -85,6 +87,31 @@ check_qmi() {
     qmi_sh_n "$img" || fail "image /$QMI_SH_REL fails sh -n"
 }
 
+# check_watchcat ROOTFS: R14b, R14c, D195. The image's /usr/bin/watchcat.sh and /etc/init.d/watchcat are
+# the files of the watchcat package of this very build (root.orig-*) with the edits of
+# watchcat-handler.sh (the pinned sha256 of both), differ in nothing else, run under sh -n, keep the
+# package's modes, and the hook the worker loads is in the image. Call it right after the build.
+check_watchcat() {
+    local img=$1 orig f out
+    orig=$(compgen -G "$LW_WORK/ib/build_dir/target-*/root.orig-*" | head -n1) || true
+    for f in "$WC_SH_REL" "$WC_INIT_REL"; do
+        [ -f "$orig/$f" ] || fail "no pristine /$f under $LW_WORK/ib/build_dir (root.orig-*)"
+        [ -f "$img/$f" ] || fail "image lacks /$f"
+        [ "$(stat -c %a "$img/$f")" = "$(stat -c %a "$orig/$f")" ] || fail "/$f mode differs from the package's"
+        qmi_sh_n "$img/$f" || fail "image /$f fails sh -n"
+    done
+    [ "$(sha256sum "$orig/$WC_SH_REL" | cut -d' ' -f1)" = "$WC_STOCK_SHA256" ] || fail "the package's /$WC_SH_REL is not the pinned file (R14c)"
+    [ "$(sha256sum "$orig/$WC_INIT_REL" | cut -d' ' -f1)" = "$WC_INIT_STOCK_SHA256" ] || fail "the package's /$WC_INIT_REL is not the pinned file (R14c)"
+    out=$SCRATCH/wc-want
+    mkdir -p "$out"
+    (wc_transform "$orig/$WC_SH_REL" "$orig/$WC_INIT_REL" "$out/sh" "$out/init" "the package's files") ||
+        fail "the pristine watchcat files cannot be transformed"
+    cmp -s "$out/sh" "$img/$WC_SH_REL" || fail "image /$WC_SH_REL is not the package file with the edits"
+    cmp -s "$out/init" "$img/$WC_INIT_REL" || fail "image /$WC_INIT_REL is not the package file with the edits"
+    [ -f "$img/usr/lib/lw/watchcat-family.sh" ] || fail "image lacks the hook /usr/lib/lw/watchcat-family.sh"
+    grep -qx "	option lw_family_check '1'" "$img/etc/config/watchcat" || fail "image's /etc/config/watchcat lacks the hook option"
+}
+
 # packages_of FILE: the names in the PACKAGES=( ... ) list of a build script, sorted
 packages_of() {
     sed -n '/^PACKAGES=(/,/^)/p' "$1" | sed '1d;$d' | tr ' ' '\n' | sed '/^$/d' | sort
@@ -149,6 +176,7 @@ mkdir -p "$SCRATCH/generic"
 unpack_image "$DI/generic-sysupgrade.bin" "$SCRATCH/generic"
 R=$SCRATCH/generic/rootfs
 check_qmi "$R"
+check_watchcat "$R"
 assert_absent "$R" "${LW_VALUES[@]}" "${FAKE_VALUES[@]}"
 # R63: no Tailscale in an image without it: no package file, config or state directory, and no line in /etc/lw-build
 for f in usr/sbin/tailscaled usr/sbin/tailscale etc/config/tailscale etc/tailscale; do
@@ -197,6 +225,7 @@ mkdir -p "$SCRATCH/fake"
 unpack_image "$I/fake-full-sysupgrade.bin" "$SCRATCH/fake"
 R=$SCRATCH/fake/rootfs
 check_qmi "$R"
+check_watchcat "$R"
 assert_present "$R" "${FAKE_VALUES[@]}"
 assert_absent "$R" "${LW_VALUES[@]}"
 grep -qxF '0 10 * * 1 /usr/sbin/lw-notify balance' "$R/etc/crontabs/root" ||

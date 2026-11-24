@@ -9,6 +9,11 @@ FIX=$FW/tests/build/fixtures
 RENDER=$OUT/render
 
 LW_WORK=${LW_WORK:-$FW/work}
+# R12g, D205: the build's test knobs for the pins work only under this suite
+export LW_TESTS=1
+# the made-up watchcat package files of fake-apk, and the sha256 pins the tests that build from them
+# set (LW_WATCHCAT_SHA256, LW_WATCHCAT_INIT_SHA256, via fake_wc_pins)
+export FAKE_WC_SH=$FIX/fake-watchcat.sh FAKE_WC_INIT=$FIX/fake-watchcat-init
 
 # Values of a private profile that must never reach the generic image (SPEC R4a): one per line in
 # tests/build/private-values.txt, which git ignores; without the file the list is empty. The fake
@@ -118,9 +123,19 @@ fake_qmi_ib() {
     : >"$1/repositories"
 }
 
+# fake_wc_pins: export the sha256 pins of the made-up watchcat files (R14c); the build takes them
+# only under the test suite (R12g)
+fake_wc_pins() {
+    LW_WATCHCAT_SHA256=$(sha256sum "$FAKE_WC_SH" | cut -d' ' -f1)
+    LW_WATCHCAT_INIT_SHA256=$(sha256sum "$FAKE_WC_INIT" | cut -d' ' -f1)
+    export LW_WATCHCAT_SHA256 LW_WATCHCAT_INIT_SHA256
+}
+
 # fake_make_image: the Makefile of a stand-in ImageBuilder whose `image` leaves what the real one
 # does in build_dir: the package's file (0755) in root.orig-fake, the overlay's file (FILES=, copied
-# with its mode) in root-fake. FAKE_QMI_ORIG, when set, is a package file other than the one apk gave.
+# with its mode) in root-fake. FAKE_QMI_ORIG, when set, is a package file other than the one apk gave;
+# the same for watchcat's two files, whose package files are FAKE_WC_SH and FAKE_WC_INIT (FAKE_WC_ORIG
+# and FAKE_WC_INIT_ORIG when another file is the pristine one).
 # shellcheck disable=SC2016  # $(...) here are make's variables, written into the Makefile as they are
 fake_make_image() {
     printf 'image:\n'
@@ -129,4 +144,16 @@ fake_make_image() {
     printf '\tinstall -m 0755 $(or $(FAKE_QMI_ORIG),$(FAKE_QMI_SH))'
     printf ' build_dir/target-fake/root.orig-fake/lib/netifd/proto/qmi.sh\n'
     printf '\tcp -p $(FILES)/lib/netifd/proto/qmi.sh build_dir/target-fake/root-fake/lib/netifd/proto/qmi.sh\n'
+    fake_make_watchcat
+}
+
+# fake_make_watchcat: the lines of an `image` recipe that do the same for watchcat's two files
+# shellcheck disable=SC2016  # $(...) here are make's variables
+fake_make_watchcat() {
+    printf '\tmkdir -p build_dir/target-fake/root.orig-fake/usr/bin build_dir/target-fake/root.orig-fake/etc/init.d'
+    printf ' build_dir/target-fake/root-fake/usr/bin build_dir/target-fake/root-fake/etc/init.d\n'
+    printf '\tinstall -m 0755 $(or $(FAKE_WC_ORIG),$(FAKE_WC_SH)) build_dir/target-fake/root.orig-fake/usr/bin/watchcat.sh\n'
+    printf '\tinstall -m 0755 $(or $(FAKE_WC_INIT_ORIG),$(FAKE_WC_INIT)) build_dir/target-fake/root.orig-fake/etc/init.d/watchcat\n'
+    printf '\tcp -p $(FILES)/usr/bin/watchcat.sh build_dir/target-fake/root-fake/usr/bin/watchcat.sh\n'
+    printf '\tcp -p $(FILES)/etc/init.d/watchcat build_dir/target-fake/root-fake/etc/init.d/watchcat\n'
 }

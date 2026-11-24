@@ -20,6 +20,8 @@ DEPS=${LW_DEPS_LIST:-$FW/deps.lst}
 source "$FW/pinned-packages.sh"
 # shellcheck source=qmi-handler.sh
 source "$FW/qmi-handler.sh"
+# shellcheck source=watchcat-handler.sh
+source "$FW/watchcat-handler.sh"
 LW_ROOTFS=${LW_ROOTFS:-$LW_WORK/dl/x86/rootfs}
 # ImageBuilder wants GNU awk; the laptop only has mawk
 export PATH=$LW_WORK/tools/bin:$PATH
@@ -105,7 +107,7 @@ WORK=
 cleanup() { [ -z "$WORK" ] || rm -rf "$WORK"; }
 
 main() {
-    local src=${1:-} stage key img src_note qmi_pkg pkgs=("${PACKAGES[@]}")
+    local src=${1:-} stage key img src_note qmi_pkg wc_pkg pkgs=("${PACKAGES[@]}")
     mkdir -p "$VMWORK/image"
     ensure_ib
     tune_ib
@@ -130,6 +132,9 @@ main() {
     # (needs the package feeds, so a run with a cached image still reaches the network)
     qmi_pkg=$(qmi_derive "$IB" "$stage" "$WORK/qmi")
     log "/$QMI_SH_REL from $qmi_pkg with the edits of R12d"
+    # R14c: the same for watchcat's two files
+    wc_pkg=$(wc_derive "$IB" "$stage" "$WORK/wc") || exit 1
+    log "/$WC_SH_REL and /$WC_INIT_REL from $wc_pkg with the edits of R14b"
 
     # the build time in /etc/lw-build changes with every render; it alone does not need a new image
     key=$( {
@@ -146,6 +151,7 @@ main() {
             BIN_DIR="$img.tmp/bin" EXTRA_IMAGE_NAME=lwvm >"$img.tmp/build.log" 2>&1 ||
             die "ImageBuilder failed, see $img.tmp/build.log"
         qmi_verify "$IB"
+        wc_verify "$IB"
         # OpenWrt appends metadata after the gzip stream, so gzip warns "trailing garbage", exit 2
         gzip -dc "$img.tmp"/bin/*-squashfs-combined.img.gz >"$img.tmp/disk.img" 2>/dev/null ||
             [ $? = 2 ]

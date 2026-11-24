@@ -3,7 +3,7 @@
 #
 #   tests/run-all.sh [-j N] [area]
 #
-# An area (ladder, modem, smoke, qmi ...) runs only that directory. The hostnet scripts
+# An area (ladder, modem, smoke, qmi, watchcat ...) runs only that directory. The hostnet scripts
 # run on the host (they need a network port of the host, which the sandbox of the other tests
 # does not have), and print SKIP when they cannot run here. The tests are independent (own bwrap
 # sandbox, no network), so N of them run at once: -j N, else LW_JOBS, else 6 (half the cores of a

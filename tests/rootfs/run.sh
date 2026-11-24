@@ -26,6 +26,12 @@ if [[ $1 == tests/qmi/* ]]; then
     "$FW/tests/qmi/derive.bash" "$LW_WORK/ib" "$ROOTFS" "$scratch"
     qmi_args=(--ro-bind "$scratch/qmi-overlay" /qmi-overlay --dev-bind /dev/null /dev/cdc-wdm0)
 fi
+# R14c: tests/watchcat run the worker and init script of the image, derived from the cached package
+# (the repo keeps no copy), next to the package's own files for the comparisons with stock
+if [[ $1 == tests/watchcat/* ]]; then
+    "$FW/tests/watchcat/derive.bash" "$LW_WORK/ib" "$ROOTFS" "$scratch"
+    qmi_args+=(--ro-bind "$scratch/wc-overlay" /wc-overlay --ro-bind "$scratch/wc-build/ext" /wc-stock)
+fi
 root_args "$ROOTFS" "$scratch"
 
 # The GitHub runner starts its steps with SIGPIPE ignored, and an ignored signal passes through

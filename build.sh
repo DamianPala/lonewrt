@@ -13,8 +13,10 @@
 # ./fetch-deps.sh), LW_ROOTFS (OpenWrt rootfs whose busybox runs the sh -n check). Tests also set
 # LW_PROFILES, LW_SRC, LW_IMAGE, LW_VERSION_FILE (the VERSION file, SPEC R3b), LW_ZONES_PAGE (the
 # configurator page, SPEC R3c) and LW_DEPS_LIST (the pins of deps.lst) to work on copies, and
-# LW_QMI_SHA256 (the sha256 pin of the uqmi package's qmi.sh, SPEC R12e) for tests that build from a
-# made-up package file.
+# LW_QMI_SHA256, LW_WATCHCAT_SHA256 and LW_WATCHCAT_INIT_SHA256 (the sha256 pins of the uqmi package's
+# qmi.sh, SPEC R12e, and of watchcat's two files, R14c) for tests that build from made-up package
+# files. They work only under the test suite, which sets LW_TESTS=1; a build with one of them set any
+# other way stops (R12g, D205).
 set -euo pipefail
 
 FW="$(cd "$(dirname "$0")" && pwd)"
@@ -33,6 +35,8 @@ IB=$LW_WORK/ib
 source "$FW/pinned-packages.sh"
 # shellcheck source=qmi-handler.sh
 source "$FW/qmi-handler.sh"
+# shellcheck source=watchcat-handler.sh
+source "$FW/watchcat-handler.sh"
 IB_TAR=$LW_WORK/dl/openwrt-imagebuilder-25.12.6-ipq40xx-generic.Linux-x86_64.tar.zst
 
 # The "Included" table of packages.md (SPEC R2); the device profile adds the default set.
@@ -247,7 +251,10 @@ run_imagebuilder() {
         BIN_DIR="$3" >"$4" 2>&1 || rc=$?
     # R12d: still before the scrub, which removes the final rootfs; a failure here ends the build
     # through die, and the EXIT trap scrubs
-    if [ "$rc" -eq 0 ]; then qmi_verify "$IB"; fi
+    if [ "$rc" -eq 0 ]; then
+        qmi_verify "$IB"
+        wc_verify "$IB"
+    fi
     scrub_imagebuilder "$1"
     SCRUB=
     exec 9<&-
@@ -264,7 +271,7 @@ publish() {
 }
 
 build() {
-    local name=$1 bin manifest qmi_pkg ts_version=
+    local name=$1 bin manifest qmi_pkg wc_pkg ts_version=
     check_name "$name"
     warn_profile_mode "$name"
     mkdir -p "$IMAGE"
@@ -275,6 +282,9 @@ build() {
     # R12d, D82: the package's qmi.sh minus its network scan goes into the overlay; no image otherwise
     qmi_pkg=$(qmi_derive "$IB" "$TMP/files" "$TMP/qmi")
     echo "build: /$QMI_SH_REL from $qmi_pkg with the edits of R12d to R12f" >&2
+    # R14c, D195: watchcat's worker and init script with the guarded hook lines; no image otherwise
+    wc_pkg=$(wc_derive "$IB" "$TMP/files" "$TMP/wc") || exit 1
+    echo "build: /$WC_SH_REL and /$WC_INIT_REL from $wc_pkg with the edits of R14b and R14c" >&2
     if [ "$WITH_TS" = 1 ]; then
         ts_version=$(ts_feed_version "$IB" "$TMP/qmi") || exit 1
         printf 'tailscale=%s\n' "$ts_version" >>"$TMP/files/etc/lw-build"
