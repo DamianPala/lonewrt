@@ -226,7 +226,7 @@ lock_release() {
 # Any reply counts (SPEC Terms "online"), for each family the session has, through the session's own
 # devices (R77, D173); the round is in probe.sh.
 online_now() {
-    lw_probe_round
+    lw_probe_round recover
 }
 
 # R18c: the operator DNS of the session (native IPv4 lease, else its IPv6 settings), asked only when
@@ -243,11 +243,9 @@ dns_ok() {
 # dual stack) IPv6 traffic of the session's own device that answered a connection since the previous
 # cycle counts as online, as in watchcat's check (traffic.sh), so a path that carries TCP over IPv6 but
 # drops the echoes of the probes, or a dual-stack session that lost its IPv4 call, never reaches a step
-# of the ladder that restarts the router while the traffic flows. It is decided here, before cycle(),
-# as an answer of the probes: a cycle that is online in LTE-only mode ends the failure and never
-# reaches the threshold. On EDGE the failure keeps counting towards LTE recovery, but the reboot waits
-# while the traffic continues (traffic_ok, in act()). Quiet and unknown (no sample yet, no counters,
-# another session) leave the verdict to the probes. A session without an IPv6 call reads no counters
+# of a restart for silence while the traffic flows. An online cycle in LTE-only mode ends the
+# failure. An online cycle on EDGE keeps the failure counting until LTE returns. Quiet and unknown
+# leave the verdict to the probes. A session without an IPv6 call reads no counters
 # and keeps no sample.
 # R23 stays as it is, traffic or not: the LTE probe after PROBE_EVERY cycles on EDGE and the fall
 # back after a probe that fails are R23's own repair (a mode switch, not a restart for silence), so
@@ -476,8 +474,8 @@ act() {
     fi
     _th=$(threshold)
     if [ -n "$_th" ] && [ "$cycles" -ge "$_th" ]; then
-        # R77d: EDGE can carry traffic while the failure keeps counting towards LTE recovery.
-        [ "$traffic_ok" = 1 ] || do_reboot "$_th"
+        # R22, R77d: the EDGE reboot tries to recover LTE even while EDGE carries traffic.
+        [ "$mode" != edge ] && [ "$traffic_ok" = 1 ] || do_reboot "$_th"
         return 0
     fi
     if [ "$online" = 0 ] && [ "$mode" = lte ] && [ "$reboots" -ge 1 ] && [ "$edge_boot" = 0 ] &&

@@ -18,11 +18,8 @@
 # shellcheck source=src/files/usr/lib/lw/traffic.sh
 . /usr/lib/lw/traffic.sh
 
-# R14f: the deadline (second of the uptime clock) of a start of wwan that is negotiating, written by
-# the handler (qmi-edits/functions.sh) and removed when the negotiation ends; in the family directory
-# of root (common.sh), and no later than this many seconds from now whatever the file says (R73h)
+# R14f: the handler's setup mark holds its deadline as a second of the uptime clock (R73h).
 LW_WC_NEG=${LW_WC_NEG:-${LW_FAMILY_DIR:-/var/run/lw-family}/negotiating}
-LW_WC_NEG_MAX=60
 # R77b: checks in a row with no answer in one family while another answers
 LW_WC_LOST_AFTER=3
 
@@ -128,34 +125,37 @@ lw_wc_check() {
     fi
 }
 
-# lw_wc_wait: R14f, D197. The silence timer has run out while a start of wwan is within its
-# negotiation deadline: the restart would cut that start, so wait for it, up to a guard that ends
-# with the deadline, then look once more; a link that is up by then feeds the timer, and a start that
-# hangs to its deadline is restarted as R14 says, once.
+# lw_wc_wait: R14f, D197. Restarting during setup would cut a new session. Once setup ends,
+# give DHCP up to 20 s to bring the link up, within the original wait deadline.
 lw_wc_wait() {
-    lw_state_dir_ok "${LW_WC_NEG%/*}" || return 0
-    [ -f "$LW_WC_NEG" ] || return 0
     [ "$((time_now - time_lastcheck_withinternet))" -ge "$failure_period" ] || return 0
-    read -r _lw_wd <"$LW_WC_NEG" || :
-    case $_lw_wd in '' | *[!0-9]*) return 0 ;; esac
     _lw_pnow
-    # a mark never holds watchcat back longer than a negotiation lasts (R14f, R73h); a number too long
-    # for the shell's arithmetic is as far away as any other
-    _lw_wmax=$((_lw_pn + LW_WC_NEG_MAX))
-    if [ "${#_lw_wd}" -gt 9 ] || [ "$_lw_wd" -gt "$_lw_wmax" ]; then _lw_wd=$_lw_wmax; fi
-    [ "$_lw_pn" -lt "$_lw_wd" ] || return 0
+    _lw_wd=$(lw_negotiation_deadline "$LW_WC_NEG" "$_lw_pn") || return 0
     lw_debug watchcat "the silence timer ran out during a start of wwan, waiting for it until second $_lw_wd"
-    while [ -f "$LW_WC_NEG" ]; do
-        _lw_pnow
-        [ "$_lw_pn" -lt "$_lw_wd" ] || break
+    while [ -f "$LW_WC_NEG" ] && [ "$_lw_pn" -lt "$_lw_wd" ]; do
         sleep 1
+        _lw_pnow
+    done
+    lw_wc_settle "$_lw_wd"
+}
+
+lw_wc_settle() {
+    _lw_settle_end=$((_lw_pn + 20))
+    [ "$_lw_settle_end" -le "$1" ] || _lw_settle_end=$1
+    LW_P_WSIZE=${ping_size:-56}
+    while [ "$_lw_pn" -lt "$_lw_settle_end" ]; do
+        if lw_probe_round watchcat "$_lw_settle_end"; then
+            _lw_pnow
+            time_lastcheck_withinternet=$_lw_pn
+            break
+        fi
+        _lw_pnow
+        [ "$_lw_pn" -lt "$_lw_settle_end" ] || break
+        sleep 1
+        _lw_pnow
     done
     time_now=$_lw_pn
     time_lastcheck=$_lw_pn
-    LW_P_WSIZE=${ping_size:-56}
-    if lw_probe_round watchcat; then
-        time_lastcheck_withinternet="$time_now"
-    fi
 }
 
 # lw_wc_round: what the worker runs in place of its loop over the hosts

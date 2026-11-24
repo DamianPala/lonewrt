@@ -85,8 +85,10 @@ lw_mark() {
 		echo "$lw_dl" >"$LW_MARK_FILE.$$" && mv -f "$LW_MARK_FILE.$$" "$LW_MARK_FILE"; } 2>/dev/null || :
 }
 lw_unmark() {
-	lw_dir_ok "$LW_FAMILY_DIR" || return 0
-	rm -f "$LW_MARK_FILE" "$LW_MARK_FILE.$$" 2>/dev/null || :
+	if lw_dir_ok "$LW_FAMILY_DIR"; then
+		rm -f "$LW_MARK_FILE" "$LW_MARK_FILE.$$" 2>/dev/null || :
+	fi
+	return "${1:-0}"
 }
 
 # lw_say TEXT: the stock handler's line when forced (the log is the one of the stock handler), else
@@ -108,6 +110,7 @@ lw_release() {
 # modem does not give it (R73o). With c the call is a cleanup call.
 lw_profile_read() {
 	local q=lw_qa j
+	lw_p_type='' lw_p_apn='' lw_p_off=''
 	[ "${1:-}" != c ] || q=lw_q
 	$q 1000 --get-profile-settings 3gpp,1 || return 1
 	j=$lw_out
@@ -129,7 +132,7 @@ lw_p_is() {
 # is logged. An unknown SIM matches nothing (lw_repair)
 lw_sim() {
 	lw_sim_id=
-	if lw_qa 1000 --get-iccid; then
+	if lw_q 1000 --get-iccid; then
 		lw_sim_id=$(printf '%s' "$lw_out" | tr -cd '0-9A-Za-z')
 	fi
 	[ -n "$lw_sim_id" ] || lw_sim_id=-
@@ -183,26 +186,32 @@ lw_profile_set() {
 		lw_dbg "profile 1 not readable, write to $t unverified"
 		return 0
 	fi
-	if lw_profile_read && lw_p_is "$t"; then
-		return 0
+	if lw_profile_read; then
+		lw_p_is "$t" && return 0
+	else
+		lw_p_ok=0
 	fi
 	lw_ver=0
 	lw_dbg "profile write to $t did not stick, unverified"
 }
 
-# lw_reconcile CID: a start whose answer did not come: ask that client; a call that is up with a
-# handle we never got is stopped on its client only when no call of this start is up beside it (no
-# wildcard stop beside a sibling, R73e), else it is left for the next start's sweep (R73m)
+# lw_reconcile CID FAMILY: a lost start answer can leave a call with an unknown handle. Beside
+# a working call, keep its client for the next sweep unless it is confirmed disconnected (R73e).
 lw_reconcile() {
-	lw_q 1000 --set-client-id wds,"$1" --get-data-status
-	if [ "$lw_out" = '"connected"' ]; then
-		if [ -n "$pdh_4$pdh_6" ]; then
-			lw_dbg "client $1 holds a call of unknown handle beside a working one, left for the next start"
-			return 0
-		fi
-		lw_q 1000 --set-client-id wds,"$1" --stop-network 0xffffffff --autoconnect
+	local cid=$1 family=$2 status=
+	set -- --set-client-id "wds,$cid"
+	[ "$family" != 6 ] || set -- "$@" --set-ip-family ipv6
+	if lw_q 1000 "$@" --get-data-status; then
+		status=$lw_out
 	fi
-	lw_release "$1"
+	if [ "$status" != '"disconnected"' ] && [ -n "$pdh_4$pdh_6" ]; then
+		lw_dbg "client $cid may hold a call of unknown handle beside a working one, left for the next start"
+		return 0
+	fi
+	if [ "$status" = '"connected"' ]; then
+		lw_q 1000 "$@" --stop-network 0xffffffff --autoconnect
+	fi
+	lw_release "$cid"
 }
 
 # lw_call FAMILY: one call on a client of its own (R73e). 0: granted, cid_N and pdh_N are set; 1:
@@ -242,7 +251,7 @@ lw_call() {
 		# may have reached the modem (R73e)
 		case $pdh in '' | *'timed out'*) rc=124 ;; esac
 		if [ "$rc" = 124 ] || [ "$rc" = 137 ]; then
-			lw_reconcile "$cid"
+			lw_reconcile "$cid" "$f"
 		else
 			lw_release "$cid"
 		fi
@@ -357,7 +366,6 @@ lw_negotiate() {
 	if [ -n "$pdh_4$pdh_6" ]; then
 		# the type this start came up with, also IPV4V6 on a SIM that gave only IPv4 (R73n)
 		lw_rec_put ok "$lw_ok_type"
-		lw_unmark
 		return 0
 	fi
 	lw_rollback
@@ -401,7 +409,17 @@ lw_v6_lit() {
 	esac
 	case $1 in
 	*[!0-9a-fA-F:]* | *:::* | :[!:]* | *[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]* | *:*:*:*:*:*:*:*:* | *[!:]:) return 1 ;;
-	:: | ::1 | [fF][fF]*) return 1 ;;
+	[fF][fF]*) return 1 ;;
+	esac
+	# R73j: check the value, including zero-padded groups and forms with "::".
+	case $1 in
+	*[!0:]*) ;;
+	*) return 1 ;;
+	esac
+	case $1 in
+	*:1 | *:01 | *:001 | *:0001)
+		case ${1%:*} in *[!0:]*) ;; *) return 1 ;; esac
+		;;
 	esac
 	case ${1#*::} in
 	*::*) return 1 ;;
@@ -423,7 +441,7 @@ lw_v6_global() {
 # session takes them from the link. One read, one judgement: the set that passes is kept in lw_v6_json
 # (rebuilt from the checked values) and is the one the handler publishes, so a later read of the
 # modem, which may be empty or differ, decides nothing. The address must be a global unicast one, the
-# gateway and the first DNS server usable addresses, the prefix length 1 to 128; the second DNS
+# gateway and the first DNS server usable addresses, the prefix length 1 to 64 (R74); the second DNS
 # server is kept only when it is one.
 lw_v6_ok() {
 	local j ip gw dns dns2 pl
@@ -441,7 +459,7 @@ lw_v6_ok() {
 	lw_v6_lit "$gw" || { lw_dbg "IPv6 settings: no valid gateway, taken from the link"; return 1; }
 	lw_v6_lit "$dns" || { lw_dbg "IPv6 settings: no valid DNS, taken from the link"; return 1; }
 	case $pl in '' | *[!0-9]* | ????*) lw_dbg "IPv6 settings: no valid prefix length, taken from the link"; return 1 ;; esac
-	if [ "$pl" -lt 1 ] || [ "$pl" -gt 128 ]; then
+	if [ "$pl" -lt 1 ] || [ "$pl" -gt 64 ]; then
 		lw_dbg "IPv6 settings: no valid prefix length, taken from the link"
 		return 1
 	fi

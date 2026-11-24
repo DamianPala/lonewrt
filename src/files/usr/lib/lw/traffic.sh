@@ -93,8 +93,11 @@ lw_traffic_measure() {
     LW_T_BASE="$_lw_tdev $_lw_tcalls $_lw_tbirth $_lw_tnow $_lw_ta $_lw_tb $_lw_tc $_lw_td"
     [ -n "$_lw_tprev" ] || return 1
     # the sample: device, session, birth, second, then the four counters
-    # shellcheck disable=SC2086  # split on purpose
-    set -- $_lw_tprev
+    # shellcheck disable=SC2086  # split the saved fields with globbing disabled
+    case $- in
+        *f*) set -- $_lw_tprev ;;
+        *) set -f; set -- $_lw_tprev; set +f ;;
+    esac
     [ $# = 8 ] && [ "$1" = "$_lw_tdev" ] && [ "$2" = "$_lw_tcalls" ] || return 1
     case $3/$_lw_tbirth in
         -/-) ;;

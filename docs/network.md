@@ -14,7 +14,8 @@ The router talks to the operator, the NTP pool and, depending on the profile:
 |---|---|---|
 | `api.telegram.org` | Telegram keys set | SMS texts and senders, alerts, the replies to your commands (the Wi-Fi password among them) |
 | your healthchecks.io URL | set | an empty GET every 5 minutes |
-| `8.8.8.8`, `1.1.1.1` | always | a ping every 60 seconds, to tell whether the link works |
+| `8.8.8.8`, `1.1.1.1` | IPv4 available | pings every 60 seconds to check the IPv4 link |
+| `2001:4860:4860::8888`, `2606:4700:4700::1111` | IPv6 available | pings every 60 seconds to check the IPv6 link |
 | the operator's DNS server | the link is down | a lookup of `openwrt.org`, at most one every 5 minutes, to tell a used-up data package from a dead link |
 | the nearest speedtest.net server | you ask for a speed test | about 330 MB of test traffic |
 | your WireGuard server | tunnel enabled | the tunnel |

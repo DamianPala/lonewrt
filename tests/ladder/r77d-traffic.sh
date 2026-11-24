@@ -14,6 +14,7 @@
 STEP='0 0 0 0' NO_STATS=0
 before_run() {
     [ "$NO_STATS" = 0 ] || return 0
+    [ "${EDGE_STATS:-0}" = 0 ] || [ "$(mode_now)" = edge ] || return 0
     # shellcheck disable=SC2086
     snmp6-add wwan0 $STEP
 }
@@ -69,9 +70,9 @@ for kind in v6 dual; do
     lw_expect_grep "$T/syslog" "online on LTE, failure over after 4 cycles"
 done
 
-# R77d: an ongoing failure on EDGE can reach the next reboot threshold while IPv6 carries traffic.
-# Once the traffic stops, the overdue step can run.
+# EDGE traffic continues across several ladder steps without queuing the reboots.
 fresh v6
+EDGE_STATS=1
 STEP='60 60 0 0'
 uci set network.wwan.modes=all
 uci commit network
@@ -79,10 +80,14 @@ state_set cycles=15 reboots=1 class=hang passive=0 uptime=700
 runs 1
 lw_expect_eq "$(mode_now)" edge "R77d: active failure is on EDGE"
 runs 3
-lw_expect_eq "$(reboot_runs)" "" "R77d: reboot of a working IPv6 link on EDGE"
+lw_expect_eq "$(reboot_runs)" 3 "R77d: due EDGE reboot while IPv6 carries traffic"
+runs 25
+lw_expect_eq "$(reboot_runs)" "3 27" "R77d: EDGE reboots respect the ladder spacing"
 STEP='0 0 0 0'
-runs 1
-lw_expect_eq "$(reboot_runs)" 5 "R77d: overdue reboot after IPv6 traffic stops on EDGE"
+runs 5
+lw_expect_eq "$(reboot_runs)" "3 27" "R77d: no queued reboot after EDGE traffic stops"
+
+EDGE_STATS=0
 
 # R23: the LTE probe after 72 cycles on EDGE is the repair of R23, not a restart for silence, and
 # traffic does not hold it: the mode goes back to LTE-only at cycle 72 of the passive mode

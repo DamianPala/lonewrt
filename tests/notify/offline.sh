@@ -52,6 +52,22 @@ while [ "$(sent)" -lt 3 ] && [ "$i" -lt 10 ]; do
 done
 expect_sent 3
 expect_last 'sent by the hotplug'
+# The DHCPv6 child and the translation can each be the first usable link.
+for iface in wwan_6 wwan_6_4; do
+    queued=$(sent)
+    echo down >"$G/net"
+    sms_in "$queued" +38200000003 '11/07/26 13:00:00' "sent by $iface"
+    passes 2
+    expect_sent "$queued"
+    echo up >"$G/net"
+    ACTION=ifup INTERFACE="$iface" sh /etc/hotplug.d/iface/95-lw-notify
+    i=0
+    while [ "$(sent)" -eq "$queued" ] && [ "$i" -lt 5 ]; do
+        sleep 1
+        i=$((i + 1))
+    done
+    expect_last "sent by $iface"
+done
 # other interfaces and events do nothing
 calls=$(wc -l <"$G/calls")
 ACTION=ifdown INTERFACE=wwan sh /etc/hotplug.d/iface/95-lw-notify
@@ -59,5 +75,5 @@ ACTION=ifup INTERFACE=lan sh /etc/hotplug.d/iface/95-lw-notify
 sleep 1
 lw_expect_eq "$(wc -l <"$G/calls")" "$calls" "API calls after other hotplug events"
 pass
-expect_sent 3
+expect_sent 5
 echo ok

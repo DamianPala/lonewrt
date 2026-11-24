@@ -8,6 +8,7 @@
 . /fw/tests/qmi/helpers.inc
 
 D=/var/run/lw-family
+# shellcheck disable=SC2012 # the fixture path has a fixed name
 mode_of() { ls -ld "$1" | cut -c1-10; }
 
 # a start killed after the mark: the mark holds the deadline (1000 s + 60 s) in a directory of mode 0700
@@ -63,6 +64,7 @@ mkdir -p "$D"
     . /lib/functions.sh
     # shellcheck source=/dev/null
     . /lib/netifd/netifd-proto.sh
+    # shellcheck disable=SC2034 # read by the derived handler
     INCLUDE_ONLY=1
     # shellcheck source=/dev/null
     . /qmi-overlay/lib/netifd/proto/qmi.sh
@@ -71,4 +73,15 @@ mkdir -p "$D"
     lw_dir_ok /nonexistent && exit 3
     exit 0
 ) || lw_fail "lw_dir_ok of the handler, exit $?"
+# Kill setup in each settings read, after netifd has already seen the calls.
+rm -rf "$D"
+for cid in 18 17; do
+    qmi_fixture both-accepted
+    qmi_fault "wds,$cid --get-current-settings" kill
+    qmi_run setup ipv4v6 '"dhcp":false' >/dev/null || :
+    lw_expect_eq "$(qmi_notify 0 .data.pdh_4)" -12345678 'IPv4 was already published'
+    lw_expect_eq "$(cat "$D/negotiating")" 1060 "mark during the settings read on client $cid"
+    rm -f "$D/negotiating"
+done
+
 echo ok

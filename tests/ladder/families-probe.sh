@@ -352,6 +352,17 @@ lw_expect_eq "$(dns_of)" "" "R18c: no IPv6 in the session, no IPv6 settings to r
 rm -f "$T"/ifstatus/*.json
 lw_expect_eq "$(dns_of)" "" "R18c: no data at all"
 
+# A delegated prefix can be the only global IPv6 on a live cellular WAN.
+for iface in wwan wwan_6; do
+    lw_session v6child
+    printf '{"up":false}\n' >"$T/ifstatus/wwan_6.json"
+    printf '{"up":true,"data":{"cid_6":"18","pdh_6":"42"}}\n' >"$T/ifstatus/wwan.json"
+    printf '%s\n' '{"up":true,"l3_device":"wwan0","ipv6-prefix":[{"address":"fd00::"},{"address":"2001:db8::"}],"data":{"cid_6":"18","pdh_6":"42"}}' \
+        >"$T/ifstatus/$iface.json"
+    lw_probe_session
+    lw_expect_eq "$LW_P_DEV6" wwan0 "IPv6 device of prefix-only $iface"
+done
+
 # --- R18c: the server counts only when its route leaves on the cellular device of its family
 LW_LOG_LEVEL=debug
 dns_path() {
@@ -402,4 +413,11 @@ lw_route_off
 dns_path
 lw_expect_eq "$rc" 1 "R18c: no device, no evidence"
 lw_route_off
+# Static native IPv4 publishes its DNS on the parent.
+lw_session v4
+rm -f "$T/ifstatus/wwan_4.json"
+printf '%s\n' '{"up":true,"ipv4-address":[{"address":"192.0.2.2"}],"dns-server":["2001:db8::53","192.0.2.53"],"data":{"cid_4":"17","pdh_4":"42"}}' \
+    >"$T/ifstatus/wwan.json"
+lw_expect_eq "$(dns_of)" 192.0.2.53 "R18c: static native IPv4 DNS"
+
 echo ok

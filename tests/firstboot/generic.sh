@@ -38,6 +38,7 @@ fb_expect wifi_schedule.@global[0].enabled 0
 
 # LTE: QMI, LTE only, empty APN; no band target
 fb_expect network.wwan.proto qmi
+fb_expect network.wwan.pdptype ipv4
 fb_expect network.wwan.device /dev/cdc-wdm0
 fb_expect network.wwan.modes lte
 fb_expect network.wwan.timeout 30

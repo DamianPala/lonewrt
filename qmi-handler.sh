@@ -80,7 +80,7 @@ qmi_expect_once() {
 # when IN has another sha256 than the reviewed one (R12e), an anchor is not there exactly once, or
 # the start anchor of the replaced block does not come before its end anchor.
 qmi_transform() {
-    local in=$1 out=$2 name=$3 sum n line state=0 seen_v6=0 tmp
+    local in=$1 out=$2 name=$3 sum n line state=0 seen_v6=0 setup_end=0 tmp
     sum=$(sha256sum "$in" | cut -d' ' -f1)
     [ "$sum" = "$QMI_STOCK_SHA256" ] ||
         die "/$QMI_SH_REL of $name has sha256 $sum, the edits were reviewed against $QMI_STOCK_SHA256" \
@@ -125,10 +125,24 @@ qmi_transform() {
             seen_v6=1
             ;;
         "$QMI_A_V6LOAD") line=$QMI_N_V6LOAD ;;
-        "$QMI_A_V4") [ "$seen_v6" != 1 ] || line=$QMI_N_V4 ;;
+        "$QMI_A_V4")
+            if [ "$seen_v6" = 1 ]; then
+                line=$QMI_N_V4
+                setup_end=1
+            fi
+            ;;
+        '}')
+            # R49a: the stock setup still reads the modem after publishing wwan.
+            if [ "$setup_end" = 1 ]; then
+                printf '%s\n' $'\tlw_unmark "$?"'
+                setup_end=2
+            fi
+            ;;
         esac
         printf '%s\n' "$line"
     done <"$in" >"$tmp"
+    [ "$setup_end" = 2 ] ||
+        die "/$QMI_SH_REL of $name has no setup end after the IPv4 block (SPEC R12d)"
     mv -f "$tmp" "$out"
 }
 

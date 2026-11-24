@@ -24,8 +24,10 @@ if [ "\$now" -ge 1100 ] && [ ! -e "\$LW_TEST/started" ]; then
 fi
 if [ -n "$1" ] && [ "\$now" -ge "$1" ] && [ -e "\$LW_TEST/started" ] && [ ! -e "\$LW_TEST/ended" ]; then
     rm -f /var/run/lw-family/negotiating
-    echo '4 wwan0 *' >"\$LW_TEST/net/paths"
     : >"\$LW_TEST/ended"
+fi
+if [ -e "\$LW_TEST/ended" ] && [ "\$now" -ge "${3:-${1:-99999}}" ]; then
+    echo '4 wwan0 *' >"\$LW_TEST/net/paths"
 fi
 EOS
     chmod +x "$T/on-sleep"
@@ -44,8 +46,25 @@ wc_run hook 1400
 lw_expect_eq "$(wc_ifups)" "" "restarts when the start ends before its deadline"
 lw_expect_eq "$(sed -n 's/^\([0-9]*\) ping .*/\1/p' "$WCP" | awk '$1 > 1140 && $1 < 1160' | head -n 1)" 1150 "the check right after the start (second)"
 
-# the start hangs past its deadline: wwan is restarted once, after the guard (the deadline 1170 and the
-# check that follows it, which gets no answer either)
+# Without an address ping fails instantly until DHCP catches up.
+world 1150 1170 1154
+: >"$T/ping-fast"
+wc_run hook 1180
+lw_expect_eq "$(wc_ifups)" "" "restart before the address arrived"
+lw_expect_grep "$WCP" "^1154 ping "
+
+# Settle ends at 20 s or the mark's deadline, whichever comes first.
+for row in '1179 1170' '1153 1153'; do
+    deadline=${row% *}
+    restart=${row#* }
+    world 1150 "$deadline" 1190
+    : >"$T/ping-fast"
+    wc_run hook 1200
+    lw_expect_eq "$(wc_ifups)" "$restart" "restart at the settle limit"
+done
+
+# the start hangs past its deadline: wwan is restarted once, after the guard (the deadline 1170; a mark
+# that lasts to its deadline leaves no settle window, so no check follows it)
 world ''
 wc_run hook 1290
 lw_expect_eq "$(wc_ifups | wc -l)" 1 "restarts of a start that hangs past its deadline: $(wc_ifups | tr '\n' ' ') $(cat "$WCP" | tr '\n' '|')"

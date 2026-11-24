@@ -204,3 +204,20 @@ snmp6-add wwan0 60 60 0 0
 printf '{"up":true,"l3_device":"wwan0"}\n' >"$T/ifstatus/wwan.json"
 measure
 expect unknown "no call data"
+
+# A wildcard in a saved sample cannot obtain a counter from a matching filename.
+fresh
+snmp6-add wwan0 0 0 0 0
+measure
+lw_uptime_add 60
+snmp6-add wwan0 60 60 0 0
+counter=${LW_T_BASE##* }
+LW_T_BASE="${LW_T_BASE% *} [0-9]*"
+mkdir "$T/glob"
+(
+    cd "$T/glob"
+    : >"./$counter"
+    measure
+    expect unknown "a glob in place of a saved counter"
+)
+echo ok

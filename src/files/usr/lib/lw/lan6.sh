@@ -44,10 +44,10 @@ EOF_PREFIXES
 }
 
 lan6_managed() {
-    [ "$(uci -q get network.lan.lw_ipv6)" = 1 ] &&
-        [ "$(uci -q get dhcp.lan.interface)" = lan ] &&
-        [ "$(uci -q get dhcp.lan.ra)" = disabled ] &&
-        [ "$(uci -q get dhcp.lan.dhcpv6)" = disabled ]
+    [ "$(uci -q get /etc/config/network.lan.lw_ipv6)" = 1 ] &&
+        [ "$(uci -q -c "$1" -C "$1" get lw_odhcpd.lan.interface)" = lan ] &&
+        [ "$(uci -q -c "$1" -C "$1" get lw_odhcpd.lan.ra)" = disabled ] &&
+        [ "$(uci -q -c "$1" -C "$1" get lw_odhcpd.lan.dhcpv6)" = disabled ]
 }
 
 lan6_dns() {
@@ -72,27 +72,27 @@ lan6_ra_config() {
     if [ -z "$dns" ]; then
         # R74c: restore odhcpd's native route check for its final RA.
         uci -q -c "$dir" -C "$dir" -t "$dir/delta" batch <<EOF_UCI
-set dhcp.lan.ra_default=0
-delete dhcp.lan.ra_flags
-add_list dhcp.lan.ra_flags=none
-set dhcp.lan.ra_dns=0
-commit dhcp
+set lw_odhcpd.lan.ra_default=0
+delete lw_odhcpd.lan.ra_flags
+add_list lw_odhcpd.lan.ra_flags=none
+set lw_odhcpd.lan.ra_dns=0
+commit lw_odhcpd
 EOF_UCI
         return
     fi
     # R74a: the route and prefix are usable. R74c: bound stale addresses after renumbering.
     uci -q -c "$dir" -C "$dir" -t "$dir/delta" batch <<EOF_UCI
-set dhcp.lan.ra=server
-set dhcp.lan.ra_slaac=1
-delete dhcp.lan.ra_flags
-add_list dhcp.lan.ra_flags=none
-set dhcp.lan.ra_default=2
-set dhcp.lan.ra_lifetime=1800
-set dhcp.lan.max_preferred_lifetime=1800
-set dhcp.lan.ra_dns=1
-delete dhcp.lan.dns
-add_list dhcp.lan.dns=$dns
-commit dhcp
+set lw_odhcpd.lan.ra=server
+set lw_odhcpd.lan.ra_slaac=1
+delete lw_odhcpd.lan.ra_flags
+add_list lw_odhcpd.lan.ra_flags=none
+set lw_odhcpd.lan.ra_default=2
+set lw_odhcpd.lan.ra_lifetime=1800
+set lw_odhcpd.lan.max_preferred_lifetime=1800
+set lw_odhcpd.lan.ra_dns=1
+delete lw_odhcpd.lan.dns
+add_list lw_odhcpd.lan.dns=$dns
+commit lw_odhcpd
 EOF_UCI
 }
 
@@ -102,17 +102,19 @@ lan6_configure() (
     mkdir -p "$LW_LAN6_CONFIG" || exit 1
     flock -x 9 || exit 1
     stage=$(mktemp -d "$LW_LAN6_CONFIG/stage.XXXXXX") || exit 1
-    trap 'rm -f "$stage/dhcp" "$stage/delta/dhcp"; rmdir "$stage/delta" "$stage"' EXIT
+    trap 'rm -f "$stage/lw_odhcpd" "$stage/delta/lw_odhcpd"; rmdir "$stage/delta" "$stage"' EXIT
     mkdir "$stage/delta" || exit 1
     ln -sf /etc/config/network "$LW_LAN6_CONFIG/network"
     ln -sf /etc/config/system "$LW_LAN6_CONFIG/system"
-    dhcp=$(uci -N export dhcp) || exit 1
-    printf '%s\n' "$dhcp" | sed '1{/^package /d;}' >"$stage/dhcp"
-    if lan6_managed; then
+    # R74e: exporting by path bypasses UCI's staged changes for the named package.
+    dhcp=$(uci -P /dev/null -N export /etc/config/dhcp) || exit 1
+    # The stage uses a distinct package name so its edits cannot merge the global dhcp delta.
+    printf '%s\n' "$dhcp" | sed '1{/^package /d;}' >"$stage/lw_odhcpd"
+    if lan6_managed "$stage"; then
         dns=$(lan6_dns) || dns=
         lan6_ra_config "$stage" "$dns" || exit 1
     fi
-    [ "$mode" = boot ] || ! cmp -s "$stage/dhcp" "$LW_LAN6_CONFIG/dhcp" || exit 0
-    mv -f "$stage/dhcp" "$LW_LAN6_CONFIG/dhcp" || exit 1
+    [ "$mode" = boot ] || ! cmp -s "$stage/lw_odhcpd" "$LW_LAN6_CONFIG/dhcp" || exit 0
+    mv -f "$stage/lw_odhcpd" "$LW_LAN6_CONFIG/dhcp" || exit 1
     [ "$mode" = boot ] || echo reload
 ) 9>/var/run/lw-odhcpd.lock

@@ -44,4 +44,15 @@ lw_expect_eq "$(qmi_notify 3 '.error[*]')" '' 'failed starts'
 lw_expect_eq "$(qmi_syslog | grep -c 'did not stick')" 1 'the log says the write did not stick'
 lw_expect_eq "$(qmi_syslog | grep -c 'not counted as refused')" 1 'the failed IPv6 call is not counted as refused'
 lw_expect_eq "$(qmi_syslog | grep -c 'IPv6 refused')" 0 'no refusal line'
+# The write succeeds, but the verify read times out. The IPv4-only operator
+# needs a second write to put the modem profile back to IPv4.
+qmi_fixture ip-only
+qmi_profile internet.example ipv4
+qmi_fault '--get-profile-settings' hang 1 1
+qmi_run setup ipv4v6 || lw_fail 'IPv4 fallback used a stale profile after the verify timeout'
+lw_expect_eq "$(qmi_notify 0 .data.pdh_4)" -12345678 'IPv4 fallback published'
+lw_expect_eq "$(qmi_calls | grep -e --modify-profile)" \
+    '--modify-profile 3gpp,1 --apn internet.example --pdp-type ipv4v6
+--modify-profile 3gpp,1 --apn internet.example --pdp-type ipv4' 'both profile writes'
+
 echo ok

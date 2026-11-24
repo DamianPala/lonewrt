@@ -51,12 +51,21 @@ lw_expect_eq "$(qmi_notify 0 '.ip6addr[*].ipaddr')" 2001:db8::2 'address with a 
 lw_expect_eq "$(qmi_notify 0 '.dns[*]')" 2001:db8::53 'only the DNS server that is an address'
 lw_expect_eq "$(qmi_json_lines "$DYNAMIC" '@[*].name')" '' 'no IPv6 child with a usable set'
 
-# the whole range of prefix lengths is usable, /128 included
+# A host-only prefix cannot supply a LAN /64.
 qmi_fixture ipv6-only
 printf '{"ipv6":{"ip":"2001:db8::2","gateway":"2001:db8::1","dns1":"2001:db8::53","ip-prefix-length":128}}\n' \
     >"$QMI_STATE/settings-ipv6.json"
 qmi_run setup ipv4v6 || lw_fail 'setup with a prefix length of 128 failed'
-lw_expect_eq "$(qmi_notify 0 '.ip6prefix[*]')" 2001:db8::2/128 'prefix length 128'
+lw_expect_eq "$(qmi_notify 0 '.ip6prefix[*]')" '' 'no static prefix length 128'
+lw_expect_eq "$(qmi_child wwan_6 proto)" dhcpv6 'DHCPv6 for prefix length 128'
+
+for gateway in 0:0:0:0:0:0:0:0 0000:0000:0000:0000:0000:0000:0000:0001 0::0 0::01; do
+    qmi_fixture ipv6-only
+    printf '{"ipv6":{"ip":"2001:db8::2","gateway":"%s","dns1":"2001:db8::53","ip-prefix-length":64}}\n' \
+        "$gateway" >"$QMI_STATE/settings-ipv6.json"
+    qmi_run setup ipv4v6 || lw_fail "setup with gateway $gateway failed"
+    lw_expect_eq "$(qmi_child wwan_6 proto)" dhcpv6 "DHCPv6 for unusable gateway $gateway"
+done
 
 # R73j: one verified report. The set that is judged is the set that is published: the modem is read
 # once for the IPv6 settings, and what a second read would say (nothing, another address, an

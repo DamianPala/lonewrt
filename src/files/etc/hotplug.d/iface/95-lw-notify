@@ -6,7 +6,7 @@
 
 [ "$ACTION" = ifup ] || exit 0
 case $INTERFACE in
-    wwan | wwan_4) ;;
+    wwan | wwan_4 | wwan_6 | wwan_6_4) ;;
     *) exit 0 ;;
 esac
 [ -n "$(uci -q get lonewrt.notify.token)" ] && [ -n "$(uci -q get lonewrt.notify.chat)" ] || exit 0

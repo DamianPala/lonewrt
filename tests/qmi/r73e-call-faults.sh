@@ -30,11 +30,11 @@ lw_expect_eq "$(ls "$QMI_STATE/calls")" ipv4 'text reply: calls'
 
 run_fault 'empty reply, call not up' 'wds,18 --start-network' 'reply:'
 lw_expect_eq "$(ls "$QMI_STATE/clients")" 17 'empty reply: IPv6 client released after a status read'
-lw_expect_eq "$(qmi_count 'wds,18 --get-data-status')" 1 'empty reply: reconciled on its client'
+lw_expect_eq "$(qmi_count 'wds,18 --set-ip-family ipv6 --get-data-status')" 1 'empty reply: reconciled on its client'
 
 run_fault 'timeout text, call not up' 'wds,18 --start-network' 'reply:"Request timed out"'
 lw_expect_eq "$(ls "$QMI_STATE/clients")" 17 'timeout text: IPv6 client released after a status read'
-lw_expect_eq "$(qmi_count 'wds,18 --get-data-status')" 1 'timeout text: reconciled on its client'
+lw_expect_eq "$(qmi_count 'wds,18 --set-ip-family ipv6 --get-data-status')" 1 'timeout text: reconciled on its client'
 
 run_fault 'failed family selection' 'wds,18 --set-ip-family' 'error:Invalid value'
 lw_expect_eq "$(ls "$QMI_STATE/clients")" 17 'family: IPv6 client released'
@@ -58,10 +58,12 @@ lw_expect_eq "$(ls "$QMI_STATE/calls")" ipv4 'block: the IPv6 call was stopped b
 # the answer to the IPv6 start never came but the call is up, beside a working one: no wildcard stop
 # beside a sibling, the client is left for the next start's sweep (R73e, R73m)
 run_fault 'lost answer beside a sibling' 'wds,18 --start-network' lose
+# shellcheck disable=SC2012 # fixture filenames are numeric client IDs
 lw_expect_eq "$(ls "$QMI_STATE/clients" | tr '\n' ' ')" '17 18 ' 'lost answer: the client of the unknown call stays'
 lw_expect_eq "$(qmi_count 'wds,18 --stop-network')" 0 'lost answer: nothing stops a call of unknown handle beside a sibling'
 qmi_ifdown ipv4v6
 qmi_run setup ipv4v6 >/dev/null || lw_fail 'the next start failed'
+# shellcheck disable=SC2012 # fixture filenames are numeric client IDs
 lw_expect_eq "$(ls "$QMI_STATE/clients" | tr '\n' ' ')" '19 20 ' 'next start: no client of the earlier one'
 lw_expect_eq "$(cat "$QMI_STATE/calls/ipv6")" '20 12345679 0' 'next start: the IPv6 call is its own'
 

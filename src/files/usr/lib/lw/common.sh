@@ -123,6 +123,20 @@ lw_debug() {
 # (/var/run is /tmp/run on OpenWrt, root 0755, made at boot), never in the public /tmp.
 LW_FAMILY_DIR=${LW_FAMILY_DIR:-/var/run/lw-family}
 
+# lw_negotiation_deadline FILE NOW: active setup deadline on the uptime clock (R14f, R49a).
+lw_negotiation_deadline() {
+    lw_state_dir_ok "${1%/*}" && [ -f "$1" ] && [ ! -L "$1" ] || return 1
+    _lw_neg_deadline=''
+    read -r _lw_neg_deadline <"$1" || return 1
+    case $_lw_neg_deadline in '' | *[!0-9]*) return 1 ;; esac
+    _lw_neg_max=$(($2 + 60))
+    if [ "${#_lw_neg_deadline}" -gt 9 ] || [ "$_lw_neg_deadline" -gt "$_lw_neg_max" ]; then
+        _lw_neg_deadline=$_lw_neg_max
+    fi
+    [ "$2" -lt "$_lw_neg_deadline" ] || return 1
+    printf '%s\n' "$_lw_neg_deadline"
+}
+
 # lw_state_dir_ok DIR: DIR is a directory of root and no symlink. Every writer and reader of the
 # family files checks it first: with another directory nothing is written and nothing in it is
 # believed, which is the state with no files (stock watchcat timing, IPv6 kept).

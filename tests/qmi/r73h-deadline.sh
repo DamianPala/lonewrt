@@ -43,10 +43,12 @@ lw_expect_eq "$(qmi_notify 0 .data.pdh_4)" -12345678 'IPv4 published by the dead
 lw_expect_eq "$(qmi_notify 0 .data.pdh_6)" '' 'IPv6 not published'
 lw_expect_eq "$(cat "$QMI_STATE/calls/ipv4")" '17 -12345678 1' 'the IPv4 call'
 # the stalled client is not released, the modem being silent; the next responsive start finds nothing
+# shellcheck disable=SC2012 # fixture filenames are numeric client IDs
 lw_expect_eq "$(ls "$QMI_STATE/clients" | tr '\n' ' ')" '17 18 ' 'clients with the modem silent'
 qmi_ifdown ipv4v6
 rm -f "$QMI_STATE/fault"
 qmi_run setup ipv4v6 || lw_fail 'the next responsive start failed'
+# shellcheck disable=SC2012 # fixture filenames are numeric client IDs
 lw_expect_eq "$(ls "$QMI_STATE/clients" | tr '\n' ' ')" '19 20 ' 'next start: no client of the earlier one'
 lw_expect_eq "$(cat "$QMI_STATE/calls/ipv4")" '19 -12345678 1' 'next start: only its own calls'
 lw_expect_eq "$(cat "$QMI_STATE/calls/ipv6")" '20 12345679 0' 'next start: IPv6 call, its own'
@@ -56,4 +58,11 @@ qmi_fixture owner-sim
 qmi_fault '--get-profile-settings' 'slow:50' 0 1
 qmi_run setup ipv4v6 || lw_fail 'a start with little time left failed'
 lw_expect_eq "$(qmi_calls_raw | grep -c -e '-t 2000 --set-client-id wds,17 --start-network')" 1 'start limit cut to the time left'
+# The confirmed IPv4 call uses the reserve to record the SIM after IPv6 stalls.
+qmi_fixture both-accepted
+qmi_fault 'wds,18 --start-network' 'slow:51'
+qmi_fault 'wds,18 --start-network' hang
+qmi_run setup ipv4v6 || lw_fail 'the confirmed IPv4 call was lost'
+lw_expect_eq "$(cat /etc/lw-wwan-ptype)" "ok ipv4v6 internet.example $(cat "$QMI_STATE/iccid")" \
+    'the SIM is recorded with time still left in the reserve'
 echo ok

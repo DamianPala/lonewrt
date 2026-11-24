@@ -69,6 +69,10 @@ grep -qxF '			json_load "$lw_v6_json"' "$OUT_FILE" || fail "R73j: the IPv6 setti
 grep -qxF "$QMI_A_V6LOAD" "$OUT_FILE" && fail "R73j: the stock read of the IPv6 settings is still there"
 [ "$(grep -cxF '	[ -n "$pdh_4" ] && {' "$OUT_FILE")" = 1 ] || fail "the publish block (before the IPv6 branch) was changed"
 [ "$(grep -cxF '	[ -z "$pdh_4" ] || {' "$OUT_FILE")" = 1 ] || fail "the IPv4 child block was not changed"
+# R14f, R49a: the mark goes at the end of the setup function, right after the IPv4 child block
+[ "$(grep -cxF '	lw_unmark "$?"' "$OUT_FILE")" = 1 ] || fail "the end-of-setup unmark is not there exactly once"
+[ "$(awk '$0 == "\tlw_unmark \"$?\"" { getline n; print n }' "$OUT_FILE")" = '}' ] ||
+    fail "the end-of-setup unmark is not the last line of the setup function"
 [ "$(stat -c %a "$OUT_FILE")" = 755 ] || fail "qmi.sh is not 0755"
 [ "$(stat -c %a "$SCRATCH/overlay/lib" "$SCRATCH/overlay/lib/netifd" "$SCRATCH/overlay/lib/netifd/proto" |
     sort -u)" = 755 ] || fail "the directories of qmi.sh are not 0755"
@@ -110,6 +114,11 @@ expect_fail_with "the anchor IPv4 child block after the IPv6 settings branch" de
 } >"$FAKE_QMI_SH"
 pin "$FAKE_QMI_SH"
 expect_fail_with "the anchor IPv4 child block after the IPv6 settings branch" derive
+# no end of the setup function after the IPv4 child block
+awk -v a="$QMI_A_V4" '$0 == a { f = 1 } f && $0 == "}" { next } { print }' "$FIX/fake-qmi.sh" >"$FAKE_QMI_SH"
+pin "$FAKE_QMI_SH"
+expect_fail_with "has no setup end after the IPv4 block" derive
+[ ! -e "$OUT_FILE" ] || fail "a file without a setup end still wrote qmi.sh"
 # the end of the negotiation before its start
 awk -v s="$QMI_A_NEG_START" -v e="$QMI_A_NEG_END" \
     '$0 == s { print e; next } $0 == e { print s; next } { print }' "$FIX/fake-qmi.sh" >"$FAKE_QMI_SH"

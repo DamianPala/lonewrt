@@ -1,9 +1,11 @@
 #!/bin/sh
+# shellcheck source=tests/lib.sh
 . /fw/tests/lib.sh
 
 PATH=/fw/tests/lan6/stubs:$PATH
 mkdir -p "$T" /var/run
 cp /fw/src/files/usr/lib/lw/lan6.sh /tmp/lan6.sh
+# shellcheck source=src/files/usr/lib/lw/lan6.sh
 . /tmp/lan6.sh
 
 cat >/etc/config/network <<'UCI'
@@ -52,7 +54,11 @@ JSON
 ram() { uci -q -c "$LW_LAN6_CONFIG" get "dhcp.$1"; }
 
 parent '"cid_4":4,"pdh_4":40'
+uci set dhcp.guest.dhcpv6=disabled
 lan6_configure boot
+lw_expect_eq "$(uci get dhcp.guest.dhcpv6)" disabled "the staged edit is still present"
+uci revert dhcp
+lw_expect_eq "$(ram guest.dhcpv6)" server "R74e staged guest edit is excluded from live odhcpd"
 lw_expect_eq "$(ram lan.ra)" disabled "R74b IPv4-only RA"
 lw_expect_eq "$(ram lan.dhcpv6)" disabled "R74b IPv4-only DHCPv6"
 [ ! -s "$T/syslog" ] || lw_fail "R74b IPv4-only warning"

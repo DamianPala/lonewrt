@@ -22,4 +22,21 @@ lw_expect_eq "$(qmi_calls | grep -e '--stop-network')" '--stop-network 0xfffffff
 # with the wide wildcard the stock teardown ends both calls
 qmi_ifdown ipv4v6
 qmi_modem_clean 'after the teardown'
+# A lost start answer and a failed status read leave the client for the next sweep.
+qmi_fixture both-accepted
+qmi_fault 'wds,18 --start-network' lose
+qmi_fault 'wds,18 --get-data-status' hang
+qmi_fault 'wds,18 --set-ip-family ipv6 --get-data-status' block
+qmi_run setup ipv4v6 || lw_fail 'the IPv4 sibling was lost'
+[ -f "$QMI_STATE/clients/18" ] || lw_fail 'unknown IPv6 call lost its client beside IPv4'
+lw_expect_eq "$(qmi_calls | grep -c -e 'wds,18 --set-ip-family ipv6 --get-data-status')" 1 \
+    'reconciliation queries the IPv6 family'
+
+# Without a sibling, keep releasing the client when the status cannot be read.
+qmi_fixture ipv6-only
+qmi_fault 'wds,17 --start-network' lose
+qmi_fault 'wds,17 --get-data-status' hang
+qmi_fault 'wds,17 --set-ip-family ipv6 --get-data-status' hang
+if qmi_run setup ipv6; then lw_fail 'published an IPv6 call without a handle'; fi
+[ ! -e "$QMI_STATE/clients/17" ] || lw_fail 'unknown IPv6 client was kept without a sibling'
 echo ok

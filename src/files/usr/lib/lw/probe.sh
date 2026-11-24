@@ -65,21 +65,27 @@ _lw_pdev() {
 
 # R77c: four lookups may cost at most 8 s even if netifd stalls, leaving time for all four pings.
 _lw_pstatus() {
-    timeout -k 1 1 ifstatus "$1" 2>/dev/null
+    if [ -n "$2" ]; then
+        _lw_pnow
+        [ "$_lw_pn" -lt "$2" ] || return 1
+        timeout -s KILL 1 ifstatus "$1" 2>/dev/null
+    else
+        timeout -k 1 1 ifstatus "$1" 2>/dev/null
+    fi
 }
 
 # lw_probe_session (R77c): a fresh read at every call, so a new start or a translation that comes or
 # goes is followed at the next round. The native IPv4 is the child wwan_4 (Terms), the translation
-# wwan_6_4 (R76d, D191); the IPv6 is an address on the child wwan_6 or on wwan itself.
+# wwan_6_4 (R76d, D191); an IPv6 address or global prefix can be on wwan_6 or on wwan itself.
 lw_probe_session() {
     LW_P_HAS4=0 LW_P_HAS6=0 LW_P_DEV4='' LW_P_DEV6='' LW_P_XLAT=0
-    _lw_sw=$(_lw_pstatus wwan) || _lw_sw=''
+    _lw_sw=$(_lw_pstatus wwan "${1:-}") || _lw_sw=''
     # the second of this read: the birth of the session is measured on it (R14g)
     _lw_pnow
     LW_P_READ=$_lw_pn
-    _lw_s4=$(_lw_pstatus wwan_4) || _lw_s4=''
-    _lw_s6=$(_lw_pstatus wwan_6) || _lw_s6=''
-    _lw_sx=$(_lw_pstatus wwan_6_4) || _lw_sx=''
+    _lw_s4=$(_lw_pstatus wwan_4 "${1:-}") || _lw_s4=''
+    _lw_s6=$(_lw_pstatus wwan_6 "${1:-}") || _lw_s6=''
+    _lw_sx=$(_lw_pstatus wwan_6_4 "${1:-}") || _lw_sx=''
     _lw_bad=0
     _lw_pcall 4 || _lw_bad=1
     _lw_pcall 6 || _lw_bad=1
@@ -110,7 +116,10 @@ lw_probe_session() {
     fi
     for _lw_sj in "$_lw_s6" "$_lw_sw"; do
         [ "$(_lw_pj "$_lw_sj" '@.up')" = true ] || continue
-        [ -n "$(_lw_pj "$_lw_sj" '@["ipv6-address"][0].address')" ] || continue
+        if [ -z "$(_lw_pj "$_lw_sj" '@["ipv6-address"][0].address')" ]; then
+            printf '%s\n' "$_lw_sj" | jsonfilter -e '@["ipv6-prefix"][*].address' 2>/dev/null |
+                grep -qiE '^[23][0-9a-f]{3}:' || continue
+        fi
         LW_P_DEV6=$(_lw_pdev "$_lw_sj")
         break
     done
@@ -146,6 +155,8 @@ _lw_pfam() {
             watchcat)
                 _lw_pnow
                 _lw_pl=$((_lw_pend - _lw_pn))
+                # R14f: reserve the kill grace within the setup settle window.
+                [ -z "${5:-}" ] || _lw_pl=$((_lw_pl - 1))
                 [ "$_lw_pl" -ge 1 ] || return 1
                 [ "$_lw_pl" -le "$LW_P_WWAIT" ] || _lw_pl=$LW_P_WWAIT
                 _lw_po=$(timeout -k 1 "$_lw_pl" ping "-$2" -I "$3" -s "$LW_P_WSIZE" -c 1 "$_lw_ph" 2>/dev/null) ||
@@ -166,7 +177,8 @@ _lw_pfam() {
     return 1
 }
 
-# lw_probe_round [PROFILE]: R77, R77a, R77c. Only the families the session has are pinged, so an
+# lw_probe_round [PROFILE [DEADLINE]]: R77, R77a, R77c. Watchcat settle may shorten the round.
+# Only the families the session has are pinged, so an
 # IPv4-only session sees no IPv6 address, and one without IPv4 service no IPv4 address. A family of
 # the session whose device is not ready has failed this round and is not pinged.
 lw_probe_round() {
@@ -174,12 +186,15 @@ lw_probe_round() {
     # R14d: the bound counts from before the device lookups
     _lw_pnow
     _lw_pend=$((_lw_pn + LW_P_WBOUND))
-    lw_probe_session
+    if [ -n "${2:-}" ] && [ "$2" -lt "$_lw_pend" ]; then
+        _lw_pend=$2
+    fi
+    lw_probe_session "${2:-}"
     LW_P_OK4='' LW_P_OK6='' LW_P_ONLINE=0 LW_P_MS='' LW_P_T6=''
     _lw_m4='' _lw_m6=''
     if [ "$LW_P_HAS4" = 1 ]; then
         LW_P_OK4=0
-        if [ -n "$LW_P_DEV4" ] && _lw_pfam "$_lw_pp" 4 "$LW_P_DEV4" "$LW_P_HOSTS4"; then
+        if [ -n "$LW_P_DEV4" ] && _lw_pfam "$_lw_pp" 4 "$LW_P_DEV4" "$LW_P_HOSTS4" "${2:-}"; then
             LW_P_OK4=1 _lw_m4=$_lw_pms
         fi
     fi
@@ -187,7 +202,7 @@ lw_probe_round() {
         LW_P_OK6=0
         _lw_pnow
         LW_P_T6=$_lw_pn
-        if [ -n "$LW_P_DEV6" ] && _lw_pfam "$_lw_pp" 6 "$LW_P_DEV6" "$LW_P_HOSTS6"; then
+        if [ -n "$LW_P_DEV6" ] && _lw_pfam "$_lw_pp" 6 "$LW_P_DEV6" "$LW_P_HOSTS6" "${2:-}"; then
             LW_P_OK6=1 _lw_m6=$_lw_pms
         fi
     fi
@@ -197,11 +212,17 @@ lw_probe_round() {
 }
 
 # lw_probe_dns: R18c, Terms "operator DNS". LW_P_DNS is the DNS server of the native IPv4 lease,
-# else one of the session's IPv6 settings (the child wwan_6, or wwan itself); a session without a
+# the static native IPv4 on wwan, or the IPv6 settings on wwan_6 or wwan. A session without a
 # server has none (exit 1).
 lw_probe_dns() {
     lw_probe_session
     LW_P_DNS=$(_lw_pj "$_lw_s4" '@["dns-server"][0]')
+    if [ -z "$_lw_s4" ] && [ "$LW_P_HAS4" = 1 ] && [ "$LW_P_XLAT" = 0 ] &&
+        [ "$(_lw_pj "$_lw_sw" '@.up')" = true ] &&
+        [ -n "$(_lw_pj "$_lw_sw" '@["ipv4-address"][0].address')" ]; then
+        LW_P_DNS=$(printf '%s\n' "$_lw_sw" | jsonfilter -e '@["dns-server"][*]' 2>/dev/null |
+            grep -m 1 -E '^([0-9]{1,3}\.){3}[0-9]{1,3}$')
+    fi
     if [ -z "$LW_P_DNS" ] && [ "$LW_P_HAS6" = 1 ]; then
         for _lw_sj in "$_lw_s6" "$_lw_sw"; do
             LW_P_DNS=$(_lw_pj "$_lw_sj" '@["dns-server"][0]')

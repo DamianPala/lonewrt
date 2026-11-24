@@ -166,7 +166,11 @@ lk_native4() {
 # when one is unknown. A new start of the interface takes about 14 s (D82), well apart from that.
 lk_same() {
     [ "$1" = "$LK_SID" ] || return 1
-    [ -n "$2" ] && [ "$2" != - ] && [ -n "$LK_BIRTH" ] || return 0
+    case $2 in
+        '' | -) return 0 ;;
+        *[!0-9]*) return 1 ;;
+    esac
+    [ -n "$LK_BIRTH" ] || return 0
     _lk_d=$(($2 - LK_BIRTH))
     [ "$_lk_d" -ge -6 ] && [ "$_lk_d" -le 6 ]
 }
@@ -221,11 +225,11 @@ lk_paused() {
 lk_note_restore() {
     lk_cs
     _lk_now=$((LK_CS / 100))
+    lk_run_ok || return 0
     _lk_keep=
     for _lk_t in $(cat "$LK_RUN/restores" 2>/dev/null) "$_lk_now"; do
         [ $((_lk_now - _lk_t)) -gt "$LK_BRAKE_WINDOW" ] || _lk_keep="$_lk_keep $_lk_t"
     done
-    lk_run_ok || return 0
     # shellcheck disable=SC2086  # a list of numbers
     set -- $_lk_keep
     if [ "$#" -ge "$LK_BRAKE_COUNT" ]; then
@@ -516,6 +520,10 @@ lk_pass() {
     # R49a, D177: the session decides, not the configured pdptype. Without a native IPv4 call in
     # netifd's data (an IPv6-only session, or a start that has not published yet) no call at all.
     lk_native4 || return 0
+    lk_cs
+    if lw_negotiation_deadline "$LW_FAMILY_DIR/negotiating" "$((LK_CS / 100))" >/dev/null; then
+        return 0
+    fi
     LK_DEV=$(uci -q get "network.$LK_IFACE.device")
     [ -n "$LK_DEV" ] || LK_DEV=/dev/cdc-wdm0
     [ -e "$LK_DEV" ] || return 0

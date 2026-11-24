@@ -16,7 +16,7 @@ for t in ipv6 ipv4v6 ipv4; do
     lk_netifd up v6
     echo up >"$T/uqmi/session-18"
     lk_lost
-    for i in 1 2 3; do lw-linkwatch once; done
+    for _ in 1 2 3; do lw-linkwatch once; done
     lk_expect_quiet "in an IPv6-only session with pdptype $t"
     lk_healthy
     lw-linkwatch once
@@ -75,4 +75,25 @@ uci commit network
 lk_lost
 lw-linkwatch once
 lw_expect_eq "$(grep -c '^kill' "$EVENTS")" 2 "signals with dhcp 1"
+# netifd can show an IPv4 call before setup has finished reading the modem settings.
+lk_setup
+mkdir -p /var/run/lw-family
+now=$(cut -d. -f1 "$LW_UPTIME_FILE")
+for deadline in "$((now + 15))" 999999999999999999; do
+    echo "$deadline" >/var/run/lw-family/negotiating
+    lw-linkwatch once
+    lk_expect_quiet "while setup is using the modem"
+done
+echo "$now" >/var/run/lw-family/negotiating
+lw-linkwatch once
+lw_expect_eq "$(lk_calls_of --get-data-status)" 1 "poll after the mark expires"
+
+# A bogus mark, including one behind a symlink, does not suppress polling.
+echo junk >/var/run/lw-family/negotiating
+lw-linkwatch once
+mv /var/run/lw-family /tmp/elsewhere
+echo "$((now + 15))" >/tmp/elsewhere/negotiating
+ln -s /tmp/elsewhere /var/run/lw-family
+lw-linkwatch once
+lw_expect_eq "$(lk_calls_of --get-data-status)" 3 "polls with an invalid mark"
 echo ok
