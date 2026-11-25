@@ -123,6 +123,33 @@ lw_debug() {
 # (/var/run is /tmp/run on OpenWrt, root 0755, made at boot), never in the public /tmp.
 LW_FAMILY_DIR=${LW_FAMILY_DIR:-/var/run/lw-family}
 
+# R49j: the reservation of lw-linkwatch's bounded reconnect. One file in the watcher's run directory
+# (R14h) with one number, the uptime second until which wwan-recover leaves its own `ifup wwan` steps
+# alone: written once per reconnect as uptime at writing + LW_V4_RESERVE, never extended. The
+# constant is the bound a reader believes, so a value further ahead than that is no reservation.
+# shellcheck disable=SC2034  # read by lw-linkwatch and wwan-recover
+LW_V4_RESERVE=${LW_LINKWATCH_V4_RESERVE:-60}
+LW_V4_RESERVE_FILE=${LW_LINKWATCH_RUN:-/var/run/lw-linkwatch}/v4reserve
+
+# lw_v4_reserved: exit 0 while a reservation holds: the file is in a directory of root, is no link, is one
+# plain number of at most 9 digits with no leading zero, and the uptime read now (not at the start of
+# the caller's cycle) is below it and not more than LW_V4_RESERVE under it. Anything else, a damaged
+# or linked file, an expired deadline and a far-future one included, is no reservation. A builtin
+# test when there is no file.
+lw_v4_reserved() {
+    [ -e "$LW_V4_RESERVE_FILE" ] || [ -L "$LW_V4_RESERVE_FILE" ] || return 1
+    lw_state_dir_ok "${LW_V4_RESERVE_FILE%/*}" && [ -f "$LW_V4_RESERVE_FILE" ] &&
+        [ ! -L "$LW_V4_RESERVE_FILE" ] || return 1
+    _lw_rd='' _lw_rx='' _lw_rt=''
+    { read -r _lw_rd _lw_rx && ! IFS= read -r _lw_rt && [ -z "$_lw_rt" ]; } <"$LW_V4_RESERVE_FILE" || return 1
+    [ -z "$_lw_rx" ] || return 1
+    case $_lw_rd in '' | 0* | *[!0-9]*) return 1 ;; esac
+    [ "${#_lw_rd}" -le 9 ] || return 1
+    _lw_rn=$(lw_uptime)
+    case $_lw_rn in '' | *[!0-9]*) return 1 ;; esac
+    [ "$_lw_rd" -gt "$_lw_rn" ] && [ $((_lw_rd - _lw_rn)) -le "$LW_V4_RESERVE" ]
+}
+
 # lw_negotiation_deadline FILE NOW: active setup deadline on the uptime clock (R14f, R49a).
 lw_negotiation_deadline() {
     lw_state_dir_ok "${1%/*}" && [ -f "$1" ] && [ ! -L "$1" ] || return 1

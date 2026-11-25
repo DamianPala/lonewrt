@@ -424,7 +424,21 @@ go_passive() {
     snapshot append "limit"
 }
 
+# start_busy WHAT: R49j. lw-linkwatch's bounded reconnect reserves wwan for its own `ifup wwan` in a
+# file of its own (lw_v4_reserved: a fixed deadline, read against the uptime of this moment, so one
+# that is over, damaged or too far ahead holds nothing). While it holds, the three steps of the ladder
+# that end in an `ifup wwan` of their own wait for the next cycle with the ladder's counts as they are.
+# An ordinary start (qmi.sh's mark of a negotiation) holds nothing here. This run's lock was taken at
+# its start and the reconnect reads that lock after it wrote the reservation, so of the two at least
+# one sees the other.
+start_busy() {
+    lw_v4_reserved || return 1
+    say "$1 waits: the reconnect of lw-linkwatch holds wwan (R49j)"
+    return 0
+}
+
 enter_edge() {
+    start_busy "EDGE enter" && return 0
     say "EDGE enter: $1; modem to auto mode for remote access"
     switch_mode edge
     edge_boot=1
@@ -435,6 +449,7 @@ enter_edge() {
 edge_tick() {
     edge_cycles=$((edge_cycles + 1))
     [ "$edge_cycles" -ge "$PROBE_EVERY" ] || return 0
+    start_busy "LTE probe" && return 0
     say "LTE probe: $edge_cycles cycles on EDGE, trying LTE-only mode"
     switch_mode lte
     edge_cycles=0
@@ -451,6 +466,7 @@ probe_step() {
             say "LTE probe failed with class $class; staying in LTE-only mode, no EDGE for $class"
         return 0
     fi
+    start_busy "EDGE back" && return 0
     say "EDGE back: LTE probe failed after $probe cycles"
     switch_mode edge
     probe=''

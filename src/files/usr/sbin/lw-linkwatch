@@ -20,8 +20,9 @@
 # in netifd's data (cid_4, pdh_4), on that client alone, and checks before every modem call, signal
 # and escalation that netifd still shows the same session (R49h). An IPv6 call next to it (cid_6)
 # is never stopped or restarted, and `ifup wwan` never goes out for it unless a family check of
-# this session says IPv6 is silent (R49d, D196, D200). Its state is only read, while IPv4 is
-# healthy, so that the LAN stops advertising an IPv6 call that the modem lost without a netifd
+# this session says IPv6 is silent (R49d, D196, D200), or by the bounded reconnect of a dual-stack
+# session that lost IPv4 while IPv6 works (R49j, D218; `run` only, `once` reports it and does not make it).
+# Its state is only read, while IPv4 is healthy, so that the LAN stops advertising an IPv6 call that the modem lost without a netifd
 # event (R74f, R49i): a confirmed loss goes into a flag of lan6.sh and the LAN is reloaded.
 
 # shellcheck source=src/files/usr/lib/lw/common.sh
@@ -62,6 +63,22 @@ LK_BRAKE_PAUSE=600
 LK_RELEASE_LOOKS=25
 # a call this slow (centiseconds) or one that fails counts in the debug heartbeat (R49g)
 LK_SLOW_CS=200
+# R49j, D218: seconds and counts of the bounded reconnect; tests shorten them through the environment.
+# The loss counts from the first sight of it by the incident (the marker of the escalation keeps the
+# second), the 2nd and 3rd reconnect also wait their gap after the one before, IPv4 working this long
+# without a break ends the chain. A look at IPv4 working more than FRESH seconds after the one before
+# is a break (nobody saw what happened in between). The mark of the reconnect's start (R14f) holds the
+# other restarts back for MARK seconds (ifup takes 20 s at most).
+LK_V4_LOST=${LW_LINKWATCH_V4_LOST:-600}
+LK_V4_GAP2=${LW_LINKWATCH_V4_GAP2:-1800}
+LK_V4_GAP3=${LW_LINKWATCH_V4_GAP3:-3600}
+LK_V4_MAX=${LW_LINKWATCH_V4_MAX:-3}
+LK_V4_HEALTHY=${LW_LINKWATCH_V4_HEALTHY:-3600}
+LK_V4_FRESH=${LW_LINKWATCH_V4_FRESH:-180}
+LK_V4_MARK=${LW_LINKWATCH_V4_MARK:-30}
+# the one line of the chain, `N LAST`, and wwan-recover's lock (R21a: a symlink to "pid:pgid:uptime")
+LK_V4_FILE=$LK_RUN/v4chain
+LK_RECOVER_LOCK=${LW_RECOVER_LOCK:-/tmp/wwan-recover.lock}
 
 LK_PASSES=0
 LK_BAD=0
@@ -80,6 +97,21 @@ LK_STATIC=
 # the IPv6 call (client/handle) of the pass
 LK_REPLAY_AT=
 LK_V6ID0=
+# the second (centiseconds) the loss of an incident was first seen; the family result of the checks
+# is read against it (R49d), and a pass after the escalation reads it before any incident of its own
+LK_T0=0
+# R49j, in this process's memory: the reconnects made and the second of the latest (read from the chain
+# file once, written to it only when the chain changes), the second since which IPv4 has worked without
+# a break and the second of the latest look at it, a chain file that is there and cannot be believed,
+# and `run` or `once` (only the service makes the reconnect)
+LK_V4N=0
+LK_V4LAST=
+LK_V4OK=
+LK_V4OKT=
+LK_V4SID=
+LK_V4BIRTH=
+LK_V4BAD=
+LK_MODE=
 
 # lk_cs: uptime in centiseconds in LK_CS, with shell builtins only (no fork per reading); the clock
 # is the uptime file of common.sh because the router has no RTC (D9) and tests move that file.
@@ -162,7 +194,7 @@ lk_netifd() {
 lk_session() {
     LK_SID=$LK_CID/$LK_PDH
     LK_BIRTH=
-    case $LK_UPT in '' | *[!0-9]*) return 0 ;; esac
+    lk_num "$LK_UPT" || return 0
     lk_cs
     LK_BIRTH=$((LK_CS / 100 - LK_UPT))
 }
@@ -178,10 +210,8 @@ lk_native4() {
 # when one is unknown. A new start of the interface takes about 14 s (D82), well apart from that.
 lk_same() {
     [ "$1" = "$LK_SID" ] || return 1
-    case $2 in
-        '' | -) return 0 ;;
-        *[!0-9]*) return 1 ;;
-    esac
+    case $2 in '' | -) return 0 ;; esac
+    lk_num "$2" || return 1
     [ -n "$LK_BIRTH" ] || return 0
     _lk_d=$(($2 - LK_BIRTH))
     [ "$_lk_d" -ge -6 ] && [ "$_lk_d" -le 6 ]
@@ -240,6 +270,7 @@ lk_note_restore() {
     lk_run_ok || return 0
     _lk_keep=
     for _lk_t in $(cat "$LK_RUN/restores" 2>/dev/null) "$_lk_now"; do
+        lk_num "$_lk_t" || continue
         [ $((_lk_now - _lk_t)) -gt "$LK_BRAKE_WINDOW" ] || _lk_keep="$_lk_keep $_lk_t"
     done
     # shellcheck disable=SC2086  # a list of numbers
@@ -279,9 +310,7 @@ lk_v6_silent() {
     _lk_rs='' _lk_rb='' _lk_rt='' _lk_rr=''
     read -r _lk_rs _lk_rb _lk_rt _lk_rr <"$LK_V6_RESULT" || :
     [ "$_lk_rr" = none ] || return 1
-    case $_lk_rt in '' | *[!0-9]*) return 1 ;; esac
-    # a birth that is not a number would end the shell in lk_same's arithmetic
-    case $_lk_rb in -) ;; '' | *[!0-9]*) return 1 ;; esac
+    lk_num "$_lk_rt" && [ -n "$_lk_rb" ] || return 1
     lk_same "$_lk_rs" "$_lk_rb" || return 1
     [ "$_lk_rt" -ge $((LK_T0 / 100)) ]
 }
@@ -305,12 +334,192 @@ lk_escalate() {
         lk_ended
         return
     fi
-    ! lk_run_ok || echo "$LK_SID0 ${LK_BIRTH0:--}" >"$LK_RUN/escalated"
-    if [ -n "$LK_SIB" ] && ! lk_v6_silent; then
+    # R49j: the marker says `kept` and the second the incident began when it ended with IPv6 kept,
+    # so the passes after it (and after a respawn) feed the bounded reconnect and read the family
+    # result against that second
+    _lk_kept=
+    [ -z "$LK_SIB" ] || lk_v6_silent || _lk_kept=kept
+    ! lk_run_ok || echo "$LK_SID0 ${LK_BIRTH0:--}${_lk_kept:+ $_lk_kept $((LK_T0 / 100))}" >"$LK_RUN/escalated"
+    if [ -n "$_lk_kept" ]; then
         lw_log "$LK_TAG" "data session lost, $1, IPv6 kept, no ifup"
+        lk_v4_chain
         return
     fi
     lw_log "$LK_TAG" "data session lost, $1, ifup $LK_IFACE"
+    timeout 20 ifup "$LK_IFACE"
+}
+
+# lk_num VALUE: a plain decimal number of at most 9 digits, no sign and no leading zero (ash's
+# arithmetic ends the shell on 008 and on a number that is too long)
+lk_num() {
+    case $1 in
+        0) return 0 ;;
+        [1-9]*) ;;
+        *) return 1 ;;
+    esac
+    case $1 in *[!0-9]*) return 1 ;; esac
+    [ "${#1}" -le 9 ]
+}
+
+# lk_v6_complete: R49j, the IPv6 call of the last netifd reading has both its client and its handle (a
+# half call is a state that is not known, R49d keeps it as a sibling but the reconnect needs both)
+lk_v6_complete() {
+    case $LK_CID6 in '' | *[!0-9]*) return 1 ;; esac
+    case ${LK_PDH6#-} in '' | *[!0-9]*) return 1 ;; esac
+}
+
+# lk_v4_load: R49j. The chain that a service before this one left in RAM, read once before the first
+# pass: one line `N LAST` (reconnects made, 1 to 99, and the second of the latest). A file that is
+# there and is no such line, or is not in a directory of root, blocks the reconnect until the next boot
+# and is left as it is, so a damaged state never gives the budget back (R14h: no restart); only a
+# missing file means no chain.
+lk_v4_load() {
+    LK_V4N=0 LK_V4LAST='' LK_V4BAD=''
+    [ -e "$LK_V4_FILE" ] || [ -L "$LK_V4_FILE" ] || return 0
+    LK_V4BAD=1
+    lw_state_dir_ok "$LK_RUN" && [ -f "$LK_V4_FILE" ] && [ ! -L "$LK_V4_FILE" ] || return 0
+    _lk_a='' _lk_b='' _lk_x='' _lk_tail=''
+    { read -r _lk_a _lk_b _lk_x && ! IFS= read -r _lk_tail && [ -z "$_lk_tail" ]; } <"$LK_V4_FILE" || return 0
+    [ -z "$_lk_x" ] || return 0
+    lk_num "$_lk_a" && lk_num "$_lk_b" && [ "$_lk_a" -ge 1 ] && [ "$_lk_a" -le 99 ] || return 0
+    LK_V4N=$_lk_a LK_V4LAST=$_lk_b LK_V4BAD=
+}
+
+# lk_v4_save N LAST: the chain line, in a directory of root (0700, made when missing), written beside
+# the file and renamed. It happens when the chain changes (a reconnect), never on a healthy pass.
+lk_v4_save() {
+    lk_run_ok || return 1
+    if printf '%s %s\n' "$1" "$2" >"$LK_V4_FILE.$$" 2>/dev/null &&
+        mv -fT "$LK_V4_FILE.$$" "$LK_V4_FILE" 2>/dev/null; then
+        return 0
+    fi
+    rm -f "$LK_V4_FILE.$$"
+    return 1
+}
+
+# lk_v4_break: R49j. A loss or a doubt seen by this pass (wwan down, an incident, a start negotiating):
+# the working time of IPv4 starts over. Memory only.
+lk_v4_break() {
+    LK_V4OK=
+}
+
+# lk_v4_ok: R49j. A pass that found the data session connected: with a chain the working time runs, and
+# 60 min of it without a break end the chain (the file goes, the count is zero). Builtins and memory
+# only, so a healthy pass with a chain costs no command; with no chain it does nothing at all.
+lk_v4_ok() {
+    [ "$LK_V4N" != 0 ] || return 0
+    lk_cs
+    _lk_now=$((LK_CS / 100))
+    if [ -z "$LK_V4OK" ] || [ $((_lk_now - LK_V4OKT)) -gt "$LK_V4_FRESH" ] || ! lk_same "$LK_V4SID" "$LK_V4BIRTH"; then
+        # the working time belongs to the session it began in (R49h): another session starts it over,
+        # the count and the gaps of the chain stay
+        LK_V4OK=$_lk_now LK_V4SID=$LK_SID LK_V4BIRTH=${LK_BIRTH:--}
+    elif [ $((_lk_now - LK_V4OK)) -ge "$LK_V4_HEALTHY" ]; then
+        LK_V4OKT=$_lk_now
+        lw_state_dir_ok "$LK_RUN" && rm -f "$LK_V4_FILE" || return 0
+        LK_V4N=0 LK_V4LAST='' LK_V4OK='' LK_V4OKT=''
+        return 0
+    fi
+    LK_V4OKT=$_lk_now
+}
+
+# lk_v4_chain: R49j, D218. The incident ended with IPv6 kept (the marker says `kept`, LK_T0 is the second
+# the loss was first seen): when a reconnect is due it goes out. The pass that ends the incident and
+# every pass after it while the session stays lost come here; until it is due it costs no command.
+lk_v4_chain() {
+    [ -z "$LK_V4BAD" ] || return 0
+    lk_v4_due || return 0
+    lk_v4_go
+}
+
+# lk_v4_due: fewer reconnects than the maximum, IPv4 of this session lost for the minimum time (counted
+# from the incident's first sight, so another session starts its own wait) and the gap since the
+# latest reconnect of the chain over (shared by all sessions of the chain).
+lk_v4_due() {
+    [ "$LK_V4N" -lt "$LK_V4_MAX" ] || return 1
+    lk_cs
+    _lk_now=$((LK_CS / 100))
+    [ $((_lk_now - LK_T0 / 100)) -ge "$LK_V4_LOST" ] || return 1
+    case $LK_V4N in
+        0) return 0 ;;
+        1) _lk_gap=$LK_V4_GAP2 ;;
+        *) _lk_gap=$LK_V4_GAP3 ;;
+    esac
+    [ $((_lk_now - LK_V4LAST)) -ge "$_lk_gap" ]
+}
+
+# lk_v4_recovering: wwan-recover runs (R21a: its lock names a live process)
+lk_v4_recovering() {
+    _lk_rl=$(readlink "$LK_RECOVER_LOCK" 2>/dev/null) || return 1
+    _lk_rp=${_lk_rl%%:*}
+    case $_lk_rp in '' | *[!0-9]*) return 1 ;; esac
+    [ -d "/proc/$_lk_rp" ]
+}
+
+# lk_v4_guards: R14f, R21a. Exit 0 when nothing else is restarting wwan: no start is negotiating and
+# wwan-recover is not running. The brake (R49e) holds before a pass gets here.
+lk_v4_guards() {
+    lk_cs
+    ! lw_negotiation_deadline "$LW_FAMILY_DIR/negotiating" "$((LK_CS / 100))" >/dev/null || return 1
+    ! lk_v4_recovering
+}
+
+# lk_v4_mark NOW: R14f. The start that `ifup wwan` begins is a negotiating one: the mark qmi.sh writes
+# holds watchcat's own restart (it waits for it), the ladder of wwan-recover (R49j) and this watcher's
+# own passes back until it is over or qmi.sh replaces it (the ladder of wwan-recover does not read
+# it, only the reservation of lk_v4_reserve). No mark, no reconnect.
+lk_v4_mark() {
+    _lk_mf=$LW_FAMILY_DIR/negotiating
+    { (umask 077 && mkdir -p "$LW_FAMILY_DIR") && lw_state_dir_ok "$LW_FAMILY_DIR"; } 2>/dev/null || return 1
+    if echo $(($1 + LK_V4_MARK)) >"$_lk_mf.$$" 2>/dev/null &&
+        mv -fT "$_lk_mf.$$" "$_lk_mf" 2>/dev/null; then
+        return 0
+    fi
+    rm -f "$_lk_mf.$$"
+    return 1
+}
+
+# lk_v4_reserve NOW: R49j. The reservation of wwan for this reconnect, for the ladder of wwan-recover:
+# one file with the fixed deadline NOW + LW_V4_RESERVE (common.sh), written once beside and renamed,
+# never extended. No reservation, no reconnect.
+lk_v4_reserve() {
+    lk_run_ok || return 1
+    if echo $(($1 + LW_V4_RESERVE)) >"$LW_V4_RESERVE_FILE.$$" 2>/dev/null &&
+        mv -fT "$LW_V4_RESERVE_FILE.$$" "$LW_V4_RESERVE_FILE" 2>/dev/null; then
+        return 0
+    fi
+    rm -f "$LW_V4_RESERVE_FILE.$$"
+    return 1
+}
+
+# lk_v4_go: a reconnect that is due. Everything is looked at again right before it: nothing else is
+# restarting wwan, this session still has both calls, the IPv6 family result still does not show
+# silence. `once` stops there and says what the service would do. The service then writes the mark of
+# the start (watchcat's restart waits for it) and the reservation (the ladder of wwan-recover waits for
+# it), looks at wwan-recover's lock once more (the ladder takes its lock first and reads the
+# reservation before it runs `ifup`, so of the two at least one sees the other), saves the count and
+# runs the one `ifup wwan`; a step that fails leaves the schedule as it is and the next pass tries again.
+lk_v4_go() {
+    lk_v4_guards || return 0
+    lk_own && lk_v6_complete || return 0
+    ! lk_v6_silent || return 0
+    lk_cs
+    _lk_now=$((LK_CS / 100))
+    _lk_for=$(((_lk_now - LK_T0 / 100) / 60))
+    _lk_nth=$((LK_V4N + 1))
+    if [ "$LK_MODE" != run ]; then
+        lw_log "$LK_TAG" "IPv4 lost for $_lk_for min while IPv6 works, reconnect $_lk_nth of $LK_V4_MAX is due; only the service makes it"
+        return 0
+    fi
+    lk_v4_mark "$_lk_now" || return 0
+    lk_v4_reserve "$_lk_now" || return 0
+    ! lk_v4_recovering || return 0
+    lk_v4_save "$_lk_nth" "$_lk_now" || return 0
+    LK_V4N=$_lk_nth LK_V4LAST=$_lk_now LK_V4OK=
+    lw_log "$LK_TAG" "IPv4 lost for $_lk_for min while IPv6 works, ifup $LK_IFACE, reconnect $_lk_nth of $LK_V4_MAX"
+    if [ "$_lk_nth" -ge "$LK_V4_MAX" ]; then
+        lw_log "$LK_TAG" "IPv4 stays lost, no more reconnects until it works for $((LK_V4_HEALTHY / 60)) min or a restart"
+    fi
     timeout 20 ifup "$LK_IFACE"
 }
 
@@ -478,6 +687,7 @@ lk_step() {
 lk_incident() {
     lk_cs
     LK_T0=$LK_CS
+    lk_v4_break
     LK_KICK_AT=-100
     LK_HANDLE='' LK_NEW='' LK_UNREG='' LK_SIB='' LK_STATIC=''
     [ -z "$LK_CID6$LK_PDH6" ] || LK_SIB=1
@@ -631,29 +841,42 @@ lk_v6_watch() {
 lk_pass() {
     LK_PASSES=$((LK_PASSES + 1))
     lk_replay
-    lk_netifd || return 0
+    # R49j: wwan down (or not readable), no native IPv4 call and a start negotiating are looks at an
+    # interface that is not simply working: the working time of IPv4 starts over
+    lk_netifd || {
+        lk_v4_break
+        return 0
+    }
     # R49a, D177: the session decides, not the configured pdptype. Without a native IPv4 call in
     # netifd's data (an IPv6-only session, or a start that has not published yet) no call at all.
-    lk_native4 || return 0
+    lk_native4 || {
+        lk_v4_break
+        return 0
+    }
     lk_cs
     if lw_negotiation_deadline "$LW_FAMILY_DIR/negotiating" "$((LK_CS / 100))" >/dev/null; then
+        lk_v4_break
         return 0
     fi
     LK_DEV=$(uci -q get "network.$LK_IFACE.device")
     [ -n "$LK_DEV" ] || LK_DEV=/dev/cdc-wdm0
-    [ -e "$LK_DEV" ] || return 0
-    ! lk_paused || return 0
+    if [ ! -e "$LK_DEV" ] || lk_paused; then
+        lk_v4_break
+        return 0
+    fi
     # R49h: this is the session of the pass, and of the incident that may follow
     LK_ENDED='' LK_SID0=$LK_SID LK_BIRTH0=$LK_BIRTH
     lk_uqmi data 3000 --set-client-id "wds,$LK_CID" --get-data-status
     case $LK_OUT in
         '"connected"')
             lk_healthy
+            lk_v4_ok
             lk_v6_watch
             return 0
             ;;
-        '"disconnected"') ;;
+        '"disconnected"') lk_v4_break ;;
         *)
+            lk_v4_break
             lk_dbg "data status: no usable answer '$(lk_ascii "$LK_OUT")', no action"
             return 0
             ;;
@@ -665,11 +888,16 @@ lk_pass() {
         return 0
     fi
     if [ -f "$LK_RUN/escalated" ] && lw_state_dir_ok "$LK_RUN"; then
-        _lk_ms='' _lk_mb=''
-        read -r _lk_ms _lk_mb <"$LK_RUN/escalated" || :
+        _lk_ms='' _lk_mb='' _lk_mk='' _lk_mt=''
+        read -r _lk_ms _lk_mb _lk_mk _lk_mt <"$LK_RUN/escalated" || :
         if lk_same "$_lk_ms" "$_lk_mb"; then
             [ -n "$LK_NOTED" ] || lk_dbg "session still lost, no action after the escalation until it is healthy"
             LK_NOTED=1
+            # R49j: an older marker has two words, and its incident does not feed the reconnect
+            if [ "$_lk_mk" = kept ] && lk_num "$_lk_mt"; then
+                LK_T0=$((_lk_mt * 100))
+                lk_v4_chain
+            fi
             return 0
         fi
         # R49h: the marker is that of an earlier session (a start gave the same numbers again, or
@@ -716,6 +944,8 @@ case ${1:-} in
 esac
 # the level is read here once, in this shell, so lw_debug never forks uci (R29c)
 lw_is_debug || :
+LK_MODE=$1
+lk_v4_load
 case $1 in
     run) lk_run ;;
     once) lk_pass ;;

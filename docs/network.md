@@ -53,6 +53,15 @@ A custom setting identical to the old defaults is treated as a default.
 The unchanged stock ESP and UDP port 500 rules are limited to IPv4.
 The image replaces odhcpd's init script. Running `apk upgrade odhcpd-ipv6only` restores the stock script, leaving the managed LAN IPv4-only until the next image flash.
 
+## IPv4 lost while IPv6 works
+
+With both an IPv4 and an IPv6 call, the router keeps the working IPv6 when IPv4 stops and cannot be restored in place.
+After IPv4 has been lost for 10 minutes it reconnects once (`ifup wwan`, an outage of about 15 seconds).
+While these dual-stack losses continue, the second reconnect waits at least 30 minutes after the first and the third waits at least 60 minutes after the second. A loss in a new session also has to last 10 minutes.
+The count starts again after IPv4 has worked for 60 minutes without a break, or after a reboot. The chain can cause up to three short outages. If a reconnect brings up IPv6 alone, CLAT handles IPv4 as usual.
+The session watcher service (`lw-linkwatch run`) makes the reconnects and keeps the count (in its memory, and in `/var/run/lw-linkwatch/v4chain`, in RAM, so a restart of the service keeps it). It counts only a loss it sees itself: the IPv4 call is gone from the modem and could not be restored in place. A manual `lw-linkwatch once` only says in the log that a reconnect is due. If the modem reports the IPv4 call up while IPv4 pings get no answer, nothing restarts the interface (it stays for a person). While `wwan-recover` is running, the reconnect waits; and for the minute around a reconnect the EDGE steps of `wwan-recover` (the switch to EDGE, the LTE probe and the way back) wait for the next cycle (a reservation file, 60 s at most). Ordinary starts delay nothing. Each reconnect writes one syslog line with the reconnect number, and the third one a line that no more follow.
+A session with IPv4 alone, IPv6 alone (with or without CLAT) or IPv6 lost while IPv4 works is not touched by this (SPEC R49j).
+
 ## Tailscale
 
 With `TS_ENABLED='1'` the image gives Tailscale these rules:
