@@ -1,6 +1,6 @@
 #!/bin/sh
 # Test stand-in for /usr/sbin/lw-tailscale, the service of a tailscale image, as slice B's contract
-# (lonewrt-notes/tailscale/slices/contract-BC.md) defines it: status, link, due, mark. State lives in
+# (workshop note `tailscale/slices/contract-BC`) defines it: status, link, due, mark. State lives in
 # $LW_TEST/ts, written by the tests (tests/notify/helpers.inc ts_state, ts_due):
 #   state         the state file the real service keeps; missing = the service does not run
 #   due           events due, one per line; `mark` takes the first match out and appends it to marked
