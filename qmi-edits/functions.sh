@@ -7,6 +7,10 @@ LW_QMI_RECORD=/etc/lw-wwan-ptype
 # R73h: the negotiation deadline in seconds, and the time kept back at its end for the cleanup
 LW_NEG_SECONDS=60
 LW_RESERVE=8
+# R73q: after this many Auto starts in a row with every step refused, Auto runs only step 1 (no
+# profile write, no rollback) except for one full start per LW_CAP_SECONDS. The tests override both.
+LW_CAP_STARTS=${LW_CAP_STARTS:-3}
+LW_CAP_SECONDS=${LW_CAP_SECONDS:-3600}
 
 # lw_dbg MESSAGE: one syslog line at daemon.debug, only at the debug level (R29c, R77a). Never the
 # login, never a raw profile (R73o).
@@ -91,6 +95,133 @@ lw_unmark() {
 	return "${1:-0}"
 }
 
+# R73q, D217: the modem's flash is not ours to wear, so a SIM or APN that refuses every call must not
+# keep rewriting profile 1 at every start netifd retries. The count of such starts lives in RAM beside
+# the negotiation mark (R14h, same directory check): "COUNT SECOND APN V6APN CORRECTED", the second
+# being that of the last full start on the uptime clock, the two APNs the ones the calls of the start
+# use ("-" for none), CORRECTED 1 when a reduced start has already written profile 1 since that full
+# start. A directory that fails the check, or a file that does not parse, is no state: every start is
+# a full one, as before.
+LW_CAP_FILE=$LW_FAMILY_DIR/refused
+
+# lw_notice TEXT: one syslog line at daemon.notice; never the login or a profile
+lw_notice() {
+	logger -t lw-qmi -p daemon.notice "$*"
+}
+
+# lw_mode_get: the families this start asks for, in lw_mode: ipv4v6 (Auto), ipv6 or ipv4 (R73)
+lw_mode_get() {
+	lw_mode=$(echo "$pdptype" | awk '{print tolower($0)}')
+	case $lw_mode in
+	ipv4v6 | ipv6) ;;
+	*) lw_mode=ipv4 ;;
+	esac
+}
+
+# lw_cap_key: the APN of each family as the calls of this start use it (R73q), in lw_k_4 and lw_k_6
+lw_cap_key() {
+	lw_k_4=${apn:--}
+	lw_k_6=${v6apn:-$apn}
+	lw_k_6=${lw_k_6:--}
+}
+
+# lw_cap_read: the state in lw_c_n, lw_c_t, lw_c_4, lw_c_6 and lw_c_w; fails (and gives 0) without a
+# usable one
+lw_cap_read() {
+	local n t a b w extra
+	lw_c_n=0 lw_c_t=0 lw_c_4=- lw_c_6=- lw_c_w=0
+	[ -f "$LW_CAP_FILE" ] && [ ! -L "$LW_CAP_FILE" ] && lw_dir_ok "$LW_FAMILY_DIR" || return 1
+	{ read -r n t a b w && ! IFS= read -r extra && [ -z "$extra" ]; } <"$LW_CAP_FILE" || return 1
+	case $n in '' | *[!0-9]* | 0* | ??????????*) return 1 ;; esac
+	case $t in '' | *[!0-9]* | 0?*) return 1 ;; esac
+	case $a:$b in :* | *: | *[[:space:]]*) return 1 ;; esac
+	case $w in 0 | 1) ;; *) return 1 ;; esac
+	lw_now
+	[ "$t" -le "$lw_t" ] 2>/dev/null || return 1
+	lw_c_n=$n lw_c_t=$t lw_c_4=$a lw_c_6=$b lw_c_w=$w
+}
+
+# lw_cap_put COUNT SECOND CORRECTED: the state for the APNs of this start, written beside and renamed;
+# a failure to write must leave the reduced start's correction unspent
+lw_cap_put() {
+	lw_dir_ok "$LW_FAMILY_DIR" || return 1
+	lw_cap_key
+	{ printf '%s %s %s %s %s\n' "$1" "$2" "$lw_k_4" "$lw_k_6" "$3" >"$LW_CAP_FILE.$$" &&
+		mv -f "$LW_CAP_FILE.$$" "$LW_CAP_FILE"; } 2>/dev/null && return 0
+	rm -f "$LW_CAP_FILE.$$" 2>/dev/null
+	return 1
+}
+
+# lw_cap_reset WHY: no count any more; one line when the cap was engaged. Costs no process while there
+# is no state, which is every healthy start.
+lw_cap_reset() {
+	[ -f "$LW_CAP_FILE" ] || return 0
+	lw_now
+	lw_cap_read || :
+	if [ "$lw_c_n" -ge "$LW_CAP_STARTS" ]; then
+		lw_notice "write cap off: $1, profile 1 of the modem is written again as at any start"
+	fi
+	if lw_dir_ok "$LW_FAMILY_DIR"; then
+		rm -f "$LW_CAP_FILE" "$LW_CAP_FILE.$$" 2>/dev/null || :
+	fi
+	lw_c_n=0
+}
+
+# lw_cap_plan: what an Auto start does under the cap, in lw_plan, with nothing written: 0 the whole
+# order, 1 step 1 only, 2 the whole order as the hourly start, 3 the whole order after a change of
+# either APN (the count is out of date)
+lw_cap_plan() {
+	lw_plan=0
+	lw_c_n=0
+	lw_cap_read || return 0
+	lw_cap_key
+	if [ "$lw_c_4" != "$lw_k_4" ] || [ "$lw_c_6" != "$lw_k_6" ]; then
+		lw_plan=3
+		return 0
+	fi
+	[ "$lw_c_n" -ge "$LW_CAP_STARTS" ] || return 0
+	lw_plan=1
+	[ $((lw_t - lw_c_t)) -lt "$LW_CAP_SECONDS" ] || lw_plan=2
+}
+
+# lw_cap_begin: an Auto start acts on the plan lw_repair took before registration (one decision per
+# start, also when the hour passes during the registration). In lw_reduced, 1: this start runs step 1
+# only. The hourly start does not spend its slot here but at its end (lw_cap_end), so a
+# start that fails before its calls ran (no client, a kill) does not push the next check an hour off.
+lw_cap_begin() {
+	[ -n "${lw_plan:-}" ] || lw_cap_plan
+	case $lw_plan in
+	3) lw_cap_reset "the APN changed" ;;
+	2) lw_notice "write cap: full start after $((LW_CAP_SECONDS / 60)) min, every step is tried again" ;;
+	1)
+		lw_reduced=1
+		lw_dbg "write cap: this start runs step 1 only, profile 1 is not rewritten"
+		;;
+	esac
+}
+
+# lw_cap_end: after a failed start. Only a full Auto start that sent all four calls of the order (a
+# failed family selection, a missing client or the deadline stop one before it is sent) spends the
+# hourly slot, and it counts when also every call was refused by the network on a verified profile
+# (lw_clean: no unverified write, no repair write unverified, no timeout or other fault). Any other
+# start leaves the count as it is. A full start also gives the reduced starts their one correction of
+# profile 1 back. The count and the second come from the plan of lw_repair (lw_cap_plan).
+lw_cap_end() {
+	local counted=0
+	[ "$lw_forced" = 0 ] && [ "$lw_reduced" = 0 ] || return 0
+	[ "$lw_sent" = 4 ] || return 0
+	if [ "$lw_clean" = 1 ] && [ "${lw_rep_bad:-0}" = 0 ]; then
+		counted=1
+		lw_c_n=$((lw_c_n + 1))
+	elif [ "$lw_c_n" -lt "$LW_CAP_STARTS" ]; then
+		return 0
+	fi
+	lw_now
+	lw_cap_put "$lw_c_n" "$lw_t" 0 || return 0
+	[ "$counted" = 0 ] || [ "$lw_c_n" != "$LW_CAP_STARTS" ] ||
+		lw_notice "write cap: $LW_CAP_STARTS starts in a row with every call refused, profile 1 of the modem is no longer rewritten; the other steps are tried again after $((LW_CAP_SECONDS / 60)) min"
+}
+
 # lw_say TEXT: the stock handler's line when forced (the log is the one of the stock handler), else
 # kept for the end of a start whose steps all failed
 lw_say() {
@@ -168,6 +299,16 @@ lw_profile_set() {
 		lw_dbg "profile 1 holds the APN and $t, no write"
 		return 0
 	fi
+	# R73q: between two full starts a reduced start corrects profile 1 once, whatever the reason for
+	# the write (a type that is not IPV4V6, an unreadable profile, a write that did not stick); the
+	# calls of step 1 go on with the profile as it is
+	if [ "$lw_reduced" = 1 ]; then
+		if [ "$lw_c_w" = 1 ]; then
+			lw_dbg "write cap: profile 1 is not written again before the next full start"
+			return 0
+		fi
+		lw_cap_put "$lw_c_n" "$lw_c_t" 1 || return 0
+	fi
 	# the record shows a change of the type before the first one of this start (R73n)
 	if [ "$lw_marked" != 1 ] && [ "$lw_p0_ok" = 1 ] && [ "$t" != "$lw_p0_type" ]; then
 		lw_marked=1
@@ -220,7 +361,7 @@ lw_reconcile() {
 # released.
 lw_call() {
 	local f=$1 cid pdh st rc=0 a_apn a_prof ac
-	lw_qa 1000 --get-client-id wds
+	lw_qa 1000 --get-client-id wds || lw_clean=0
 	cid=$lw_out
 	if ! [ "$cid" -eq "$cid" ] 2>/dev/null; then
 		lw_say "Unable to obtain client ID"
@@ -230,6 +371,7 @@ lw_call() {
 	lw_got=$((lw_got + 1))
 	if ! lw_qa 1000 --set-client-id wds,"$cid" --set-ip-family "ipv$f"; then
 		lw_say "Unable to set the IP family"
+		lw_clean=0
 		lw_release "$cid"
 		return 1
 	fi
@@ -237,6 +379,9 @@ lw_call() {
 	4) a_apn=$apn a_prof=$profile ac=$lw_ac4 ;;
 	6) a_apn=${v6apn:-$apn} a_prof=${v6profile:-$profile} ac=$lw_ac6 ;;
 	esac
+	# R73q: a call counts as sent only when lw_qa has room for it
+	lw_left
+	[ "$lw_s" -le "$LW_RESERVE" ] || lw_sent=$((lw_sent + 1))
 	lw_qa 5000 --set-client-id wds,"$cid" --start-network \
 		${a_apn:+--apn $a_apn} \
 		${a_prof:+--profile $a_prof} \
@@ -251,9 +396,12 @@ lw_call() {
 		# may have reached the modem (R73e)
 		case $pdh in '' | *'timed out'*) rc=124 ;; esac
 		if [ "$rc" = 124 ] || [ "$rc" = 137 ]; then
+			lw_clean=0
 			lw_reconcile "$cid" "$f"
 		else
-			lw_release "$cid"
+			# R73q: only uqmi's explicit refusal with its error status can count.
+			[ "$rc" = 1 ] && [ "$pdh" = '"Call failed"' ] || lw_clean=0
+			lw_release "$cid" || lw_clean=0
 		fi
 		return 1
 	fi
@@ -265,6 +413,7 @@ lw_call() {
 	st=$lw_out
 	if [ "$st" != '"connected"' ]; then
 		lw_say "No data link!"
+		lw_clean=0
 		lw_q 1000 --set-client-id wds,"$cid" --stop-network "$pdh" || :
 		lw_release "$cid"
 		return 1
@@ -289,10 +438,12 @@ lw_more() {
 lw_step() {
 	local t=$1 f r
 	lw_profile_set "$t"
+	[ "$lw_ver" = 1 ] || lw_clean=0
 	for f in $2; do
 		lw_left
 		if [ "$lw_s" -le "$LW_RESERVE" ] || [ "$lw_nocid" -ge 2 ]; then
 			lw_dbg "step $t stops before the IPv$f call: no time or no client left"
+			lw_clean=0
 			break
 		fi
 		r=0
@@ -309,17 +460,20 @@ lw_step() {
 
 # lw_rollback: after a start whose steps all failed, profile 1 gets back the type it had before the
 # start, only when this start changed it; the APN of the start stays; the write is checked (R73n).
-# What cannot be done in time is left to the next start, which writes the profile itself.
+# What cannot be done in time is left to the next start, which writes the profile itself. A start
+# under the write cap (R73q) rolls nothing back.
 lw_rollback() {
-	[ "$lw_wrote" = 1 ] && [ "$lw_p0_ok" = 1 ] || return 0
+	[ "$lw_reduced" = 0 ] && [ "$lw_wrote" = 1 ] && [ "$lw_p0_ok" = 1 ] || return 0
 	case $lw_p0_type in ipv4 | ipv6 | ipv4v6) ;; *) return 0 ;; esac
 	if lw_profile_read c && [ "$lw_p_type" = "$lw_p0_type" ]; then
 		return 0
 	fi
 	if lw_q 1000 --modify-profile "3gpp,1" --apn "$apn" --pdp-type "$lw_p0_type" &&
 		lw_profile_read c && [ "$lw_p_type" = "$lw_p0_type" ]; then
+		lw_p_is "$lw_p0_type" || lw_clean=0
 		lw_dbg "profile 1 is back at $lw_p0_type"
 	else
+		lw_clean=0
 		lw_dbg "profile 1 rollback to $lw_p0_type not confirmed, left for the next start"
 	fi
 }
@@ -337,12 +491,9 @@ lw_negotiate() {
 	lw_mark
 	lw_debug='' lw_why='' lw_ok_type=''
 	lw_nocid=0 lw_got=0 lw_wrote=0 lw_marked=0 lw_ver=1
+	lw_clean=1 lw_sent=0 lw_reduced=0
 	lw_p_ok=0 lw_p0_ok=0 lw_p0_type=
-	mode=$(echo "$pdptype" | awk '{print tolower($0)}')
-	case $mode in
-	ipv4v6 | ipv6) ;;
-	*) mode=ipv4 ;;
-	esac
+	mode=$lw_mode
 	lw_forced=1
 	[ "$mode" != ipv4v6 ] || lw_forced=0
 	# R73g: the IPv4 call has autoconnect unless the option is 0, the IPv6 call only when it is 1
@@ -354,11 +505,12 @@ lw_negotiate() {
 		lw_p_ok=1 lw_p0_ok=1 lw_p0_type=$lw_p_type
 	fi
 	lw_dbg "negotiation starts, mode $mode, profile 1 $([ "$lw_p_ok" = 1 ] && echo readable || echo unreadable)"
+	[ "$lw_forced" = 1 ] || lw_cap_begin
 	case $mode in
 	ipv4v6)
 		lw_step ipv4v6 "4 6"
-		if lw_more; then lw_step ipv4 4; fi
-		if lw_more; then lw_step ipv6 6; fi
+		if [ "$lw_reduced" = 0 ] && lw_more; then lw_step ipv4 4; fi
+		if [ "$lw_reduced" = 0 ] && lw_more; then lw_step ipv6 6; fi
 		;;
 	ipv6) lw_step ipv6 6 ;;
 	*) lw_step ipv4 4 ;;
@@ -366,9 +518,11 @@ lw_negotiate() {
 	if [ -n "$pdh_4$pdh_6" ]; then
 		# the type this start came up with, also IPV4V6 on a SIM that gave only IPv4 (R73n)
 		lw_rec_put ok "$lw_ok_type"
+		lw_cap_reset "a call came up"
 		return 0
 	fi
 	lw_rollback
+	lw_cap_end
 	lw_unmark
 	[ "$lw_forced" = 1 ] || [ -z "$lw_why" ] || echo "$lw_why"
 	if [ "$lw_nocid" -gt 0 ] && [ "$lw_got" = 0 ]; then
@@ -384,8 +538,16 @@ lw_negotiate() {
 # is no reason alone, and a first start or a new SIM takes the normal path (R73n, D203)
 lw_repair() {
 	local sim
+	lw_rep_bad=0
+	lw_mode_get
+	lw_plan=0
+	[ "$lw_mode" != ipv4v6 ] || lw_cap_plan
 	lw_rec_read && [ "$lw_rk" = change ] || return 0
 	[ "$lw_ra" = "${apn:--}" ] || return 0
+	# R73q: a reduced Auto start writes no more than the one correction of step 1, which sets the
+	# type its calls need; a repair back to the recorded type would undo it at every start. Full
+	# starts (the hourly one too) and forced starts repair as before.
+	[ "$lw_plan" != 1 ] || return 0
 	lw_now
 	lw_dl=$((lw_t + 10))
 	lw_sim
@@ -395,8 +557,14 @@ lw_repair() {
 	lw_profile_read c || return 0
 	[ "$lw_p_type" != "$lw_rt" ] || return 0
 	case $lw_rt in ipv4 | ipv6 | ipv4v6) ;; *) return 0 ;; esac
-	lw_q 1000 --modify-profile "3gpp,1" --apn "$apn" --pdp-type "$lw_rt" || :
-	lw_dbg "profile 1 put back to $lw_rt before registration"
+	# R73q: the write is checked, and one that is not confirmed keeps the start from counting
+	if lw_q 1000 --modify-profile "3gpp,1" --apn "$apn" --pdp-type "$lw_rt" &&
+		lw_profile_read c && lw_p_is "$lw_rt"; then
+		lw_dbg "profile 1 put back to $lw_rt before registration"
+	else
+		lw_rep_bad=1
+		lw_dbg "profile 1 put back to $lw_rt before registration, not confirmed"
+	fi
 }
 
 # lw_v6_lit ADDR: ADDR is an IPv6 address in text form that the settings of a session can use: hex

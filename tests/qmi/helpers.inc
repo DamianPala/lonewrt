@@ -25,7 +25,7 @@ qmi_fixture() {
     printf '8900000000000000001\n' >"$QMI_STATE/iccid"
     : >"$LW_TEST/syslog"
     : >"$LW_TEST/syslog.prio"
-    rm -f /etc/lw-wwan-ptype
+    rm -f /etc/lw-wwan-ptype /var/run/lw-family/refused
     qmi_profile internet.example ipv4
     touch "$NOTIFY" "$DYNAMIC" "$QMI_STATE/uqmi.jsonl"
 }
