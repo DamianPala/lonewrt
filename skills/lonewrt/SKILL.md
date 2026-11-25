@@ -222,10 +222,13 @@ ssh root@<router> 'sysupgrade -n /tmp/fw.bin </dev/null >/tmp/lw-flash.log 2>&1 
 
 `-n` drops the old settings: the image sets everything from the profile at its first start.
 
-**Tailscale kept (R59b, D164).** When the new image has Tailscale (`grep -q '^tailscale ' image/<name>.manifest`, or the artifact's manifest) and the router is in an account (`ssh root@<router> test -s /etc/tailscale/tailscaled.state` exits 0), keep only the Tailscale state, so the router stays in the account with its name, tag and key expiry; everything else still comes from the profile:
+**Tailscale kept (R59b, D164).** When the new image has Tailscale (`grep -q '^tailscale ' image/<name>.manifest`, or the artifact's manifest) and the router is in an account (`ssh root@<router> test -s /etc/tailscale/tailscaled.state` exits 0), keep only the Tailscale state and the root shell history (R32a, when the file exists), so the router stays in the account with its name, tag and key expiry; everything else still comes from the profile:
 
 ```sh
-ssh root@<router> 'tar -czf /tmp/lw-ts-keep.tar.gz -C / etc/tailscale && tar -tzf /tmp/lw-ts-keep.tar.gz | grep -qx etc/tailscale/tailscaled.state && echo kept'
+ssh root@<router> 'archive=$(mktemp /tmp/lw-ts-keep.XXXXXX) &&
+    tar -czf "$archive" -C / etc/tailscale $(test -f /root/.ash_history && echo root/.ash_history) &&
+    mv -f "$archive" /tmp/lw-ts-keep.tar.gz &&
+    tar -tzf /tmp/lw-ts-keep.tar.gz | grep -qx etc/tailscale/tailscaled.state && echo kept'
 ssh root@<router> 'sysupgrade -f /tmp/lw-ts-keep.tar.gz /tmp/fw.bin </dev/null >/tmp/lw-flash.log 2>&1 &'
 ```
 

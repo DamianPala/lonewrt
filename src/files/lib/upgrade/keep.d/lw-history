@@ -1,0 +1,2 @@
+# R32a, D219: the history survives a flash that keeps settings; sysupgrade reads this list.
+/root/.ash_history

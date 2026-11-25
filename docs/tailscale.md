@@ -48,10 +48,12 @@ If the router then comes up with a number at the end of its name (`lte-router-1`
 A router added again with a link has no tag, so give it the tag again, see [Limit what the router can reach](#limit-what-the-router-can-reach).
 After a flash that keeps settings, a router that is not added yet sends no link by itself, so send `/tailscale`.
 
-To update the image and keep the router in your account, with everything else set from the profile, keep only the Tailscale files. The agent skill does this by itself; by hand, after copying the image to `/tmp/fw.bin` as for any flash:
+To update the image and keep the router in your account, preserve the Tailscale files and, if present, the root shell history. The rest of the settings come from the profile. The agent skill does this automatically. To update by hand, first copy the image to `/tmp/fw.bin` and then run the following commands.
 
 ```sh
-ssh root@<router> 'tar -czf /tmp/lw-ts-keep.tar.gz -C / etc/tailscale'
+ssh root@<router> 'archive=$(mktemp /tmp/lw-ts-keep.XXXXXX) &&
+    tar -czf "$archive" -C / etc/tailscale $(test -f /root/.ash_history && echo root/.ash_history) &&
+    mv -f "$archive" /tmp/lw-ts-keep.tar.gz' &&
 ssh root@<router> 'sysupgrade -f /tmp/lw-ts-keep.tar.gz /tmp/fw.bin'
 ```
 
