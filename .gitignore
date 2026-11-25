@@ -10,3 +10,8 @@ __pycache__/
 /tests/build/private-values.txt
 # a parent .gitignore with a bare `config` rule would hide the image's /etc/config overlay
 !/src/files/etc/config/
+.claude/settings.local.json
+CLAUDE.local.md
+AGENTS.override.md
+.env*
+!.env.example
