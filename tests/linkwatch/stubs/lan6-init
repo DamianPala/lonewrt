@@ -1,0 +1,10 @@
+#!/bin/sh
+# Test stand-in for /etc/init.d/odhcpd that lw-linkwatch reloads (LW_LINKWATCH_LAN6): records the call
+# in $LW_TEST/lan6-calls, with what the flag of the watcher held at that moment, so a test sees the
+# order of the two (R74f). It fails (exit 1) while $LW_TEST/lan6-fail exists, and hangs while
+# $LW_TEST/lan6-hang exists, as a reload that does not finish would.
+T=${LW_TEST:-/lwtest}
+flag=$(cat "${LW_LINKWATCH_RUN:-/var/run/lw-linkwatch}/v6lost" 2>/dev/null || echo none)
+echo "$* flag=$flag" >>"$T/lan6-calls"
+[ ! -e "$T/lan6-hang" ] || exec /bin/sleep 3600
+[ ! -e "$T/lan6-fail" ] || exit 1

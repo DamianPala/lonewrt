@@ -16,17 +16,38 @@ start_service() {
     # R74b: without the RAM copy odhcpd reads the persistent config, which is quiet on lan.
     set -- /usr/sbin/odhcpd
     if lan6_configure boot; then set -- "$@" -c "$LW_LAN6_CONFIG"; fi
-    procd_open_instance
+    procd_open_instance instance1
     procd_set_param command "$@"
     procd_set_param respawn
     procd_close_instance
 }
 
+# lan6_signal: SIGHUP to odhcpd through procd, with the result of the request. The procd_send_signal
+# wrapper of procd.sh ends in json_cleanup and so hides the status of `ubus call` (R74c, R74f).
+lan6_signal() {
+    # R74c: a broadcast to a registered service with no instances can report success.
+    ubus call service signal '{"name":"odhcpd","instance":"instance1","signal":1}' >/dev/null
+}
+
 reload_service() {
     local change
+    # R74c: rc.common holds procd_lock across both signals, including the withdrawal wait. The exit
+    # status says whether the change reached odhcpd; what did not stays pending (lan6.sh) and the
+    # next reload, from a hotplug event, the watcher or wwan-recover, signals again.
     change=$(lan6_configure event) || return 1
-    [ "$1" != lan6 ] || [ "$change" = reload ] || return 0
-    procd_send_signal odhcpd
+    [ "$change" != unknown ] || return 1
+    [ "$1" != lan6 ] || [ -n "$change" ] || return 0
+    lan6_signal || return 1
+    lan6_applied || return 1
+    [ "$change" = withdraw ] || return 0
+    # odhcpd sends the first advertisement after a reload 1 s later (measured); a second signal
+    # that came sooner replaces the configuration before it, and the final advertisement (server
+    # switched off, no prefix option) would go out in its place
+    sleep "${LW_LAN6_WITHDRAW_WAIT:-3}"
+    change=$(lan6_configure event) || return 1
+    [ "$change" != unknown ] || return 1
+    [ -z "$change" ] || lan6_signal || return 1
+    lan6_applied
 }
 
 service_triggers() {

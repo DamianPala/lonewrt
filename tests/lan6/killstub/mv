@@ -1,0 +1,11 @@
+#!/bin/sh
+# Kill the lan6_configure subshell on either side of the rename (R74c).
+if [ -e "$LW_TEST/kill-before-mv" ]; then
+    rm -f "$LW_TEST/kill-before-mv"
+    kill -9 "$PPID"
+    exit 1
+fi
+/bin/mv "$@" || exit
+[ -e "$LW_TEST/kill-after-mv" ] || exit 0
+rm -f "$LW_TEST/kill-after-mv"
+kill -9 "$PPID"

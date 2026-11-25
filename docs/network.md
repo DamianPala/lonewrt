@@ -40,6 +40,11 @@ A clean flash or button reset defaults to Auto (PDP type `ipv4v6`).
 With an IPv6 call, OpenWrt assigns a /64 to `lan` from the delegated prefix or extends the session's routed /64 when the operator gives no delegation.
 The router advertises that prefix and its DNS address once the LAN has the assignment and the cellular route is usable.
 On a managed LAN, DHCPv6 stays disabled and the IPv6 prefixes come from the cellular session.
+When the router detects IPv6 loss, odhcpd first tries to advertise the old prefix with a preferred lifetime of at most 60 seconds.
+It then switches advertisements off with a final router lifetime of zero and resumes advertising when the session has a usable prefix again.
+While IPv4 is healthy and netifd still lists an IPv6 call, `lw-linkwatch` reads that call's status once per pass and checks the call settings to confirm a new disconnect.
+The withdrawal starts at a hotplug event of `wwan`, its children or `lan`, a change of the DHCP, network or system config, or the watcher's confirmed loss; an unreadable netifd status keeps the LAN as it is.
+A change that did not reach odhcpd stays pending in RAM and the watcher or `wwan-recover` repeats it, so a withdrawal cut off between its two advertisements still completes.
 
 A flash that keeps settings preserves the saved PDP type, including the `ipv4` that 0.6.x and older images set.
 The stock 0.6.1 LAN settings (`ip6assign=60` with RA and DHCPv6 disabled) move to the conditional /64 policy.

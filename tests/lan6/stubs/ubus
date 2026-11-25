@@ -1,0 +1,33 @@
+#!/bin/sh
+# The signal request of the init script (R74c). An empty service succeeds only for a broadcast.
+# It is logged to $LW_TEST/procd as "signal odhcpd". $LW_TEST/ubus-script, when it exists, holds one
+# word per request, taken from its top: `ok` or `fail` (logged as "signal odhcpd failed", exit 4 as
+# ubus has for a missing object); when it is empty the requests succeed.
+case $* in
+    '-S call network.interface.wwan_6 status')
+        [ ! -e "$LW_TEST/child-unreadable" ] || exit 7
+        [ -e "$LW_TEST/wwan_6.json" ] || exit 4
+        exec cat "$LW_TEST/wwan_6.json"
+        ;;
+    'call service signal {"name":"odhcpd","signal":1}')
+        [ ! -e "$LW_TEST/procd-no-instance" ] || exit 0
+        ;;
+    'call service signal {"name":"odhcpd","instance":"instance1","signal":1}')
+        if [ -e "$LW_TEST/procd-no-instance" ]; then
+            echo 'signal odhcpd failed' >>"$LW_TEST/procd"
+            exit 4
+        fi
+        ;;
+    *) exit 2 ;;
+esac
+next=ok
+if [ -s "$LW_TEST/ubus-script" ]; then
+    read -r next <"$LW_TEST/ubus-script"
+    sed 1d "$LW_TEST/ubus-script" >"$LW_TEST/ubus-script.new"
+    mv "$LW_TEST/ubus-script.new" "$LW_TEST/ubus-script"
+fi
+if [ "$next" = fail ]; then
+    echo 'signal odhcpd failed' >>"$LW_TEST/procd"
+    exit 4
+fi
+echo 'signal odhcpd' >>"$LW_TEST/procd"

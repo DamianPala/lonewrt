@@ -19,8 +19,10 @@
 # The session decides, not network.wwan.pdptype (D177): the watcher works on the native IPv4 call
 # in netifd's data (cid_4, pdh_4), on that client alone, and checks before every modem call, signal
 # and escalation that netifd still shows the same session (R49h). An IPv6 call next to it (cid_6)
-# is never polled, stopped or restarted, and `ifup wwan` never goes out for it unless a family
-# check of this session says IPv6 is silent (R49d, D196, D200).
+# is never stopped or restarted, and `ifup wwan` never goes out for it unless a family check of
+# this session says IPv6 is silent (R49d, D196, D200). Its state is only read, while IPv4 is
+# healthy, so that the LAN stops advertising an IPv6 call that the modem lost without a netifd
+# event (R74f, R49i): a confirmed loss goes into a flag of lan6.sh and the LAN is reloaded.
 
 # shellcheck source=src/files/usr/lib/lw/common.sh
 . /usr/lib/lw/common.sh
@@ -42,6 +44,12 @@ LK_AT_LIMIT=${LW_LINKWATCH_AT_LIMIT:-5}
 LK_UQMI_LIMIT=${LW_LINKWATCH_UQMI_LIMIT:-}
 # R49d: the latest family check of the IPv6 call (lk_v6_silent); tests put theirs here
 LK_V6_RESULT=${LW_LINKWATCH_V6_RESULT:-$LW_FAMILY_DIR/ipv6}
+# R74f: odhcpd's init script, which reloads the LAN's IPv6 from the session and the flag; tests put theirs here
+LK_LAN6=${LW_LINKWATCH_LAN6:-/etc/init.d/odhcpd}
+# R74f: the mark of lan6.sh that a change of the LAN did not reach odhcpd (a builtin test per pass),
+# and the seconds between two attempts to finish it
+LK_LAN6_PENDING=${LW_LINKWATCH_LAN6_PENDING:-/var/run/lw-odhcpd/pending}
+LK_REPLAY=${LW_LINKWATCH_REPLAY:-30}
 # R49d: seconds from the first sight of the loss to `ifup wwan`
 LK_GIVE_UP=20
 # R49c: a renew that did not bring the address is repeated after this many seconds
@@ -68,6 +76,10 @@ LK_SID0=
 LK_BIRTH0=
 LK_SIB=
 LK_STATIC=
+# R74f: when the last attempt to finish an unfinished reload of the LAN was made (centiseconds), and
+# the IPv6 call (client/handle) of the pass
+LK_REPLAY_AT=
+LK_V6ID0=
 
 # lk_cs: uptime in centiseconds in LK_CS, with shell builtins only (no fork per reading); the clock
 # is the uptime file of common.sh because the router has no RTC (D9) and tests move that file.
@@ -512,10 +524,113 @@ lk_healthy() {
     LK_NOTED=
 }
 
+# lk_v6_reload: R74f. The LAN follows the flag: the init script reads the session and the flag again
+# and withdraws or advertises the prefix (R74c). It takes a few seconds on a loss (two reloads of
+# odhcpd with a wait between), and its exit status says that the change reached odhcpd. The marker
+# v6reload stays until a reload succeeded, so a watcher killed after the flag changed does it on its
+# next pass, and a failed reload is tried again (lk_replay).
+lk_v6_reload() {
+    timeout -k 2 20 "$LK_LAN6" reload lan6 >/dev/null 2>&1 || return 1
+    rm -f "$LK_RUN/v6reload"
+}
+
+# lk_replay: R74f, R74c. Finishes what an earlier reload left undone, with no new event of the
+# session: the LAN's own pending mark (a signal that did not reach odhcpd, a withdrawal cut off
+# between its two advertisements) or the watcher's marker. Two builtin tests per pass when there is
+# nothing to do, which is every pass of an IPv4-only router; an attempt at most every LK_REPLAY seconds.
+lk_replay() {
+    [ -e "$LK_LAN6_PENDING" ] || { [ -e "$LK_RUN/v6reload" ] && lw_state_dir_ok "$LK_RUN"; } || return 0
+    lk_cs
+    [ -z "$LK_REPLAY_AT" ] || [ $((LK_CS - LK_REPLAY_AT)) -ge $((LK_REPLAY * 100)) ] || return 0
+    LK_REPLAY_AT=$LK_CS
+    lk_v6_reload || lk_dbg "the reload of the LAN did not finish, tried again later"
+}
+
+# lk_v6_own: R49a, R49h for the IPv6 call. Before each request for it and before the flag changes:
+# netifd still shows wwan up with the IPv4 call of the pass and the same IPv6 call (client and
+# handle), the modem device still exists, and no start is negotiating. A new reading of netifd,
+# so a change that came while the last request was answered is seen.
+lk_v6_own() {
+    lk_own || return 1
+    [ -e "$LK_DEV" ] || return 1
+    if [ "$LK_CID6/$LK_PDH6" != "$LK_V6ID0" ]; then
+        LK_ENDED=3
+        return 1
+    fi
+    lk_cs
+    if lw_negotiation_deadline "$LW_FAMILY_DIR/negotiating" "$((LK_CS / 100))" >/dev/null; then
+        LK_ENDED=3
+        return 1
+    fi
+}
+
+# lk_v6_flag: R74f. The flag of this session in LK_V6L: lost, or empty (none, or one of another call
+# or of an earlier start of the interface, which is removed). Needs LK_CID6 and LK_PDH6.
+lk_v6_flag() {
+    LK_V6L=
+    [ -f "$LK_RUN/v6lost" ] && lw_state_dir_ok "$LK_RUN" || return 0
+    _lk_fk='' _lk_fb=''
+    read -r _lk_fk _lk_fb _ <"$LK_RUN/v6lost" || :
+    if [ "$_lk_fk" = "$LK_CID6/$LK_PDH6" ] && lk_same "$LK_SID" "$_lk_fb"; then
+        LK_V6L=lost
+    else
+        rm -f "$LK_RUN/v6lost"
+    fi
+}
+
+# lk_v6_set lost|back: R74f. The marker first, then the flag, then the reload: whatever stops the
+# watcher in between, the next pass finishes it.
+lk_v6_set() {
+    lk_run_ok || return 1
+    : >"$LK_RUN/v6reload" || return 1
+    if [ "$1" = lost ]; then
+        printf '%s %s\n' "$LK_CID6/$LK_PDH6" "${LK_BIRTH:--}" >"$LK_RUN/v6lost.new" &&
+            mv -f "$LK_RUN/v6lost.new" "$LK_RUN/v6lost" || return 1
+    else
+        rm -f "$LK_RUN/v6lost" || return 1
+    fi
+    lk_v6_reload || :
+}
+
+# lk_v6_watch: R74f, R49i. With the IPv4 call healthy and an IPv6 call in netifd's data, read the
+# state of that call (one uqmi call, on its own client, -t and timeout like every other). A
+# disconnect that the settings confirm (`"Out of call"`, as for IPv4 in R49b) switches the LAN's IPv6
+# off once and logs one line; the call connected again switches it back on. Any other answer, an
+# empty one, a failing call or a timeout changes nothing. IPv4 is never touched (R49i), and a session
+# without an IPv6 call makes no call at all (two builtin tests). The session is checked again before
+# each request and before the flag changes (lk_v6_own).
+lk_v6_watch() {
+    case $LK_CID6 in '' | *[!0-9]*) return 0 ;; esac
+    case ${LK_PDH6#-} in '' | *[!0-9]*) return 0 ;; esac
+    LK_V6ID0=$LK_CID6/$LK_PDH6
+    lk_v6_own || return 0
+    lk_v6_flag
+    lk_uqmi data6 3000 --set-client-id "wds,$LK_CID6" --get-data-status || :
+    case $LK_OUT in
+        '"connected"')
+            [ "$LK_V6L" = lost ] || return 0
+            lk_v6_own || return 0
+            lk_v6_set back || return 0
+            lw_log "$LK_TAG" "IPv6 call connected again, the LAN follows the session again"
+            ;;
+        '"disconnected"')
+            [ "$LK_V6L" != lost ] || return 0
+            lk_v6_own || return 0
+            lk_uqmi settings6 3000 --set-client-id "wds,$LK_CID6" --get-current-settings || :
+            [ "$LK_OUT" = '"Out of call"' ] || return 0
+            lk_v6_own || return 0
+            lk_v6_set lost || return 0
+            lw_log "$LK_TAG" "IPv6 call lost, IPv4 kept, the LAN stops advertising IPv6"
+            ;;
+        *) lk_dbg "IPv6 data status: no usable answer '$(lk_ascii "$LK_OUT")', no action" ;;
+    esac
+}
+
 # lk_pass: R49, R49a, R49b. Only the exact answers of the measured failure start an incident;
 # anything else, a hung or confused uqmi included, changes nothing.
 lk_pass() {
     LK_PASSES=$((LK_PASSES + 1))
+    lk_replay
     lk_netifd || return 0
     # R49a, D177: the session decides, not the configured pdptype. Without a native IPv4 call in
     # netifd's data (an IPv6-only session, or a start that has not published yet) no call at all.
@@ -534,6 +649,7 @@ lk_pass() {
     case $LK_OUT in
         '"connected"')
             lk_healthy
+            lk_v6_watch
             return 0
             ;;
         '"disconnected"') ;;

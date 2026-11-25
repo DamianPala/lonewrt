@@ -567,4 +567,10 @@ if { [ "${LW_P_V6ONLY:-0}" = 1 ] || [ -e "${LW_CLAT_DIR:-/var/run/lw-clat}/clean
         timeout -k 2 60 "${LW_CLAT_CHECK:-/usr/sbin/lw-clat-check}" tick >/dev/null 2>&1 || :
     fi
 fi
+# R74f, R74c: a change of the LAN's IPv6 that did not reach odhcpd stays marked by lan6.sh (a
+# builtin test; nothing runs on a router that never had one). The watcher finishes it first; this
+# run does it when the watcher could not, last, so it changes no decision and no timing of the ladder.
+if [ -e "${LW_LAN6_PENDING:-/var/run/lw-odhcpd/pending}" ] && ! dry; then
+    timeout -k 2 30 "${LW_LAN6_INIT:-/etc/init.d/odhcpd}" reload lan6 >/dev/null 2>&1 || :
+fi
 exit 0
