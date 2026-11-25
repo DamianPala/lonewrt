@@ -1,20 +1,33 @@
 # Changelog
 
-## [Unreleased]
+## [0.7.0] - 2026-11-25
 
 ### Added
 
+- Auto IP mode: a clean flash or a button reset asks the operator for IPv4 and IPv6 together and falls back to one of them when the operator refuses the other, so the link comes up on whatever the SIM is given. To force one version, set **PDP Type** of **WWAN** in LuCI to IPv4 or IPv6. An upgrade with Keep settings keeps the saved PDP type, so a router from 0.6.x stays on IPv4 until you choose Auto
+- IPv4 over an IPv6-only operator: the router and the devices on the LAN reach IPv4 sites and services through the operator's translation (464xlat with DNS64 and NAT64), and the router repairs it by itself when the operator moves its translator or renumbers the link. Not yet tried on a live IPv6-only operator
+- IPv6 on the LAN while the mobile connection has working IPv6; the router stops offering it when the connection loses IPv6, also when the modem drops the IPv6 call silently. On an IPv4-only connection the LAN stays IPv4 only
+- The link checks, the watchdog, the bot's status, the SMS status reply, the speed test and Tailscale's internet check test each IP version the connection has: a connection that answers on either one counts as online, and live IPv6 traffic keeps it from being restarted when the test pings go unanswered. When one version stops answering while the other works, the router logs it once and keeps the connection. The watchdog no longer restarts a connection that is still being set up
+- When a connection with both versions loses IPv4 while IPv6 keeps working and the in-place repair fails, the router reconnects by itself after 10 minutes, then 30 and 60 minutes later, at most 3 times; each reconnect briefly interrupts IPv6. After that it waits for you or for an hour of working IPv4
 - `tmux`, `mtr-nojson` and `vim` in every image, for working on the router over SSH: `tmux` keeps a session alive when the link drops, `mtr` shows the packet loss of each hop on the LTE path, and `vim` is a fuller editor than the router's `vi`. They take about 0.7 MB of the router's free space
+- The root shell keeps its command history across reboots and flashes, also the flash of the agent skill that keeps Tailscale signed in, and has a coloured prompt, the usual aliases and a terminal fallback, so `vim` and `less` work from newer terminals such as Ghostty
+- An interrupted change of the connection type is repaired at the next start, and while the SIM refuses every connection the router stops rewriting the modem's stored profile: after 3 refused starts in a row it asks without writing, with a full try once an hour, which spares the modem's flash
+- The signal log records the packet loss and delay of IPv6 too on a connection with both versions
 
 ### Changed
 
 - The packages `ppp`, `ppp-mod-pppoe`, `kmod-ppp`, `kmod-pppoe` and `kmod-pppox` are no longer in the image: the LTE link is QMI and does not use PPP. A router with a PPP or PPPoE connection set up by hand would need them installed again
-- The size limit of a Tailscale image's root is 15 500 000 bytes instead of 15 000 000, so the tools above fit. The free space with Tailscale on is about 4 MiB (about 3.9 MiB at the limit; estimates until measured on a router)
+- An upgrade with Keep settings moves the stock LAN settings of 0.6.0 to share IPv6 when the connection has it, adds the IPv6 parts of the mobile interface to the firewall's wan zone and limits the stock IPsec firewall rules to IPv4. Custom LAN settings and edited or deleted rules stay as you left them
+- The size limit of a Tailscale image's root is 15 500 000 bytes instead of 15 000 000, so the tools above fit. The free space with Tailscale on is about 4.3 MiB, measured on a router
 
 ### Fixed
 
-- The router's log no longer fills with IPv6 warnings: the LAN is IPv4 only, like the LTE link. The router sent no IPv6 default route, so its address service logged a warning about 230 times a day, over a quarter of the persistent log. The image no longer turns on router advertisements, DHCPv6 or a local IPv6 prefix on the LAN. Devices on the LAN keep their IPv4 addresses and internet access
+- On an IPv4-only connection the router's log no longer fills with IPv6 warnings: the router sent no IPv6 default route, so its address service logged a warning about 230 times a day, over a quarter of the persistent log. The LAN now offers no IPv6 until the connection has it
 - The data counters of `/devices` no longer start with a warning about a capped buffer and no longer lose a stretch of traffic when many connections open at once: the image raises the kernel's receive buffer limit (`net.core.rmem_max`) to the 524288 bytes the counters ask for
+- The bot's "connection is back" message also comes when only the IPv6 part, or only the translated IPv4 part, of the mobile interface comes up
+- The in-place repair of a dropped IPv4 call now uses the interface's profile and autoconnect settings and leaves a static IPv4 address alone
+- After an upgrade with Keep settings that brings back an old watchdog file, the watchdog still gets its check per IP version
+- The state files that decide about restarts live in a root-only directory, so no other local user can influence a restart
 
 ## [0.6.0] - 2026-11-23
 
@@ -131,6 +144,7 @@ First public release, experimental: it runs on one router in daily use.
 - Listed phone numbers can text `status` or `reboot` to the SIM, at most 5 restarts a day
 - Optional WireGuard tunnel for remote access, LuCI apps for the modem, the LTE bands and SMS, persistent logs, and the release version in `/etc/lw-build`
 
+[0.7.0]: https://github.com/DamianPala/lonewrt/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/DamianPala/lonewrt/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/DamianPala/lonewrt/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/DamianPala/lonewrt/compare/v0.4.0...v0.5.0
