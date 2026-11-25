@@ -117,6 +117,21 @@ for kind in v4 legacy dual v6 v6clat v6child; do
     esac
     lw_expect_eq "$(cat "$C/check-calls")" "$want" "wwan-recover on a $kind session"
 done
+# R76c: the translation is up and the IPv4 probe of this very run got no answer through it: the check is
+# told (`tick v4fail`), with no ping of its own; the IPv6 answer keeps the session online. A translation
+# that is not up (no IPv4 probe was made) and one that answers get the plain tick
+for kind in v6clat v6child; do
+    : >"$C/check-calls"
+    lw_session "$kind"
+    lw_reach_none
+    lw_reach 6 wwan0
+    runs 1
+    case $kind in
+        v6clat) want='tick v4fail' ;;
+        *) want=tick ;;
+    esac
+    lw_expect_eq "$(cat "$C/check-calls")" "$want" "wwan-recover on a $kind session, IPv4 does not answer"
+done
 # the mark of a cleanup that the hotplug could not do (R76c): the run calls the check for it in any
 # session, and only then (the test is a builtin, an IPv4-only router starts nothing)
 for kind in v4 dual ended; do

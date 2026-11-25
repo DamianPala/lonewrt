@@ -13,7 +13,7 @@ GOOD6='{"up":true,"l3_device":"wwan0","data":{"cid_6":"18","pdh_6":"3203210530"}
 # unreadable_cases LABEL ACTION: ACTION runs for each kind of unreadable state of wwan
 unreadable() {
     case $1 in
-        missing) rm -f "$W" ;;
+        'unreachable ubus') : >"${W%.json}.unreadable" ;;
         empty) : >"$W" ;;
         'not json') echo 'Command failed: Not found' >"$W" ;;
         'no up') echo '{"l3_device":"wwan0","data":{"cid_6":"18","pdh_6":"3203210530"}}' >"$W" ;;
@@ -35,7 +35,7 @@ unreadable() {
         hang) : >"$T/ifstatus/hang" ;;
     esac
 }
-KINDS='missing|empty|not json|no up|no data|empty data|half IPv4|half IPv4 pdh|no IPv6 handles|junk handles|up is a string "false"|up is a string "true"|up is 0|handle -|handle 1-2|handle -5|IPv4 handles junk|hang'
+KINDS='unreachable ubus|empty|not json|no up|no data|empty data|half IPv4|half IPv4 pdh|no IPv6 handles|junk handles|up is a string "false"|up is a string "true"|up is 0|handle -|handle 1-2|handle -5|IPv4 handles junk|hang'
 
 # a translation that works stays through every unreadable state, by tick and by the events
 OLDIFS=$IFS
@@ -57,7 +57,7 @@ for k in $KINDS; do
     fi
     lw_expect_eq "$(cl_adds)" 1 "wwan $k: interfaces added"
     lw_expect_eq "$(cl_clat_lines)" 1 "wwan $k: log lines ($(cat "$LOG"))"
-    rm -f "$T/ifstatus/hang"
+    rm -f "$T/ifstatus/hang" "${W%.json}.unreadable"
     # the state is readable again and IPv6-only: still the same translation, nothing remade
     printf '%s\n' "$GOOD6" >"$W"
     cl_tick
@@ -68,7 +68,7 @@ done
 IFS=$OLDIFS
 
 # an unreadable state starts nothing either: no question, no interface, no line
-for k in missing 'not json' 'no data' 'half IPv4' 'up is a string "true"' 'handle -' 'IPv4 handles junk'; do
+for k in 'unreachable ubus' 'not json' 'no data' 'half IPv4' 'up is a string "true"' 'handle -' 'IPv4 handles junk'; do
     cl_setup
     unreadable "$k"
     cl_tick

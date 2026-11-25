@@ -126,10 +126,11 @@ cl_clean_state "a check that finds the mark when it is done"
 # a `down` whose reading of the session stays unclear leaves the mark for the ladder, which runs the check
 cl_setup
 cl_tick
-rm -f "$T/ifstatus/wwan.json"
+: >"$T/ifstatus/wwan.unreadable"
 cl_down
 [ -e "$CL_DIR/cleanup" ] || lw_fail "unclear after the naps: no mark for the ladder"
 lw_expect_eq "$(cl_live)" 1 "unclear after the naps: nothing removed"
+rm -f "$T/ifstatus/wwan.unreadable"
 printf '{"up":false}\n' >"$T/ifstatus/wwan.json"
 cl_tick
 cl_clean_state "the ladder's run after an unclear down"

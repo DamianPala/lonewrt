@@ -557,8 +557,14 @@ save_run
 # IPv4-only one among them) runs nothing and reads nothing for it; the check returns on its own at a
 # busy lock, and is cut at 60 s. The same run also does the cleanup of a session's end that the
 # hotplug could not do (a `down` that found the lock busy leaves a mark; a builtin test, so a router
-# with no translation starts nothing).
+# with no translation starts nothing). A translation that is up and got no answer to the IPv4 probe of
+# this very run (LW_P_XLAT 1, LW_P_OK4 0: data the run has, no ping of its own) says so, and the check
+# asks the DNS64 again (R76c).
 if { [ "${LW_P_V6ONLY:-0}" = 1 ] || [ -e "${LW_CLAT_DIR:-/var/run/lw-clat}/cleanup" ]; } && ! dry; then
-    timeout -k 2 60 "${LW_CLAT_CHECK:-/usr/sbin/lw-clat-check}" tick >/dev/null 2>&1 || :
+    if [ "${LW_P_XLAT:-0}" = 1 ] && [ "${LW_P_OK4:-}" = 0 ]; then
+        timeout -k 2 60 "${LW_CLAT_CHECK:-/usr/sbin/lw-clat-check}" tick v4fail >/dev/null 2>&1 || :
+    else
+        timeout -k 2 60 "${LW_CLAT_CHECK:-/usr/sbin/lw-clat-check}" tick >/dev/null 2>&1 || :
+    fi
 fi
 exit 0

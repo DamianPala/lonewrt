@@ -24,10 +24,19 @@ all of this, as little as the scenario needs:
 The scenario switches the behind-the-NAT64 parts with files in the --ctl directory: `dns64`, `nat64`
 and `ra`, containing `off` (anything else, or no file, is on); `dns64` can also hold `drop`: the
 questions for ipv4only.arpa and the names get no answer at all. A file `prefix` with a /96 replaces
-the NAT64 prefix from then on (a new session with another operator prefix). Every packet it acted on is one line
-of the --log file, for the scenario to read: `ns TARGET`, `rs`, `ra`, `echo6 DST SRC`, `echo4
-A.B.C.D SRC`, `tcp4 A.B.C.D PORT SRC`, `tcp6 ADDRESS PORT SRC`, `dns TYPE NAME answered|empty|off|dropped`,
-`nat64-off A.B.C.D`.
+the NAT64 prefix from then on (a new session with another operator prefix). A file `ra-prefix` with a /64
+renumbers the link: the advertisements carry the new /64 and the old ones with lifetime 0 from then on.
+Packets to the NAT64 from an address outside the advertised /64 are dropped (an operator filters the
+source of what leaves its network); the file `ingress` containing `off` switches that off. A file `mtu` is
+the link's MTU (default 1500): an IPv6 packet longer than that is dropped in both directions, and with
+`ptb` containing `on` an upstream one is answered with Packet Too Big (a PLAT that does not is the black
+hole). A file `udp-forward` with `PORT HOST HOSTPORT` makes the NAT64 pass UDP datagrams to PORT of any
+IPv4 address on to the host's UDP socket HOST:HOSTPORT (a WireGuard peer behind a user-mode network with a
+UDP port forward) and bring the answers back from that address. Every packet it acted on is one line
+of the --log file, for the scenario to read: `ns TARGET`, `rs`, `ra`, `ra-prefix PREFIX`, `echo6 DST SRC`,
+`echo4 A.B.C.D SRC`, `tcp4 A.B.C.D PORT SRC`, `tcp6 ADDRESS PORT SRC`, `udp4 A.B.C.D PORT SRC` (a new
+flow), `dns TYPE NAME answered|empty|off|dropped`, `nat64-off A.B.C.D`, `nat64-gone A.B.C.D` (to a prefix the NAT64 had before `prefix` changed), `ingress-drop DST SRC`,
+`toobig up|down LENGTH`.
 """
 
 import argparse
@@ -85,9 +94,13 @@ class Peer:
         if self.ra_prefix.prefixlen != 64:
             sys.exit("nat64-peer: the router advertisement prefix must be a /64")
         self.pfx0 = self.parse_prefix(args.prefix)
+        self.last_pfx = None
+        self.gone = set()  # /96s that were the NAT64's and are not any more
         self.ctl = args.ctl
         self.log = open(args.log, "a", encoding="ascii", buffering=1)
         self.tcp = {}
+        self.flows = {}  # flow key -> {"sock", "mac"}: UDP to the host's sockets (udp-forward)
+        self.withdrawn = []  # /64s the link had before, advertised with lifetime 0 from then on
         self.next_ra = 0.0
 
     @staticmethod
@@ -101,9 +114,16 @@ class Peer:
     def pfx(self):
         try:
             with open(os.path.join(self.ctl, "prefix"), encoding="ascii") as f:
-                return self.parse_prefix(f.read())
+                cur = self.parse_prefix(f.read())
         except (OSError, ValueError):
-            return self.pfx0
+            cur = self.pfx0
+        if cur != self.last_pfx:
+            # the operator moved its NAT64: nothing answers on the old prefix any more
+            if self.last_pfx is not None:
+                self.gone.add(self.last_pfx)
+            self.gone.discard(cur)
+            self.last_pfx = cur
+        return cur
 
     def on(self, name):
         try:
@@ -122,11 +142,49 @@ class Peer:
     def note(self, text):
         self.log.write(text + "\n")
 
+    def ctl_text(self, name):
+        try:
+            with open(os.path.join(self.ctl, name), encoding="ascii") as f:
+                return f.read().strip()
+        except OSError:
+            return ""
+
+    def renumber(self):
+        """The file ra-prefix names a /64 other than the link's: the link is renumbered."""
+        text = self.ctl_text("ra-prefix")
+        if not text:
+            return False
+        try:
+            net = ipaddress.IPv6Network(text)
+        except ValueError:
+            return False
+        if net.prefixlen != 64 or net == self.ra_prefix:
+            return False
+        self.withdrawn.append(self.ra_prefix)
+        self.ra_prefix = net
+        self.note(f"ra-prefix {net}")
+        return True
+
+    def src_ok(self, src):
+        """What an operator lets through its NAT64: a source address of the link's own /64."""
+        if self.ctl_text("ingress") == "off" or ipaddress.IPv6Address(src) in self.ra_prefix:
+            return True
+        return False
+
+    def too_big(self, length):
+        try:
+            return length > int(self.ctl_text("mtu") or 1500)
+        except ValueError:
+            return False
+
     def embed(self, v4):
         return ipaddress.IPv6Address((self.pfx << 32) | int(ipaddress.IPv4Address(v4))).packed
 
     def behind_nat64(self, dst):
         return int.from_bytes(dst, "big") >> 32 == self.pfx
+
+    def behind_old(self, dst):
+        return self.pfx is not None and int.from_bytes(dst, "big") >> 32 in self.gone
 
     def v4_of(self, dst):
         return str(ipaddress.IPv4Address(int.from_bytes(dst[12:], "big")))
@@ -137,15 +195,27 @@ class Peer:
         if not self.on("ra"):
             return []
         pio = struct.pack("!BBBBIII", 3, 4, 64, 0x40, 86400, 14400, 0) + self.ra_prefix.network_address.packed
+        for old in self.withdrawn:
+            pio += struct.pack("!BBBBIII", 3, 4, 64, 0x40, 0, 0, 0) + old.network_address.packed
         rdnss = struct.pack("!BBHI", 25, 3, 0, 3600) + self.dns
         body = icmp6(134, struct.pack("!BBHII", 64, 0, 1800, 0, 0) + b"\x01\x01" + self.mac + pio + rdnss)
         body = with_checksum(self.ll, dst, 58, body, 2)
         self.note("ra")
         return [ipv6_frame(dst_mac, self.mac, self.ll, dst, 58, body, 255)]
 
+    def send(self, conn, frames):
+        """Frames to the router; one longer than the link's MTU does not get there."""
+        for out in frames:
+            if self.too_big(len(out) - 14):
+                self.note(f"toobig down {len(out) - 14}")
+                continue
+            conn.sendall(struct.pack("!I", len(out)) + out)
+
     def tick(self):
         """The unsolicited advertisements, every RA_EVERY seconds."""
         now = time.monotonic()
+        if self.renumber():
+            self.next_ra = 0.0
         if now < self.next_ra:
             return []
         self.next_ra = now + RA_EVERY
@@ -158,10 +228,20 @@ class Peer:
         proto = frame[20]
         src, dst = frame[22:38], frame[38:54]
         body = frame[54 : 54 + struct.unpack("!H", frame[18:20])[0]]
+        if self.too_big(40 + len(body)):
+            self.note(f"toobig up {40 + len(body)}")
+            if self.ctl_text("ptb") == "on" and not (proto == 58 and body[:1] == b"\x02"):
+                return [self.packet_too_big(src_mac, src, frame[14:])]
+            return []
+        if self.behind_old(dst):
+            self.note(f"nat64-gone {self.v4_of(dst)}")
+            return []
         if proto == 58 and body:
             return self.icmp(src_mac, src, dst, body)
         if proto == 17 and len(body) >= 8 and dst == self.dns:
             return self.udp(src_mac, src, dst, body)
+        if proto == 17 and len(body) >= 8 and self.behind_nat64(dst):
+            return self.udp_forward(src_mac, src, dst, body)
         if proto == 6 and len(body) >= 20 and dst[0] != 0xFF:
             return self.tcp_segment(src_mac, src, dst, body)
         return []
@@ -184,6 +264,9 @@ class Peer:
                 return []
             if self.behind_nat64(dst):
                 v4 = self.v4_of(dst)
+                if not self.src_ok(src):
+                    self.note(f"ingress-drop {ipaddress.IPv6Address(dst)} {ipaddress.IPv6Address(src)}")
+                    return []
                 if not self.on("nat64"):
                     self.note(f"nat64-off {v4}")
                     return []
@@ -209,6 +292,9 @@ class Peer:
             self.tcp.pop(key, None)
             return []
         if flags & TCP_SYN and not flags & TCP_ACK:
+            if nat and not self.src_ok(src):
+                self.note(f"ingress-drop {ipaddress.IPv6Address(dst)} {ipaddress.IPv6Address(src)}")
+                return []
             if nat and not self.on("nat64"):
                 self.note(f"nat64-off {self.v4_of(dst)}")
                 return []
@@ -236,6 +322,57 @@ class Peer:
         if flags & TCP_FIN and st["fin"]:
             self.tcp.pop(key, None)
         return out
+
+    def packet_too_big(self, src_mac, src, packet):
+        """ICMPv6 Packet Too Big for a packet that did not fit the link, from the peer's own address."""
+        mtu = int(self.ctl_text("mtu") or 1500)
+        rest = struct.pack("!I", mtu) + packet[:1232]
+        body = with_checksum(self.gw, src, 58, icmp6(2, rest), 2)
+        return ipv6_frame(src_mac, self.mac, self.gw, src, 58, body, 255)
+
+    def udp_forward(self, src_mac, src, dst, body):
+        """UDP to PORT of any IPv4 address behind the NAT64, passed on to a socket of the host."""
+        want = self.ctl_text("udp-forward").split()
+        sport, dport, length = struct.unpack("!HHH", body[:6])
+        if len(want) != 3 or dport != int(want[0]):
+            return []
+        if not self.src_ok(src):
+            self.note(f"ingress-drop {ipaddress.IPv6Address(dst)} {ipaddress.IPv6Address(src)}")
+            return []
+        if not self.on("nat64"):
+            self.note(f"nat64-off {self.v4_of(dst)}")
+            return []
+        key = (src, sport, dst, dport)
+        flow = self.flows.get(key)
+        if flow is None:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.bind(("127.0.0.1", 0))
+            flow = {"sock": sock, "mac": src_mac}
+            self.flows[key] = flow
+            self.note(f"udp4 {self.v4_of(dst)} {dport} {ipaddress.IPv6Address(src)}")
+        flow["sock"].sendto(body[8:length], (want[1], int(want[2])))
+        return []
+
+    def flow_sockets(self):
+        return [f["sock"] for f in self.flows.values()]
+
+    def flow_replies(self, readable):
+        """Datagrams the host's sockets got back, as UDP from the IPv4 address the flow went to."""
+        out = []
+        for (src, sport, dst, dport), flow in self.flows.items():
+            if flow["sock"] not in readable:
+                continue
+            data = flow["sock"].recv(65535)
+            self.note(f"udp4-back {self.v4_of(dst)} {len(data)}")
+            udp = struct.pack("!HHHH", dport, sport, 8 + len(data), 0) + data
+            udp = with_checksum(dst, src, 17, udp, 6)
+            out.append(ipv6_frame(flow["mac"], self.mac, dst, src, 17, udp))
+        return out
+
+    def drop_flows(self):
+        for flow in self.flows.values():
+            flow["sock"].close()
+        self.flows = {}
 
     def udp(self, src_mac, src, dst, body):
         sport, dport, length = struct.unpack("!HHH", body[:6])
@@ -317,19 +454,19 @@ def main():
         buf = b""
         try:
             while True:
-                for out in peer.tick():
-                    conn.sendall(struct.pack("!I", len(out)) + out)
-                r, _, _ = select.select([conn], [], [], 1.0)
-                if not r:
+                peer.send(conn, peer.tick())
+                r, _, _ = select.select([conn] + peer.flow_sockets(), [], [], 1.0)
+                peer.send(conn, peer.flow_replies(r))
+                if conn not in r:
                     continue
                 frame, buf = read_frame(conn, buf)
                 if frame is None:
                     break
-                for out in peer.handle(frame):
-                    conn.sendall(struct.pack("!I", len(out)) + out)
+                peer.send(conn, peer.handle(frame))
         except OSError:
             pass
         finally:
+            peer.drop_flows()
             conn.close()
 
 

@@ -44,7 +44,12 @@ pidfile=${LW_CLAT_PIDFILE:?}
 anycast=${LW_CLAT_ANYCAST:?}
 nat46=${LW_CLAT_NAT46:?}
 fix=$T/ifstatus/wwan_6_4.json
-addr=2001:db8:1::464
+# the helper takes the address of the translation from the /64 of the child's own address
+child=$(jsonfilter -i "$T/ifstatus/wwan_6.json" -e '@["ipv6-address"][0].address' 2>/dev/null)
+addr=${child%"${child##*:}"}464
+[ -n "$child" ] || addr=2001:db8:1::464
+# a helper that picks an address of its own, whatever the child has
+[ ! -f "$C/clat-addr" ] || addr=$(cat "$C/clat-addr")
 
 case "$obj $method" in
     'network add_dynamic')

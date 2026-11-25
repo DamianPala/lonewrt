@@ -8,10 +8,17 @@
 #                        IPv6-only session comes up, or the parent wwan while a translation exists
 #                        (a new session, or an earlier translation to take away); waits a short time
 #                        for the lock and for the network to settle
+#   lw-clat-check update from the same dispatch, when the data of wwan_6 change while a translation
+#                        exists (the operator renumbering the link); only that is looked at: a
+#                        translation whose address is in none of the child's /64s is made again, and
+#                        nothing else, so a stopped helper or a silent NAT64 stays for the events
+#                        and the ladder's run
 #   lw-clat-check down   from the same dispatch, at ifdown of wwan while a translation exists: waits
 #                        for the end of the session to show in netifd, then takes the translation away
-#   lw-clat-check tick   from wwan-recover, every 5 min, only in a session the family check read as
-#                        IPv6-only; one try, no waiting for the lock
+#   lw-clat-check tick [v4fail]
+#                        from wwan-recover, every 5 min, only in a session the family check read as
+#                        IPv6-only; one try, no waiting for the lock. v4fail: the IPv4 probe of that
+#                        very run found the translation up and got no answer through it
 #
 # A translation is wanted only in a session that has an IPv6 call and no IPv4 call at all, which is
 # what the data of wwan in netifd say (cid_4 and pdh_4 absent, cid_6 and pdh_6 there), also after a
@@ -45,6 +52,16 @@
 # helper is ours when argv[0] is 464xlatcfg and argv[1] is 464-wwan_6_4, the rules are the exact ones
 # the stock script writes for that device's address (R76c).
 #
+# A translation that is up and was made for this session is looked at again in two cases (R76c).
+# Its address is in a /64 that the IPv6 child does not have any more (the operator renumbered the link
+# in place): it is made again, since the packets it sends carry a source address the operator no longer
+# routes. And on `tick v4fail` the operator's DNS64 is asked again, from the data the run of wwan-recover
+# already has and with no new ping: another prefix than the one the translation was made with means the
+# operator moved its NAT64, and the translation is made again with it; the same prefix means the
+# NAT64 behind it may be down, which the translation cannot mend, so it stays, and one syslog line per
+# session says IPv4 does not answer; no answer from the DNS64 is the same line. A run in which the IPv4
+# probe passes asks nothing.
+#
 # A `down` that cannot get the lock leaves $LC_DIR/cleanup; whoever holds the lock does the work when
 # it is done, and wwan-recover runs `tick` for that mark too (a builtin test there, so a router that
 # never had a translation pays nothing).
@@ -68,8 +85,46 @@ LC_PENDING_MAX=${LW_CLAT_PENDING_MAX:-90}
 LC_PINNED='' LC_PIN_DEV='' LC_PIN_GW=''
 # `new` looks for the prefix up to this many times, 2 s apart, while the session settles
 LC_ROUNDS=1
+# `tick v4fail`: the IPv4 probe of the run found the translation up and silent (R76c)
+LC_V4FAIL=0
+# `update`: only the renumbering of the link is looked at
+LC_UPDATE=0
+# the DNS64's prefix is known already (the translation was taken away because it changed)
+LC_HAVE_PREFIX=0
 
 lc_dbg() { lw_debug "$LC_TAG" "$*"; }
+
+# net64(a) for awk: the first four groups of a valid IPv6 literal (hex groups, one "::" at most, no
+# dotted quad, not too many or too few groups) written as four zero-padded groups with a colon after
+# each, so the compressed and the long form of a /64 are the same text; "" for anything that is not
+# an address
+LC_AWK_NET64='
+    function net64(a,   n, p, l, r, nl, nr, h, i, g, out) {
+        if (a !~ /^[0-9A-Fa-f:]+$/) return ""
+        a = tolower(a)
+        n = split(a, p, "::")
+        if (n > 2 || p[1] ~ /^:|:$/ || (n == 2 && p[2] ~ /^:|:$/)) return ""
+        nl = split(p[1], l, ":")
+        nr = (n == 2) ? split(p[2], r, ":") : 0
+        if (n == 1 && nl != 8) return ""
+        if (n == 2 && nl + nr > 7) return ""
+        for (i = 1; i <= 8; i++) h[i] = "0"
+        for (i = 1; i <= nl; i++) {
+            if (l[i] !~ /^[0-9a-f]+$/ || length(l[i]) > 4) return ""
+            h[i] = l[i]
+        }
+        for (i = 1; i <= nr; i++) {
+            if (r[i] !~ /^[0-9a-f]+$/ || length(r[i]) > 4) return ""
+            h[8 - nr + i] = r[i]
+        }
+        out = ""
+        for (i = 1; i <= 4; i++) {
+            g = sprintf("%4s", h[i])
+            gsub(/ /, "0", g)
+            out = out g ":"
+        }
+        return out
+    }'
 
 # lc_j JSON PATH: one value of a netifd reply, empty when there is none
 lc_j() {
@@ -82,11 +137,17 @@ lc_now() {
     LC_T=${LC_T%%.*}
 }
 
-# lc_status NAME: the netifd status of an interface in LC_ST. Exit 0 with a status, 1 when netifd
+# lc_status NAME: the netifd status of an interface in LC_ST and its up flag in LC_UP.
+# Exit 0 with a status, 1 when netifd
 # says the object does not exist (ubus's "not found", exit 4: the only answer that confirms it is
 # gone), 2 when nothing can be said (ifstatus failed, timed out, or ubus does not answer)
 lc_status() {
-    LC_ST=$(timeout -k 1 2 ifstatus "$1" 2>/dev/null) && [ -n "$LC_ST" ] && return 0
+    LC_UP=''
+    if LC_ST=$(timeout -k 1 2 ifstatus "$1" 2>/dev/null) && [ -n "$LC_ST" ]; then
+        LC_UP=$(lc_bool "$LC_ST" '@.up')
+        [ -n "$LC_UP" ] && return 0
+        return 2
+    fi
     timeout -k 1 2 ubus -S list "network.interface.$1" >/dev/null 2>&1
     [ $? -eq 4 ] && return 1
     return 2
@@ -111,8 +172,13 @@ lc_bool() {
 # gateway of its default route (what the query to a DNS server is routed through, see lc_pin).
 lc_session() {
     LC_KIND=unknown LC_READY=0 LC_ZONE=wan LC_DNS='' LC_SID='' LC_DEV6='' LC_SRC6='' LC_GW6=''
-    lc_status wwan || return 0
-    case $(lc_bool "$LC_ST" '@.up') in
+    LC_PFXSET='' LC_PFXOK=0
+    LC_PATH=''
+    lc_status wwan || {
+        [ "$?" -ne 1 ] || LC_KIND=ended
+        return 0
+    }
+    case $LC_UP in
         true) ;;
         false)
             LC_KIND=ended
@@ -140,13 +206,38 @@ lc_session() {
     _lc_z=$(lc_j "$LC_ST" '@.data.zone')
     case $_lc_z in '' | - | *[!A-Za-z0-9_-]*) ;; *) LC_ZONE=$_lc_z ;; esac
     lc_status wwan_6 || return 0
-    [ "$(lc_bool "$LC_ST" '@.up')" = true ] || return 0
+    [ "$LC_UP" = true ] || return 0
     LC_DEV6=$(lc_j "$LC_ST" '@.l3_device')
     LC_GW6=$(lc_j "$LC_ST" '@.route[@.target="::" && @.mask=0].nexthop')
     case $LC_GW6 in *[!0-9A-Fa-f:]*) LC_GW6='' ;; esac
-    LC_SRC6=$(jsonfilter -s "$LC_ST" -e '@["ipv6-address"][*].address' 2>/dev/null | grep ':' | head -n 4)
+    LC_SRC6=$(jsonfilter -s "$LC_ST" -e '@["ipv6-address"][*].address' 2>/dev/null | grep ':' | head -n 8)
     LC_DNS=$(jsonfilter -s "$LC_ST" -e '@["dns-server"][*]' 2>/dev/null | grep ':' | head -n 2)
-    [ -n "$LC_DEV6" ] && [ -n "$LC_SRC6" ] && LC_READY=1
+    lc_prefix_set
+    if [ -n "$LC_DEV6" ] && [ -n "$LC_SRC6" ]; then
+        LC_READY=1
+        LC_PATH="$LC_SID|$LC_DNS|$LC_DEV6|$LC_SRC6|$LC_GW6|$LC_PFXOK|$LC_PFXSET"
+    fi
+}
+
+# lc_prefix_set: the /64 prefixes of all of the child's addresses in LC_PFXSET (sorted, each followed by
+# a space) and LC_PFXOK 1, only when the list is a list, every entry has an address and every address
+# is a valid IPv6 literal; anything less (a cut or unreadable list, an entry that says nothing, a
+# literal that is none) leaves LC_PFXOK 0 and the translation alone (R76c)
+lc_prefix_set() {
+    LC_PFXSET='' LC_PFXOK=0
+    [ "$(jsonfilter -s "$LC_ST" -t '@["ipv6-address"]' 2>/dev/null | head -n 1)" = array ] || return 0
+    # jsonfilter prints wildcard types on one line, separated by escaped spaces.
+    _lc_ne=$(jsonfilter -s "$LC_ST" -t '@["ipv6-address"][*]' 2>/dev/null |
+        awk '{ gsub(/\\/, ""); for (i = 1; i <= NF; i++) if ($i != "object") exit 1; print NF }') || return 0
+    _lc_ns=$(jsonfilter -s "$LC_ST" -t '@["ipv6-address"][*].address' 2>/dev/null |
+        awk '{ gsub(/\\/, ""); for (i = 1; i <= NF; i++) if ($i != "string") exit 1; print NF }') || return 0
+    [ "$_lc_ne" = "$_lc_ns" ] || return 0
+    _lc_pf=$(jsonfilter -s "$LC_ST" -e '@["ipv6-address"][*].address' 2>/dev/null |
+        awk -v ne="$_lc_ne" "$LC_AWK_NET64"'
+            { p = net64($0); if (p == "") bad = 1; else print p }
+            END { if (bad || NR == 0 || NR != ne) exit 1 }') || return 0
+    LC_PFXSET=$(printf '%s\n' "$_lc_pf" | sort -u | tr '\n' ' ')
+    LC_PFXOK=1
 }
 
 # lc_p96 ADDRESS: the prefix of a DNS64 answer for ipv4only.arpa as "<six groups>::/96" in LC_PREFIX;
@@ -241,8 +332,15 @@ lc_pin() {
             return 1
         fi
     else
+        # the route is written down before it is made: a check killed in between leaves the record, and the
+        # next run takes the route back (lc_pin_recover)
+        printf '%s %s %s\n' "$1" "$LC_DEV6" "$LC_GW6" >"$LC_DIR/pin" || return 1
         # shellcheck disable=SC2086  # the via of the gateway is two words, or none
         timeout -k 1 2 ip -6 route add "$1/128" ${LC_GW6:+via $LC_GW6} dev "$LC_DEV6" metric 1 2>/dev/null || {
+            case $? in
+                124 | 137 | 143) lc_pin_recover ;;
+                *) rm -f "$LC_DIR/pin" ;;
+            esac
             LC_WHY="no route to the session's DNS server $(lc_ascii "$1") could be made on $LC_DEV6"
             return 1
         }
@@ -262,7 +360,38 @@ lc_unpin() {
     # shellcheck disable=SC2086
     timeout -k 1 2 ip -6 route del "$LC_PINNED/128" ${LC_PIN_GW:+via $LC_PIN_GW} dev "$LC_PIN_DEV" metric 1 2>/dev/null ||
         return 1
+    rm -f "$LC_DIR/pin"
     LC_PINNED=''
+}
+
+# lc_pin_recover: a host route of a query that a killed check left (its record is $LC_DIR/pin: the
+# server, the device and the gateway) goes now; the record stays while the route does
+lc_pin_recover() {
+    [ -e "$LC_DIR/pin" ] || return 0
+    _lc_ps='' _lc_pd='' _lc_pg=''
+    read -r _lc_ps _lc_pd _lc_pg <"$LC_DIR/pin" || :
+    case $_lc_ps:$_lc_pd:$_lc_pg in
+        *[!0-9A-Za-z:_.-]* | :*) ;;
+        *)
+            _lc_routes=$(timeout -k 1 2 ip -6 route show "$_lc_ps/128" 2>/dev/null) || return 0
+            if printf '%s\n' "$_lc_routes" | awk -v dev="$_lc_pd" -v gw="$_lc_pg" '
+                {
+                    d = g = m = ""
+                    for (i = 1; i < NF; i++) {
+                        if ($i == "dev") d = $(i+1)
+                        if ($i == "via") g = $(i+1)
+                        if ($i == "metric") m = $(i+1)
+                    }
+                    if (d == dev && g == gw && m == "1") found = 1
+                }
+                END { exit !found }'; then
+                # shellcheck disable=SC2086
+                timeout -k 1 2 ip -6 route del "$_lc_ps/128" ${_lc_pg:+via $_lc_pg} dev "$_lc_pd" metric 1 2>/dev/null ||
+                    return 0
+            fi
+            ;;
+    esac
+    rm -f "$LC_DIR/pin"
 }
 
 # lc_prefix: LC_PREFIX from the AAAA of ipv4only.arpa that one of the child's DNS servers gives
@@ -274,6 +403,8 @@ lc_prefix() {
         return 1
     }
     for _lc_s in $LC_DNS; do
+        # Keep a failed cleanup record until a later locked check can resolve it.
+        [ ! -e "$LC_DIR/pin" ] || return 2
         lc_pin "$_lc_s" || {
             [ -z "$LC_PINNED" ] || return 2
             continue
@@ -295,15 +426,17 @@ lc_prefix() {
 # wwan_device prefix ...`). Whole fields: not another translation's helper, not a shell or an editor
 # that has the name in an argument, not any process that has the number by chance.
 lc_ours() {
-    _lc_argv=$(tr '\0' '\n' <"/proc/$1/cmdline" 2>/dev/null | head -n 2) || return 1
+    # the fields are told apart by the lines they make: an argument with a newline in it would pass for two
+    [ "$({ tr -cd '\n' <"/proc/$1/cmdline" | wc -c; } 2>/dev/null)" = 0 ] || return 1
+    _lc_argv=$({ tr '\0' '\n' <"/proc/$1/cmdline" | head -n 2; } 2>/dev/null) || return 1
     _lc_a0=$(printf '%s\n' "$_lc_argv" | sed -n 1p)
     _lc_a1=$(printf '%s\n' "$_lc_argv" | sed -n 2p)
     [ "${_lc_a0##*/}" = 464xlatcfg ] && [ "$_lc_a1" = "$LC_DEV" ]
 }
 
-# lc_helper: the pid file names a live helper that is ours
+# lc_helper [FILE]: the stock or saved pid file names a live helper that is ours
 lc_helper() {
-    _lc_p=$(cat "$LC_PIDFILE" 2>/dev/null) || return 1
+    _lc_p=$(cat "${1:-$LC_PIDFILE}" 2>/dev/null) || return 1
     case $_lc_p in '' | *[!0-9]*) return 1 ;; esac
     lc_ours "$_lc_p"
 }
@@ -311,21 +444,48 @@ lc_helper() {
 # lc_up: the status in LC_ST shows the translation up on its device, and the helper that holds its
 # address lives. netifd does not supervise that helper (R76c).
 lc_up() {
-    [ "$(lc_bool "$LC_ST" '@.up')" = true ] || return 1
+    [ "$LC_UP" = true ] || return 1
     [ "$(lc_j "$LC_ST" '@.l3_device')" = "$LC_DEV" ] || return 1
     lc_helper
 }
 
 # lc_addr: LC_ADDR, the IPv6 address of the translation: the one the stock script wrote to its
-# marker, else the one nat46 has for the device (the stock script writes its rules before the
-# marker, and a setup that died in between leaves rules and no marker)
+# marker, the address saved before teardown, or the one nat46 has when setup died before the marker
 lc_addr() {
     LC_ADDR=$(cat "$LC_ANYCAST" 2>/dev/null)
+    [ -n "$LC_ADDR" ] || LC_ADDR=$(cat "$LC_DIR/teardown-address" 2>/dev/null)
     [ -n "$LC_ADDR" ] || LC_ADDR=$(awk -v d="$LC_DEV" '
         $1 == "del" && $2 == d { v = "" }
         $1 == "config" && $2 == d { for (i = 3; i < NF; i++) if ($i == "local.v6") { v = $(i + 1); sub(/\/.*/, "", v) } }
         END { print v }' "$LC_NAT46" 2>/dev/null)
     case $LC_ADDR in *[!0-9A-Fa-f:]*) LC_ADDR='' ;; esac
+}
+
+# lc_pidguard: the stock teardown of 464xlat.sh (netifd runs it for every removal and every ifdown)
+# signals whatever process the pid file names, without a look at it; so before anything planned the
+# file is made to name our own helper, or to go (a pid left by a helper that died, used again by
+# another process, or written by anything else)
+lc_pidguard() {
+    _lc_hp=''
+    if lc_helper; then
+        _lc_hp=$_lc_p
+        # The stock script removes its pid file before the helper necessarily exits.
+        printf '%s\n' "$_lc_hp" >"$LC_DIR/helper"
+    elif [ -e "$LC_PIDFILE" ] || [ -L "$LC_PIDFILE" ]; then
+        rm -f "$LC_PIDFILE"
+    fi
+}
+
+# lc_wait_exit PID: up to 5 naps for our helper PID to be gone (a process that is not ours, or no
+# process, is gone)
+lc_wait_exit() {
+    [ -n "$1" ] || return 0
+    _lc_w=0
+    while lc_ours "$1"; do
+        [ "$_lc_w" -lt 5 ] || return 1
+        _lc_w=$((_lc_w + 1))
+        sleep 1 9>&-
+    done
 }
 
 # lc_clean: nothing of a translation that is not up stays behind (R76c): the helper process the pid
@@ -335,28 +495,35 @@ lc_addr() {
 # where those end. Only the exact rules of the stock script are removed: `to <our address> lookup
 # prelocal pref 0`, and `from all lookup local pref 1` put back to pref 0 unless another
 # translation still has its marker (Tailscale's rules and anyone else's are never touched). Called
-# only when netifd no longer has the interface: its own teardown needs the marker.
+# only when netifd no longer has the interface: its own teardown needs the marker. It fails, and keeps
+# the pid file, the marker and the mark of the translation for the next try, when the helper is still
+# exiting or the rule could not be deleted.
 lc_clean() {
     lc_addr
-    if _lc_p=$(cat "$LC_PIDFILE" 2>/dev/null); then
-        case $_lc_p in '' | *[!0-9]*) ;; *)
-            if lc_ours "$_lc_p"; then kill "$_lc_p" 2>/dev/null || :; fi
-            ;;
-        esac
-        rm -f "$LC_PIDFILE"
+    if lc_helper "$LC_DIR/helper" || lc_helper; then
+        kill "$_lc_p" 2>/dev/null || :
+        lc_wait_exit "$_lc_p" || return 1
     fi
+    rm -f "$LC_PIDFILE" || return 1
     if [ -e "$LC_NAT46" ]; then echo "del $LC_DEV" >>"$LC_NAT46" 2>/dev/null || :; fi
-    if [ -n "$LC_ADDR" ]; then ip -6 rule del to "$LC_ADDR" lookup prelocal pref 0 2>/dev/null || :; fi
-    rm -f "$LC_ANYCAST"
-    if [ -z "$(ls "${LC_ANYCAST%/*}"/464-*-anycast 2>/dev/null)" ]; then
-        _lc_rl=$(ip -6 rule 2>/dev/null)
-        if printf '%s\n' "$_lc_rl" | grep -q '^1:[[:space:]]*from all lookup local$'; then
-            printf '%s\n' "$_lc_rl" | grep -q '^0:[[:space:]]*from all lookup local$' ||
-                ip -6 rule add from all lookup local pref 0 2>/dev/null || :
-            ip -6 rule del from all lookup local pref 1 2>/dev/null || :
+    if [ -n "$LC_ADDR" ]; then
+        ip -6 rule del to "$LC_ADDR" lookup prelocal pref 0 2>/dev/null || :
+        _lc_rl=$(ip -6 rule 2>/dev/null) || return 1
+        if printf '%s\n' "$_lc_rl" | grep -qE "^0:[[:space:]]+(from all )?to $LC_ADDR(/128)? lookup prelocal$"; then
+            lc_dbg "the rule of $LC_ADDR could not be deleted"
+            return 1
         fi
     fi
-    rm -f "$LC_DIR/active" "$LC_DIR/state" "$LC_DIR/pending"
+    rm -f "$LC_ANYCAST" || return 1
+    if [ -z "$(ls "${LC_ANYCAST%/*}"/464-*-anycast 2>/dev/null)" ]; then
+        _lc_rl=$(ip -6 rule 2>/dev/null) || return 1
+        if printf '%s\n' "$_lc_rl" | grep -q '^1:[[:space:]]*from all lookup local$'; then
+            printf '%s\n' "$_lc_rl" | grep -q '^0:[[:space:]]*from all lookup local$' ||
+                ip -6 rule add from all lookup local pref 0 2>/dev/null || return 1
+            ip -6 rule del from all lookup local pref 1 2>/dev/null || return 1
+        fi
+    fi
+    rm -f "$LC_DIR/helper" "$LC_DIR/teardown-address" "$LC_DIR/active" "$LC_DIR/state" "$LC_DIR/pending" "$LC_DIR/prefix"
 }
 
 # lc_gone: netifd confirms that wwan_6_4 does not exist (a status that cannot be read does not)
@@ -367,7 +534,8 @@ lc_gone() {
 
 # lc_leftovers: something of a translation exists, or may exist, in netifd or in RAM
 lc_leftovers() {
-    ! lc_gone || [ -e "$LC_PIDFILE" ] || [ -e "$LC_ANYCAST" ] || [ -e "$LC_DIR/active" ]
+    ! lc_gone || [ -e "$LC_PIDFILE" ] || [ -e "$LC_ANYCAST" ] || [ -e "$LC_DIR/active" ] ||
+        [ -e "$LC_DIR/helper" ] || [ -e "$LC_DIR/teardown-address" ]
 }
 
 # lc_remove: take the interface out of netifd, wherever it came from, and clean up after it. netifd
@@ -377,9 +545,15 @@ lc_leftovers() {
 # confirmed by then this fails and leaves everything as it is: the files that identify the
 # translation stay (the stock teardown needs the marker), and the caller makes nothing new.
 lc_remove() {
+    _lc_hp=''
     lc_status "$LC_IF"
     case $? in
-        0) timeout -k 1 5 ubus call "network.interface.$LC_IF" remove >/dev/null 2>&1 || : ;;
+        0)
+            lc_addr
+            if [ -n "$LC_ADDR" ]; then printf '%s\n' "$LC_ADDR" >"$LC_DIR/teardown-address" || return 1; fi
+            lc_pidguard || return 1
+            timeout -k 1 5 ubus call "network.interface.$LC_IF" remove >/dev/null 2>&1 || :
+            ;;
         2) ;;
     esac
     lc_now
@@ -392,6 +566,15 @@ lc_remove() {
         fi
         sleep 1 9>&-
     done
+    # the old helper may still be exiting when netifd has let go of the interface: nothing new is made
+    # while it holds the device name
+    # (a pid file that is still there means the stock teardown did not get to it: lc_clean stops it)
+    if [ -n "$_lc_hp" ] && [ ! -e "$LC_PIDFILE" ]; then
+        lc_wait_exit "$_lc_hp" || {
+            lc_dbg "the helper of $LC_IF is still exiting"
+            return 1
+        }
+    fi
     lc_clean
 }
 
@@ -454,12 +637,11 @@ lc_pending() {
 lc_find_prefix() {
     _lc_n=0
     while :; do
-        _lc_was="$LC_SID|$LC_DNS|$LC_DEV6|$LC_SRC6|$LC_GW6" _lc_rc=0
+        _lc_was=$LC_PATH _lc_rc=0
         lc_prefix || _lc_rc=$?
         [ "$_lc_rc" != 2 ] || return 2
         lc_session
-        [ "$LC_KIND" = v6only ] && [ "$LC_READY" = 1 ] && [ "$LC_SID|$LC_DNS|$LC_DEV6|$LC_SRC6|$LC_GW6" = "$_lc_was" ] ||
-            return 2
+        [ -n "$LC_PATH" ] && [ "$LC_PATH" = "$_lc_was" ] || return 2
         [ "$_lc_rc" = 1 ] || return 0
         _lc_n=$((_lc_n + 1))
         [ "$_lc_n" -lt "$LC_ROUNDS" ] || return 1
@@ -474,7 +656,93 @@ lc_end() {
         : >"$LC_DIR/cleanup"
         lc_remove || return 0
     fi
-    rm -f "$LC_DIR/cleanup" "$LC_DIR/noted" "$LC_DIR/noted-dns64"
+    rm -f "$LC_DIR/cleanup" "$LC_DIR/noted" "$LC_DIR/noted-dns64" "$LC_DIR/renumbered"
+}
+
+# lc_renumbered: the translation's own address (the marker, LC_ADDR) is in none of the /64s of the
+# IPv6 child's addresses (LC_PFXSET): the operator renumbered the link in place (R76c). Only the whole,
+# validated set decides: with no address of the translation to compare, an address list that is cut,
+# unreadable or has an entry that is no address (LC_PFXOK 0), there is nothing to say.
+lc_renumbered() {
+    lc_addr
+    [ -n "$LC_ADDR" ] && [ "$LC_PFXOK" = 1 ] || return 1
+    _lc_mine=$(printf '%s\n' "$LC_ADDR" | awk "$LC_AWK_NET64"'{ p = net64($0); if (p == "") exit 1; print p }') ||
+        return 1
+    case " $LC_PFXSET" in *" $_lc_mine "*) return 1 ;; esac
+    return 0
+}
+
+# lc_replacement: LC_PREFIX of the translation that takes the place of the one that is up, known before
+# anything is taken away (R76c). On `tick v4fail` a prefix the DNS64 gives now; else the prefix the
+# translation was made with, which still stands when only the /64 moved; else what the DNS64 gives.
+# Fails when none of them is there: the old translation stays and the next event tries again.
+lc_replacement() {
+    if [ "$LC_V4FAIL" = 1 ]; then
+        _lc_rc=0
+        lc_find_prefix || _lc_rc=$?
+        case $_lc_rc in 0) return 0 ;; 2) return 1 ;; esac
+    fi
+    _lc_stored=$(cat "$LC_DIR/prefix" 2>/dev/null)
+    case $_lc_stored in
+        [0-9a-f]*::/96)
+            lc_p96 "${_lc_stored%/96}c000:aa" && return 0
+            ;;
+    esac
+    [ "$LC_V4FAIL" != 1 ] || return 1
+    _lc_rc=0
+    lc_find_prefix || _lc_rc=$?
+    [ "$_lc_rc" = 0 ]
+}
+
+# lc_replace: take the translation away to make another in its place (LC_PREFIX is known). netifd
+# removes it asynchronously, so the session is read again afterwards: the new one is made only when it
+# is still the session and the path the prefix was found for (LC_HAVE_PREFIX 1), else nothing is made
+# and the next event or run of wwan-recover does the work.
+lc_replace() {
+    _lc_path=$LC_PATH _lc_sid=$LC_SID
+    lc_remove || return 1
+    lc_session
+    [ "$LC_KIND" = v6only ] && [ "$LC_SID" = "$_lc_sid" ] && [ "$LC_PATH" = "$_lc_path" ] || return 1
+    LC_HAVE_PREFIX=1
+}
+
+# lc_stale: the translation is up and was made for this session, and is not right any more (R76c):
+# 0 when it was taken away and is to be made again (LC_PREFIX is the prefix to make it with,
+# LC_HAVE_PREFIX 1), 1 when it stays as it is, also when there is no replacement for it yet or it
+# cannot be taken away now.
+lc_stale() {
+    # Limit renumbering retries for an out-of-list address without suppressing DNS64 recovery.
+    _lc_key="$LC_SID $LC_PFXSET"
+    if lc_renumbered && [ "$(cat "$LC_DIR/renumbered" 2>/dev/null)" != "$_lc_key" ]; then
+        lc_replacement || {
+            lc_dbg "the IPv6 address of the session moved to another /64 and there is no prefix to make the translation again with, nothing changed"
+            return 1
+        }
+        _lc_key="$LC_SID $LC_PFXSET"
+        lw_log "$LC_TAG" "the IPv6 address of the session moved to another /64, setting the translation up again"
+        lc_replace || return 1
+        echo "$_lc_key" >"$LC_DIR/renumbered" 2>/dev/null || :
+        return 0
+    fi
+    [ "$LC_V4FAIL" = 1 ] || return 1
+    _lc_rc=0
+    lc_find_prefix || _lc_rc=$?
+    case $_lc_rc in
+        0) ;;
+        1)
+            lc_note dns64 "translated IPv4 does not answer on $LC_DEV and $LC_WHY; the translation stays, IPv6 works, trying again"
+            return 1
+            ;;
+        *) return 1 ;;
+    esac
+    _lc_old=$(cat "$LC_DIR/prefix" 2>/dev/null)
+    [ -n "$_lc_old" ] || return 1
+    if [ "$LC_PREFIX" = "$_lc_old" ]; then
+        lc_note dns64 "translated IPv4 does not answer on $LC_DEV and the DNS64 still gives its prefix $LC_PREFIX; the operator's NAT64 may be down, the translation stays, IPv6 works, trying again"
+        return 1
+    fi
+    lw_log "$LC_TAG" "the DNS64 gives $LC_PREFIX now and translated IPv4 does not answer, setting the translation up again"
+    lc_replace
 }
 
 # lc_check: one look and, when needed, one try
@@ -503,12 +771,19 @@ lc_check() {
         lc_dbg "netifd gives no status for $LC_IF, nothing changed"
         return 0
     fi
-    if [ "$_lc_if_status" -eq 0 ] && lc_up; then
-        [ "$(cat "$LC_DIR/state" 2>/dev/null)" != "up $LC_SID" ] || return 0
-        # up, but made for another session (netifd kept it, the handles may even be the same):
-        # the prefix may be another, so it is made again
-        lc_dbg "$LC_IF was made for another session, making it again"
-        lc_remove || return 0
+    LC_HAVE_PREFIX=0
+    if [ "$LC_UPDATE" = 1 ]; then
+        [ "$_lc_if_status" -eq 0 ] && lc_up && [ "$(cat "$LC_DIR/state" 2>/dev/null)" = "up $LC_SID" ] &&
+            lc_stale || return 0
+    elif [ "$_lc_if_status" -eq 0 ] && lc_up; then
+        if [ "$(cat "$LC_DIR/state" 2>/dev/null)" = "up $LC_SID" ]; then
+            lc_stale || return 0
+        else
+            # up, but made for another session (netifd kept it, the handles may even be the same):
+            # the prefix may be another, so it is made again
+            lc_dbg "$LC_IF was made for another session, making it again"
+            lc_remove || return 0
+        fi
     else
         # R76c: the translation that was up and is not any more is set up again from nothing
         if [ "$(cat "$LC_DIR/state" 2>/dev/null)" = "up $LC_SID" ]; then
@@ -521,19 +796,23 @@ lc_check() {
         fi
         if lc_leftovers; then lc_remove || return 0; fi
     fi
-    _lc_rc=0
-    lc_find_prefix || _lc_rc=$?
-    case $_lc_rc in
-        0) ;;
-        1)
-            lc_note dns64 "no IPv4 for the router and the LAN yet: $LC_WHY; IPv6 works, trying again"
-            return 0
-            ;;
-        *) return 0 ;;
-    esac
+    if [ "$LC_HAVE_PREFIX" != 1 ]; then
+        _lc_rc=0
+        lc_find_prefix || _lc_rc=$?
+        case $_lc_rc in
+            0) ;;
+            1)
+                lc_note dns64 "no IPv4 for the router and the LAN yet: $LC_WHY; IPv6 works, trying again"
+                return 0
+                ;;
+            *) return 0 ;;
+        esac
+    fi
     lc_dbg "DNS64 prefix $LC_PREFIX, adding $LC_IF on wwan_6, zone $LC_ZONE"
     : >"$LC_DIR/active"
     if lc_add && lc_wait_up; then
+        printf '%s\n' "$_lc_p" >"$LC_DIR/helper" || return 0
+        echo "$LC_PREFIX" >"$LC_DIR/prefix"
         echo "up $LC_SID" >"$LC_DIR/state"
         rm -f "$LC_DIR/noted"
         lw_log "$LC_TAG" "translated IPv4 is up on $LC_DEV, prefix $LC_PREFIX"
@@ -596,6 +875,7 @@ lc_lock() {
         _lc_i=$((_lc_i + 1))
         sleep 1 9>&-
     done
+    lc_pin_recover
 }
 
 # lc_drain: the work of a `down` that found the lock busy (it left $LC_DIR/cleanup): done by
@@ -622,6 +902,15 @@ case ${1:-} in
         flock -u 9
         lc_drain
         ;;
+    update)
+        LC_UPDATE=1
+        lc_lock 25 || exit 0
+        LC_ROUNDS=3
+        lc_check
+        [ -z "$LC_PINNED" ] || exit 0
+        flock -u 9
+        lc_drain
+        ;;
     down)
         if lc_lock 25; then
             lc_down
@@ -632,6 +921,7 @@ case ${1:-} in
         fi
         ;;
     tick)
+        [ "${2:-}" != v4fail ] || LC_V4FAIL=1
         lc_lock 0 || exit 0
         lc_check
         [ -z "$LC_PINNED" ] || exit 0
@@ -639,7 +929,7 @@ case ${1:-} in
         lc_drain
         ;;
     *)
-        echo "usage: lw-clat-check new|down|tick" >&2
+        echo "usage: lw-clat-check new|update|down|tick [v4fail]" >&2
         exit 2
         ;;
 esac

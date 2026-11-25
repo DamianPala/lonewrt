@@ -66,6 +66,7 @@ cl_outcome() { echo "$1" >"$C/outcome"; }
 # of the check in CL_RC
 cl_tick() { CL_RC=0; lw-clat-check tick || CL_RC=$?; }
 cl_new() { CL_RC=0; lw-clat-check new || CL_RC=$?; }
+cl_update() { CL_RC=0; lw-clat-check update || CL_RC=$?; }
 cl_down() { CL_RC=0; lw-clat-check down || CL_RC=$?; }
 
 # cl_live: the number of live processes of the helper 464xlatcfg

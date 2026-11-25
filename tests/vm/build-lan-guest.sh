@@ -16,7 +16,9 @@ IB=$VMWORK/ib
 export PATH=$LW_WORK/tools/bin:$PATH
 # uhttpd serves port 80 with a CGI directory; the rest of the default x86 set stays, except the
 # router parts (a DHCP server, a firewall and the IPv6 daemon would fight the router's)
-PACKAGES=(uhttpd -dnsmasq -firewall4 -odhcpd-ipv6only -ppp -ppp-mod-pppoe)
+# wireguard-tools (and the kernel module it pulls in) make the guest a WireGuard peer for
+# tests/vm/96-clat-verify.sh
+PACKAGES=(uhttpd wireguard-tools -dnsmasq -firewall4 -odhcpd-ipv6only -ppp -ppp-mod-pppoe)
 
 die() { echo "build-lan-guest: $*" >&2; exit 1; }
 

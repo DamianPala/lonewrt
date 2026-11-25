@@ -58,12 +58,12 @@ cl_tick
 cl_down
 lw_expect_eq "$(wc -l <"$T/sleeps")" 10 "ifdown, same session still up: ten naps"
 
-# the status stays unreadable: nothing is removed
+# the live ubus confirms the parent is gone: cleanup works without a following ifup
 cl_setup
 cl_tick
 rm -f "$T/ifstatus/wwan.json"
 cl_down
-cl_translated "ifdown, status unreadable"
+cl_clean_state "ifdown, parent no longer exists"
 
 # a setup interrupted after the rules, before the marker: no marker for the stock teardown, but the
 # helper, the device and both rules are there; the next look takes all of it back, the local table's

@@ -29,7 +29,9 @@ if [ "$1 $2" = "-6 rule" ]; then
                 echo "$*" >>"$C/rules"
                 exit 0
             fi
-            # del: the first rule that matches goes; none to delete is an error, as in ip
+            # del: the first rule that matches goes; none to delete is an error, as in ip; the file
+            # rule-del-fails makes every delete fail and leave the rule
+            [ ! -e "$C/rule-del-fails" ] || exit 2
             awk -v k="$key" -v full="$*" -v hp="$has_pref" 'BEGIN { done = 0 }
                 { r = $0; gsub(/ *pref [0-9]*/, "", r) }
                 !done && r == k && (hp == 0 || $0 == full) { done = 1; next }

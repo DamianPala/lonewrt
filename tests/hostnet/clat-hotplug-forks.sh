@@ -48,7 +48,8 @@ forks() {
 }
 
 fail=0
-for ev in 'ifup wwan' 'ifup wwan_4' 'ifdown wwan' 'ifup wwan_6' 'ifup wwan_6_4' 'ifdown wwan_6' 'ifup lan' 'ifup wan'; do
+for ev in 'ifup wwan' 'ifup wwan_4' 'ifdown wwan' 'ifup wwan_6' 'ifup wwan_6_4' 'ifdown wwan_6' 'ifup lan' 'ifup wan' \
+    'ifupdate wwan_6' 'ifupdate wwan' 'ifupdate wwan_4'; do
     # shellcheck disable=SC2086  # the event is two words
     set -- $ev
     b=$(forks "$tmp/base" "$1" "$2")
@@ -69,6 +70,16 @@ if [ "$s" -gt "$b" ]; then
     echo "ok   ifup wwan_6 of an IPv6-only session: $s forks, baseline $b (the check starts)"
 else
     echo "FAIL ifup wwan_6 of an IPv6-only session: $s forks, baseline $b: the measurement sees nothing"
+    fail=1
+fi
+# and an update of the child while a translation exists (the mark `active`): the renumbering of the link
+: >"$tmp/clat6/active"
+b=$(forks "$tmp/base" ifupdate wwan_6)
+s=$(forks "$tmp/slice" ifupdate wwan_6 "$tmp/clat6")
+if [ "$s" -gt "$b" ]; then
+    echo "ok   ifupdate wwan_6 while a translation exists: $s forks, baseline $b (the check starts)"
+else
+    echo "FAIL ifupdate wwan_6 while a translation exists: $s forks, baseline $b: the measurement sees nothing"
     fail=1
 fi
 exit "$fail"

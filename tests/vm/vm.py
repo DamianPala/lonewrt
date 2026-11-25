@@ -95,6 +95,18 @@ def link_nic(a):
 
 
 def nic_args(a, ssh_port, lan_net, lan_host):
+    if a.guest and a.udp_fwd:
+        # a guest that is reached from the host through a UDP port (a WireGuard peer behind the
+        # NAT64 of tests/vm/96-clat-verify.sh): user-mode networking that is not restricted (slirp does
+        # not pass a restricted guest's reply to a forwarded port); the test drops the guest's default
+        # route, so only the answers to the one forwarded port go out
+        host_port, guest_port = a.udp_fwd.split(":")
+        return [
+            "-netdev",
+            f"user,id=udpnat,ipv6=off,hostfwd=udp:127.0.0.1:{host_port}-:{guest_port}",
+            "-device",
+            "virtio-net-pci,netdev=udpnat,id=udp-nic,mac=52:54:00:52:48:20,addr=0x5",
+        ]
     if a.guest:
         return link_nic(a)
     # with --internet the wwan side is user-mode NAT to the real internet; without it nothing leaves
@@ -123,8 +135,8 @@ def cmd_start(a):
     if a.guest:
         a.no_modem = True
         a.lan_ip = a.lan_ip or "0.0.0.0"
-        if not a.link_role:
-            sys.exit("vm: --guest needs --link-role and --link-sock")
+        if not a.link_role and not a.udp_fwd:
+            sys.exit("vm: --guest needs --link-role and --link-sock, or --udp-fwd")
     elif not a.lan_ip:
         sys.exit("vm: start needs --lan-ip (or --guest)")
     if a.link_role and not a.link_sock:
@@ -431,8 +443,13 @@ def main():
     p.add_argument("--mem", type=int, default=256)
     p.add_argument("--internet", action="store_true", help="wwan NIC with NAT to the real internet")
     p.add_argument("--xfer", action="store_true", help="an extra, unlogged UART (see recv)")
-    p.add_argument("--guest", action="store_true", help="a small LAN guest: only the link NIC")
+    p.add_argument("--guest", action="store_true", help="a small LAN guest: only the link NIC (or --udp-fwd)")
     p.add_argument("--wwan-peer", help="unix socket path of a host program that is the wwan NIC's peer")
+    p.add_argument(
+        "--udp-fwd",
+        metavar="HOSTPORT:GUESTPORT",
+        help="with --guest: user-mode NIC instead of the link NIC, host UDP port forwarded to the guest",
+    )
     p.add_argument("--link-role", choices=("server", "client"), help="add the guest-to-guest NIC")
     p.add_argument("--link-sock", help="unix socket path of the guest-to-guest NIC")
     p.set_defaults(fn=cmd_start)

@@ -58,7 +58,8 @@ lw_expect_eq "$(calls)" "new" "IPv6-only, ifup wwan_6: the check starts"
 : >"$C/check-calls"
 
 # while a translation exists (its mark): the parent's ifup (a new session or a native one) starts the
-# check, and so does the end of the session
+# check, so does the end of the session, and so does an update of the child (the operator renumbering
+# the link in place moves its address: R76c); with no translation an update starts nothing
 rm -f "$CL_DIR/v6only"
 mkdir -p "$CL_DIR"
 : >"$CL_DIR/active"
@@ -68,13 +69,22 @@ lw_expect_eq "$(calls)" "new" "a translation exists, ifup wwan"
 hot ifdown wwan
 lw_expect_eq "$(calls)" "down" "a translation exists, ifdown wwan"
 : >"$C/check-calls"
+hot ifupdate wwan_6
+lw_expect_eq "$(calls)" "update" "a translation exists, ifupdate wwan_6"
+: >"$C/check-calls"
+hot ifupdate wwan
+hot ifupdate wwan_6_4
+hot ifupdate lan
+lw_expect_eq "$(calls)" "" "a translation exists, the updates of other interfaces start nothing"
 rm -f "$CL_DIR/active"
 hot ifdown wwan
-lw_expect_eq "$(calls)" "" "no translation, ifdown wwan: nothing starts"
+hot ifupdate wwan_6
+lw_expect_eq "$(calls)" "" "no translation, ifdown wwan and ifupdate wwan_6: nothing starts"
 
 # builtins only: what the dispatch runs before the existing reload is `case` and `[` and nothing else
 # (a trace of an event that starts nothing, minus the reload that was there before)
-for ev in 'ifup wwan' 'ifup wwan_6' 'ifup wwan_4' 'ifup wwan_6_4' 'ifup lan' 'ifdown wwan' 'ifdown wwan_6' 'ifdown lan'; do
+for ev in 'ifup wwan' 'ifup wwan_6' 'ifup wwan_4' 'ifup wwan_6_4' 'ifup lan' 'ifdown wwan' 'ifdown wwan_6' 'ifdown lan' \
+    'ifupdate wwan_6' 'ifupdate wwan' 'ifupdate wwan_6_4'; do
     # shellcheck disable=SC2086  # the event is two words
     set -- $ev
     trace=$(ACTION=$1 INTERFACE=$2 LW_CLAT_DIR=$CL_DIR sh -x "$hotplug" 2>&1 | grep '^+' | grep -v -e '^+ case' -e '^+ \[ ' -e "^+ '\\[' " || :)

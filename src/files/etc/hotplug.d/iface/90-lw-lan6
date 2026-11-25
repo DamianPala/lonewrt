@@ -9,8 +9,9 @@
 #            emptied when the child is made in a session with an IPv4 call), so `ifup wwan_6` of a
 #            dual-stack session never starts anything
 #   active   kept by lw-clat-check while a translation exists or is being made, so the end of a
-#            session (ifdown wwan, with or without an ifup after it) cleans it up, and a router
-#            that never had one starts nothing
+#            session (ifdown wwan, with or without an ifup after it) cleans it up, a change of the
+#            child's address (the operator renumbering the link: ifupdate wwan_6) is followed, and
+#            a router that never had one starts nothing
 # The check runs detached and bounded, and takes a lock of its own against a second one.
 d=${LW_CLAT_DIR:-/var/run/lw-clat}
 case $ACTION:$INTERFACE in
@@ -22,6 +23,11 @@ case $ACTION:$INTERFACE in
     ifup:wwan)
         if [ -e "$d/active" ]; then
             setsid timeout -k 2 90 /usr/sbin/lw-clat-check new </dev/null >/dev/null 2>&1 &
+        fi
+        ;;
+    ifupdate:wwan_6)
+        if [ -e "$d/active" ]; then
+            setsid timeout -k 2 90 /usr/sbin/lw-clat-check update </dev/null >/dev/null 2>&1 &
         fi
         ;;
     ifdown:wwan)
